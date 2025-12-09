@@ -179,7 +179,7 @@ class TabularData(MutableSequence[Sequence["CellT"]]):
         keys = self.keys() if cols is None else set(cols)
         return [{k: self._columns[k][i] for k in keys} for i in range(len(self))]
 
-    def dropna(  # noqa: C901, PLR0912
+    def dropna(
         self,
         axis: str = "rows",
         how="any",
@@ -223,7 +223,7 @@ class TabularData(MutableSequence[Sequence["CellT"]]):
         else:
             self.drop(*to_drop)
 
-    def drop_duplicates(  # noqa: C901
+    def drop_duplicates(
         self,
         axis: str = "rows",
         subset: Optional[Iterable[str]] = None,
@@ -341,7 +341,7 @@ def diff_table(
     return td
 
 
-def show_diff(  # noqa: PLR0913
+def show_diff(
     diff,
     title: str,
     old: bool = True,

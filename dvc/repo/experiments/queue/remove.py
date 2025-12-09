@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from dvc.repo.experiments.stash import ExpStashEntry
 
 
-def remove_tasks(  # noqa: C901, PLR0912
+def remove_tasks(
     celery_queue: "LocalCeleryQueue",
     queue_entries: Iterable["QueueEntry"],
 ):

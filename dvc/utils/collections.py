@@ -3,7 +3,7 @@ from typing import Union, no_type_check
 
 
 @no_type_check
-def apply_diff(src, dest):  # noqa: C901
+def apply_diff(src, dest):
     """Recursively apply changes from src to dest.
 
     Preserves dest type and hidden info in dest structure,

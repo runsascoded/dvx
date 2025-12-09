@@ -93,7 +93,7 @@ def _(obj: bool, config=None):  # noqa: ARG001
 
 
 @to_str.register(dict)
-def _(obj: dict, config=None):  # noqa: C901
+def _(obj: dict, config=None):
     config = config or {}
 
     result = ""

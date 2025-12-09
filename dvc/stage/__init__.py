@@ -127,7 +127,7 @@ def restore_fields(stage: "Stage") -> None:
 
 
 class Stage(params.StageParams):
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         repo,
         path=None,

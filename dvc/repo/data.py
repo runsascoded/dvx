@@ -484,7 +484,7 @@ def _prune_keys(filter_keys: Iterable["DataIndexKey"]) -> list["DataIndexKey"]:
     return result
 
 
-def status(  # noqa: PLR0913
+def status(
     repo: "Repo",
     targets: Optional[Iterable[Union[os.PathLike[str], str]]] = None,
     *,

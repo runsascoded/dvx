@@ -162,7 +162,7 @@ def _build_rows(
                 )
 
 
-def _sort_column(  # noqa: C901
+def _sort_column(
     sort_by: str,
     metric_names: Mapping[str, Iterable[str]],
     param_names: Mapping[str, Iterable[str]],

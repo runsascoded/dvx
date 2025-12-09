@@ -25,7 +25,7 @@ def _make_index_onerror(onerror, rev):
     return _onerror
 
 
-def _collect_indexes(  # noqa: PLR0913
+def _collect_indexes(
     repo: "Repo",
     targets=None,
     remote=None,
@@ -85,7 +85,7 @@ def _collect_indexes(  # noqa: PLR0913
             idx.data["repo"].onerror = _make_index_onerror(onerror, rev)
 
             indexes[rev or "workspace"] = idx
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if onerror:
                 onerror(rev, None, exc)
             collection_exc = exc
@@ -98,7 +98,7 @@ def _collect_indexes(  # noqa: PLR0913
 
 
 @locked
-def fetch(  # noqa: PLR0913
+def fetch(
     self: "Repo",
     targets=None,
     jobs=None,

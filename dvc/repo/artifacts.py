@@ -333,7 +333,7 @@ class Artifacts:
             )
         except FileExistsLocallyError:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             saved_exc = exc
 
         with Repo.open(
@@ -361,7 +361,7 @@ class Artifacts:
                 )
             except FileExistsLocallyError:
                 raise
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 saved_exc = exc
 
             try:

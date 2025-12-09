@@ -148,7 +148,7 @@ def _log_exceptions(exc: Exception) -> Optional[int]:
     return None
 
 
-def main(argv=None):  # noqa: C901, PLR0912, PLR0915
+def main(argv=None):  # noqa: PLR0915
     """Main entry point for dvc CLI.
 
     Args:
@@ -233,7 +233,7 @@ def main(argv=None):  # noqa: C901, PLR0912, PLR0915
         logger.exception("")
     except DvcParserError:
         ret = 254
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         ret = _log_exceptions(exc) or 255
 
     try:

@@ -14,7 +14,7 @@ from . import locked
 
 @locked
 @scm_context
-def imp_url(  # noqa: PLR0913
+def imp_url(
     self: "Repo",
     url,
     out=None,

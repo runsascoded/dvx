@@ -63,7 +63,7 @@ class CmdDataStatus(CmdBase):
             yield stage, stage_status
 
     @classmethod
-    def _show_status(cls, status: "DataStatus") -> int:  # noqa: C901
+    def _show_status(cls, status: "DataStatus") -> int:
         git_info: GitInfo = status.pop("git")  # type: ignore[misc]
         result = dict(cls._process_status(status))
         if not result:

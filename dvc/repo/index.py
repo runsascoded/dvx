@@ -834,7 +834,7 @@ class IndexView:
         return data
 
 
-def build_data_index(  # noqa: C901, PLR0912
+def build_data_index(
     index: Union["Index", "IndexView"],
     path: str,
     fs: "FileSystem",

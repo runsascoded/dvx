@@ -170,7 +170,7 @@ def test_dir_hash_should_be_key_order_agnostic(tmp_dir, dvc, mocker):
     assert hash1 == hash2
 
 
-def test_partial_push_n_pull(  # noqa: C901
+def test_partial_push_n_pull(
     tmp_dir, dvc, tmp_path_factory, local_remote, mocker
 ):
     from dvc_objects.fs import generic

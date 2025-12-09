@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 
 @locked
-def update(  # noqa: C901
+def update(
     self,
     targets=None,
     rev=None,

@@ -22,7 +22,7 @@ logger = logger.getChild(__name__)
 
 @locked
 @scm_context
-def remove(  # noqa: C901, PLR0912
+def remove(
     repo: "Repo",
     exp_names: Union[str, list[str], None] = None,
     rev: Optional[Union[list[str], str]] = None,

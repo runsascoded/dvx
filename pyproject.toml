@@ -88,6 +88,7 @@ hdfs = ["dvc-hdfs>=3,<4"]
 lint = [
     "mypy==1.19.0",
     "pandas-stubs",
+    "ruff>=0.8",
     "types-colorama",
     "types-psutil",
     "types-pyinstaller",
@@ -263,19 +264,32 @@ skip = "CODE_OF_CONDUCT.md"
 [tool.ruff]
 output-format = "full"
 show-fixes = true
+line-length = 100
+exclude = ["dvc/_version.py"]
 
 [tool.ruff.lint]
 ignore = [
+    "BLE001", # blind-except (too noisy for this codebase)
+    "C901", # complex-structure (many legacy functions)
+    "E501", # line-too-long (handled by formatter)
     "PERF203", # try-except-in-loop
-    "PLC0415",  # import-outside-top-level
+    "PERF402", # manual-list-copy
+    "PGH003", # blanket-type-ignore
+    "PLC0415", # import-outside-top-level
+    "PLR0911", # too-many-return-statements
+    "PLR0912", # too-many-branches
+    "PLR0913", # too-many-arguments
     "PLR2004", # magic-value-comparison
+    "PLW0603", # global-statement
     "PLW2901", # redefined-loop-name
     "S101", # assert
+    "SIM102", # collapsible-if
     "SIM105", # suppressible-exception
-    "SIM108",  # if-else-block-instead-of-if-exp
+    "SIM108", # if-else-block-instead-of-if-exp
     "SIM117", # multiple-with-statements
     "TRY003", # raise-vanilla-args
     "TRY300", # try-consider-else
+    "TRY401", # verbose-log-message
 ]
 select = [
     "F", "E", "W", "C90", "I", "N", "UP", "YTT", "ASYNC", "S", "BLE", "B", "A", "C4", "DTZ", "T10",
@@ -310,7 +324,7 @@ extend-ignore-names = ["M", "SCM"]
 max-args = 10
 
 [tool.ruff.lint.per-file-ignores]
-"dvc/commands/**" = ["N806"]
+"dvc/commands/**" = ["N806", "S602", "S603", "S607"]
 "dvc/testing/**" = ["ARG002"]
 "dvc/testing/benchmarks/**" = ["ARG001"]
 "tests/**" = ["S", "ARG001", "ARG002", "TRY002", "TRY301", "PERF", "PLR2004"]

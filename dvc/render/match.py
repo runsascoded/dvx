@@ -65,7 +65,7 @@ class RendererWithErrors(NamedTuple):
     definition_errors: dict[str, Exception]
 
 
-def match_defs_renderers(  # noqa: C901, PLR0912
+def match_defs_renderers(
     data,
     out=None,
     templates_dir: Optional["StrPath"] = None,
@@ -111,7 +111,7 @@ def match_defs_renderers(  # noqa: C901, PLR0912
                 dps, rev_props = converter.flat_datapoints(rev)
                 if dps and rev not in revs:
                     revs.append(rev)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning("In %r, %s", rev, str(e).lower())
                 def_errors[rev] = e
                 continue

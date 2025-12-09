@@ -108,7 +108,7 @@ def _read_params(
     for file_path, key_paths in params.items():
         try:
             yield file_path, read_param_file(fs, file_path, key_paths, **load_kwargs)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.debug(exc)
             yield file_path, exc
 

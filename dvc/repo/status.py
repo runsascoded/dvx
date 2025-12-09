@@ -104,7 +104,7 @@ def _cloud_status(
 
 
 @locked
-def status(  # noqa: PLR0913
+def status(
     self,
     targets=None,
     jobs=None,

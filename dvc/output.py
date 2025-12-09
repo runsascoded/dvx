@@ -307,7 +307,7 @@ class Output:
     IsStageFileError: type[DvcException] = OutputIsStageFileError
     IsIgnoredError: type[DvcException] = OutputIsIgnoredError
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         stage,
         path,
@@ -819,7 +819,7 @@ class Output:
             )
         return checkout_obj
 
-    def dumpd(self, **kwargs):  # noqa: C901, PLR0912
+    def dumpd(self, **kwargs):
         from dvc.cachemgr import LEGACY_HASH_NAMES
 
         ret: dict[str, Any] = {}
@@ -1145,7 +1145,7 @@ class Output:
             return obj.filter(prefix)
         return obj
 
-    def get_used_objs(  # noqa: PLR0911
+    def get_used_objs(
         self, **kwargs
     ) -> dict[Optional["HashFileDB"], set["HashInfo"]]:
         """Return filtered set of used object IDs for this out."""
@@ -1359,7 +1359,7 @@ class Output:
         meta = Meta(nfiles=len(new), size=size, isdir=True)
         return meta, new
 
-    def add(  # noqa: C901
+    def add(
         self, path: Optional[str] = None, no_commit: bool = False, relink: bool = True
     ) -> Optional["HashFile"]:
         path = path or self.fs_path

@@ -147,7 +147,7 @@ def _git_remote_path_hash(scm: Optional["Base"]) -> Optional[str]:
             path = _parse_git_remote_path(remote_url)
             h = hashlib.md5(path.encode("utf-8"), usedforsecurity=False)  # for FIPS
             return h.hexdigest()
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.debug("Failed to get git remote path", exc_info=True)
     return None
 
@@ -175,7 +175,7 @@ def _runtime_info():
         repo = Repo()
         scm = repo.scm
         remotes = _get_remotes(repo.config)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("failed to open repo: %s", exc)
 
     return {

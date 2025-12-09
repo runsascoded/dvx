@@ -134,7 +134,7 @@ class Console:
                 return self.write(json.text, stderr=stderr)
         return self.rich_print(json, stderr=stderr, soft_wrap=True)
 
-    def rich_print(  # noqa: PLR0913
+    def rich_print(
         self,
         *objects: Any,
         sep: str = " ",

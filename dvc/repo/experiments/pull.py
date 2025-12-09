@@ -19,7 +19,7 @@ logger = logger.getChild(__name__)
 
 @locked
 @scm_context
-def pull(  # noqa: C901
+def pull(
     repo,
     git_remote: str,
     exp_names: Optional[Union[Iterable[str], str]] = None,

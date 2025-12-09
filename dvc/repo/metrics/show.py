@@ -66,7 +66,7 @@ def _read_metrics(
     for metric in metrics:
         try:
             yield metric, _read_metric(fs, metric, **load_kwargs)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.debug(exc)
             yield metric, exc
 
@@ -123,7 +123,7 @@ def try_expand_paths(fs: "FileSystem", paths: Iterable[str]) -> Iterator[str]:
             if fs.isdir(path):
                 yield from fs.find(path)
                 continue
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.debug(
                 "failed to expand %r: %s",
                 path,

@@ -97,7 +97,7 @@ def _get_remote(
     return repo.cloud.get_remote(name, command)
 
 
-def _merge_push_meta(  # noqa: C901
+def _merge_push_meta(
     out: "Output",
     index: Union["DataIndex", "DataIndexView"],
     remote: Optional[str] = None,

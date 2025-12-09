@@ -124,7 +124,7 @@ def push(
     if push_cache:
         try:
             result["uploaded"] = _push_cache(repo, pushed_refs_info, **kwargs)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             e = exc
 
     pushed_refs = [str(r) for r in pushed_refs_info]

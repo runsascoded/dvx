@@ -189,7 +189,7 @@ class VegaConverter(Converter):
             return first(fields)
         return "x"
 
-    def flat_datapoints(self, revision):  # noqa: C901, PLR0912
+    def flat_datapoints(self, revision):
         file2datapoints, properties = self.convert()
 
         props_update: dict[str, Union[str, list[dict[str, str]]]] = {}

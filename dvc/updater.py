@@ -77,7 +77,7 @@ class Updater:
             try:
                 info = json.load(fobj)
                 latest = info["version"]
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.trace("", exc_info=True)
                 logger.debug("'%s' is not a valid json: %s", self.updater_file, e)
                 self.fetch()

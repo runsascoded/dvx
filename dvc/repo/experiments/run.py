@@ -12,7 +12,7 @@ logger = logger.getChild(__name__)
 
 
 @locked
-def run(  # noqa: C901, PLR0912
+def run(
     repo,
     targets: Optional[Iterable[str]] = None,
     params: Optional[Iterable[str]] = None,

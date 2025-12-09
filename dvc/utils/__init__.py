@@ -390,7 +390,7 @@ def error_handler(func):
             vals = func(*args, **kwargs)
             if vals:
                 result["data"] = vals
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             if onerror is not None:
                 onerror(result, e, **kwargs)
         return result

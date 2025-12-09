@@ -185,7 +185,7 @@ def _reproduce(
 
         try:
             ret = repro_fn(stage, upstream=upstream, force=force_stage, **kwargs)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             failed.append(stage)
             if on_error == "fail":
                 _raise_error(exc, stage)

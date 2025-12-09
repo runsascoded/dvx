@@ -189,7 +189,7 @@ class StageCache:
         dump_yaml(tmp, cache)
         self.repo.cache.legacy.move(tmp, path)
 
-    def restore(self, stage, run_cache=True, pull=False, dry=False):  # noqa: C901
+    def restore(self, stage, run_cache=True, pull=False, dry=False):
         from .serialize import to_single_stage_lockfile
 
         if not _can_hash(stage):

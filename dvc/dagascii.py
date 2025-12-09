@@ -80,7 +80,7 @@ class AsciiCanvas:
 
         self.canvas[y][x] = char
 
-    def line(self, x0, y0, x1, y1, char):  # noqa: C901, PLR0912
+    def line(self, x0, y0, x1, y1, char):
         """Create a line on ASCII canvas.
 
         Args:

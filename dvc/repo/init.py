@@ -12,7 +12,7 @@ from dvc.utils.fs import remove
 logger = logger.getChild(__name__)
 
 
-def init(root_dir=os.curdir, no_scm=False, force=False, subdir=False):  # noqa: C901
+def init(root_dir=os.curdir, no_scm=False, force=False, subdir=False):
     """
     Creates an empty repo on the given directory -- basically a
     `.dvc` directory with subdirectories for configuration and cache.

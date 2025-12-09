@@ -107,7 +107,7 @@ def _check_can_delete(
 
 
 @locked
-def checkout(  # noqa: C901
+def checkout(
     self,
     targets=None,
     with_deps=False,

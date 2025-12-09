@@ -113,7 +113,7 @@ class TestColorFormatter:
         with caplog.at_level(logging.DEBUG, logger="dvc"):
             try:
                 raise Exception("description")
-            except Exception:  # noqa: BLE001
+            except Exception:
                 stack_trace = traceback.format_exc()
                 logger.debug("", exc_info=True)
 
@@ -151,7 +151,7 @@ class TestColorFormatter:
         with caplog.at_level(logging.DEBUG, logger="dvc"):
             try:
                 raise Exception("first")
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 try:
                     raise DvcException("second") from exc
                 except DvcException:

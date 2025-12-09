@@ -96,7 +96,7 @@ class YAMLSyntaxError(PrettyDvcException, YAMLFileCorruptedError):
         super().__init__(path)
         self.relpath: str = path
 
-    def __pretty_exc__(self, **kwargs: Any) -> None:  # noqa: C901
+    def __pretty_exc__(self, **kwargs: Any) -> None:
         from ruamel.yaml.error import MarkedYAMLError
 
         exc = self.exc.__cause__

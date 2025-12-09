@@ -92,7 +92,7 @@ class ColorFormatter(logging.Formatter):
         self.log_colors = log_colors
         self.show_traceback = show_traceback
 
-    def format(self, record) -> str:  # noqa: C901
+    def format(self, record) -> str:
         record.message = record.getMessage()
         msg = self.formatMessage(record)
 
@@ -150,7 +150,7 @@ class LoggerHandler(logging.StreamHandler):
                         self.emit_pretty_exception(exc, verbose=_is_verbose())
                         if not _is_verbose():
                             return
-                    except Exception:  # noqa: BLE001, S110
+                    except Exception:  # noqa: S110
                         pass
 
             msg = self.format(record)
@@ -158,7 +158,7 @@ class LoggerHandler(logging.StreamHandler):
             self.flush()
         except (BrokenPipeError, RecursionError):
             raise
-        except Exception:  # noqa: BLE001
+        except Exception:
             self.handleError(record)
 
 
