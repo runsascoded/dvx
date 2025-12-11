@@ -1,17 +1,9 @@
 ---
-name: "\U0001F41B Bug Report"
-about: Create a bug report to help us improve DVC
+name: "Bug Report"
+about: Create a bug report to help us improve DVX
 ---
 
 # Bug Report
-
-<!--
-## Issue name
-
-Issue names must follow the pattern `command: description` where the command is the dvc command that you are trying to run. The description should describe the consequence of the bug.
-
-Example: `repro: doesn't detect input changes`
--->
 
 ## Description
 
@@ -23,17 +15,12 @@ A clear and concise description of what the bug is.
 
 <!--
 Step list of how to reproduce the bug
--->
 
-<!--
 Example:
-
-1. dvc init
-2. Copy dataset.zip to the directory
-3. dvc add dataset.zip
-4. dvc run -d dataset.zip -o model ./train.sh
-5. modify dataset.zip
-6. dvc repro
+1. dvx init
+2. dvx add dataset.zip
+3. dvx push
+4. ...
 -->
 
 ### Expected
@@ -48,17 +35,14 @@ A clear and concise description of what you expect to happen.
 This is required to ensure that we can reproduce the bug.
 -->
 
-**Output of `dvc doctor`:**
+**Output of `dvx version`:**
 
 ```console
-$ dvc doctor
+$ dvx version
 ```
 
 **Additional Information (if any):**
 
 <!--
-Please check https://github.com/treeverse/dvc/wiki/Debugging-DVC on ways to gather more information regarding the issue.
-
-If applicable, please also provide a `--verbose` output of the command, eg: `dvc add --verbose`.
-If the issue is regarding the performance, please attach the profiling information and the benchmark comparisons.
+If applicable, please also provide a `--verbose` output of the command, eg: `dvx add --verbose`.
 -->

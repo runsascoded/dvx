@@ -19,8 +19,6 @@ jobs:
   lint:
     timeout-minutes: 10
     runs-on: ${{ matrix.os }}
-    env:
-       DVC_NO_ANALYTICS: true
     strategy:
       fail-fast: false
       matrix:
@@ -164,16 +162,3 @@ jobs:
       - uses: re-actors/alls-green@release/v1
         with:
           jobs: ${{ toJSON(needs) }}
-  notify:
-    if: github.ref == 'refs/heads/main' && failure()
-    needs: [tests]
-    runs-on: ubuntu-latest
-    steps:
-    - name: Slack Notification
-      uses: rtCamp/action-slack-notify@v2.3.3
-      env:
-        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-        SLACK_COLOR: ${{ job.status }}
-        SLACK_MESSAGE: 'CI Failed on main :boom:'
-        SLACK_TITLE: CI Status
-        SLACK_USERNAME: DVC-CI

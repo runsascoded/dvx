@@ -30,7 +30,7 @@ jobs:
 
       - run: uv pip install '.[tests]' --system
       - name: run benchmarks on base branch
-        run: pytest --benchmark-autosave dvc/testing/benchmarks/ -k 'test_init or test_help'
+        run: pytest --benchmark-autosave dvx/testing/benchmarks/ -k 'test_init or test_help'
 
       - uses: actions/checkout@v6
         with:
@@ -41,4 +41,4 @@ jobs:
         run: >
           pytest --benchmark-compare --benchmark-compare-fail=min:5%
           --benchmark-group-by name
-          dvc/testing/benchmarks/ -k 'test_init or test_help'
+          dvx/testing/benchmarks/ -k 'test_init or test_help'

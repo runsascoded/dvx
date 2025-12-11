@@ -14,8 +14,8 @@ keywords = [
 ]
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-maintainers = [{ name = "Treeverse", email = "support@dvc.org" }]
 authors = [{ name = "Dmitry Petrov", email = "dmitry@dvc.org" }]
+maintainers = [{ name = "Ryan Williams" }]
 requires-python = ">=3.9"
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -115,9 +115,8 @@ webhdfs = ["dvc-webhdfs>=3.1,<4"]
 webhdfs_kerberos = ["dvc-webhdfs[kerberos]>=3.1,<4"]
 
 [project.urls]
-Documentation = "https://dvc.org/doc"
-Issues = "https://github.com/treeverse/dvc/issues"
-Source = "https://github.com/treeverse/dvc"
+Issues = "https://github.com/runsascoded/dvx/issues"
+Source = "https://github.com/runsascoded/dvx"
 
 [project.scripts]
 dvx = "dvx.cli:main"
