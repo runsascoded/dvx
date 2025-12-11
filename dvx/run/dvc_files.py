@@ -1,18 +1,57 @@
 """Read/write .dvc files for output tracking.
 
-dvc-run uses individual .dvc files to track pipeline outputs rather than
+DVX uses individual .dvc files to track pipeline outputs rather than
 a centralized dvc.lock file. This provides:
 - Locality: hash and provenance info lives next to each artifact
 - Git-friendly: small, independent files instead of one large lock file
-- Tooling compatibility: works with existing .dvc-based workflows
+- Self-documenting: each artifact knows how it was produced
+
+The DVX .dvc format extends standard DVC with a `computation` block:
+
+```yaml
+outs:
+- md5: abc123...
+  size: 12345
+  path: output.parquet
+
+computation:
+  cmd: "python process.py --input data.csv"
+  code_ref: "a1b2c3d4..."  # git SHA when computed
+  deps:
+    data.csv: def456...
+    process.py: 789abc...
+```
 """
 
-from dataclasses import dataclass
+import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 
 from dvx.run.hash import compute_md5, compute_file_size
+
+
+def get_git_head_sha(repo_path: Path | None = None) -> str | None:
+    """Get the current HEAD commit SHA.
+
+    Args:
+        repo_path: Path to git repository (default: current directory)
+
+    Returns:
+        Full SHA string, or None if not in a git repo
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
 
 
 @dataclass
@@ -22,14 +61,18 @@ class DVCFileInfo:
     path: str
     md5: str
     size: int
-    # Provenance (optional)
-    stage: str | None = None
+    # Provenance via computation block (optional)
     cmd: str | None = None
-    deps: dict[str, str] | None = None  # {path: md5}
+    code_ref: str | None = None  # git SHA
+    deps: dict[str, str] = field(default_factory=dict)  # {path: md5}
+    # Legacy field for backward compatibility
+    stage: str | None = None
 
 
 def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
     """Read .dvc file for an output.
+
+    Handles both DVX format (computation block) and legacy format (meta block).
 
     Args:
         output_path: Path to the output file/directory
@@ -49,15 +92,20 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
         return None
 
     out = data['outs'][0]
+
+    # Try new computation block first, fall back to legacy meta block
+    computation = data.get('computation', {})
     meta = data.get('meta', {})
 
     return DVCFileInfo(
         path=out.get('path', str(output_path)),
         md5=out.get('md5', ''),
         size=out.get('size', 0),
-        stage=meta.get('stage'),
-        cmd=meta.get('cmd'),
-        deps=meta.get('deps'),
+        # Prefer computation block, fall back to meta
+        cmd=computation.get('cmd') or meta.get('cmd'),
+        code_ref=computation.get('code_ref'),
+        deps=computation.get('deps') or meta.get('deps') or {},
+        stage=meta.get('stage'),  # Legacy only
     )
 
 
@@ -65,19 +113,21 @@ def write_dvc_file(
     output_path: Path,
     md5: str,
     size: int,
-    stage: str | None = None,
     cmd: str | None = None,
+    code_ref: str | None = None,
     deps: dict[str, str] | None = None,
+    stage: str | None = None,  # Legacy, deprecated
 ) -> Path:
-    """Write .dvc file for an output.
+    """Write .dvc file for an output with provenance.
 
     Args:
         output_path: Path to the output file/directory
         md5: MD5 hash of the output
         size: Size in bytes
-        stage: Name of the stage that produced this (provenance)
         cmd: Command that was run (provenance)
+        code_ref: Git SHA when computation was run (provenance)
         deps: {dep_path: md5} of inputs (provenance)
+        stage: Deprecated, kept for backward compatibility
 
     Returns:
         Path to the created .dvc file
@@ -95,15 +145,15 @@ def write_dvc_file(
         }]
     }
 
-    # Add provenance metadata
-    if stage or cmd or deps:
-        data['meta'] = {}
-        if stage:
-            data['meta']['stage'] = stage
+    # Add computation block for provenance
+    if cmd or code_ref or deps:
+        data['computation'] = {}
         if cmd:
-            data['meta']['cmd'] = cmd
+            data['computation']['cmd'] = cmd
+        if code_ref:
+            data['computation']['code_ref'] = code_ref
         if deps:
-            data['meta']['deps'] = deps
+            data['computation']['deps'] = deps
 
     with open(dvc_path, 'w') as f:
         yaml.dump(data, f, sort_keys=False, default_flow_style=False)
@@ -111,11 +161,24 @@ def write_dvc_file(
     return dvc_path
 
 
-def is_output_fresh(output_path: Path) -> tuple[bool, str]:
-    """Check if output matches its .dvc file.
+def is_output_fresh(
+    output_path: Path,
+    check_deps: bool = True,
+) -> tuple[bool, str]:
+    """Check if output is fresh (up-to-date with its .dvc file and deps).
+
+    Freshness is determined by:
+    1. Output file exists
+    2. Output hash matches .dvc file
+    3. All dependency hashes match (if check_deps=True and deps recorded)
+
+    Note: code_ref checking is not done here - that would require determining
+    if relevant code changed between recorded SHA and current HEAD, which is
+    more complex. For now, code_ref serves as documentation/audit trail.
 
     Args:
         output_path: Path to the output file/directory
+        check_deps: Whether to verify dependency hashes (default: True)
 
     Returns:
         Tuple of (is_fresh, reason)
@@ -128,13 +191,28 @@ def is_output_fresh(output_path: Path) -> tuple[bool, str]:
     if not path.exists():
         return False, "output missing"
 
+    # Check output hash
     try:
         current_md5 = compute_md5(path)
     except (FileNotFoundError, ValueError) as e:
         return False, f"hash error: {e}"
 
     if current_md5 != info.md5:
-        return False, f"hash mismatch ({info.md5[:8]}... vs {current_md5[:8]}...)"
+        return False, f"output hash mismatch ({info.md5[:8]}... vs {current_md5[:8]}...)"
+
+    # Check dependency hashes if requested and deps are recorded
+    if check_deps and info.deps:
+        for dep_path, recorded_md5 in info.deps.items():
+            dep = Path(dep_path)
+            if not dep.exists():
+                return False, f"dep missing: {dep_path}"
+            try:
+                current_dep_md5 = compute_md5(dep)
+            except (FileNotFoundError, ValueError) as e:
+                return False, f"dep hash error ({dep_path}): {e}"
+
+            if current_dep_md5 != recorded_md5:
+                return False, f"dep changed: {dep_path}"
 
     return True, "up-to-date"
 

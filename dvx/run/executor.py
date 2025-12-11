@@ -8,7 +8,7 @@ from typing import TextIO
 
 from dvx.run.dag import DAG
 from dvx.run.dvc import DVCClient
-from dvx.run.dvc_files import is_output_fresh, write_dvc_file
+from dvx.run.dvc_files import get_git_head_sha, is_output_fresh, write_dvc_file
 from dvx.run.hash import compute_md5, compute_file_size
 
 
@@ -52,6 +52,8 @@ class ParallelExecutor:
         self.force = force
         self.provenance = provenance
         self.dvc = DVCClient()
+        # Capture git SHA once at start for consistent provenance
+        self.code_ref = get_git_head_sha() if provenance else None
 
     def execute(self) -> list[ExecutionResult]:
         """Execute all stages in the DAG, respecting dependencies.
@@ -181,8 +183,8 @@ class ParallelExecutor:
                         output_path=out,
                         md5=md5,
                         size=size,
-                        stage=stage_name if self.provenance else None,
                         cmd=stage.cmd if self.provenance else None,
+                        code_ref=self.code_ref,
                         deps=deps_hashes if self.provenance else None,
                     )
                     dvc_files.append(dvc_file)
