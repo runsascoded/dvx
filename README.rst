@@ -15,6 +15,7 @@ Features
 - **Version data files**: Track large files with small `.dvc` metafiles in Git
 - **Content-addressable storage**: Files are hashed and deduplicated automatically
 - **Remote storage**: Push/pull data to S3, GCS, Azure, SSH, and more
+- **Parallel pipelines**: Execute ``dvc.yaml`` stages in parallel with ``dvx run``
 - **Git integration**: Works seamlessly with your existing Git workflow
 
 What's Different from DVC?
@@ -24,9 +25,12 @@ DVX removes DVC's ML-specific features to provide a simpler, focused tool:
 
 **Removed:**
 
-- Pipelines (``dvc repro``, ``dvc run``, ``dvc stage``, ``dvc dag``)
 - Experiments (``dvc exp``, metrics, params, plots)
 - Studio integration and telemetry
+
+**Simplified:**
+
+- ``dvx run`` replaces ``dvc repro`` with parallel execution by default
 
 **Retained:**
 
@@ -37,6 +41,7 @@ DVX removes DVC's ML-specific features to provide a simpler, focused tool:
 - ``dvx gc`` - Garbage collect unused cache
 - ``dvx remote`` / ``dvx config`` - Configure remotes and settings
 - ``dvx import`` / ``dvx get`` - Import files from external repos
+- ``dvx run`` - Execute pipeline stages in parallel
 
 Quick Start
 -----------
@@ -61,6 +66,28 @@ Quick Start
 
    # Push data to remote
    dvx push
+
+Pipeline Execution
+------------------
+
+DVX can execute ``dvc.yaml`` pipelines with parallel stage execution:
+
+.. code-block:: bash
+
+   # Run all stages (parallel by default)
+   dvx run
+
+   # Limit to 4 parallel workers
+   dvx run -j 4
+
+   # Show execution plan without running
+   dvx run --dry-run
+
+   # Run specific stage and its dependencies
+   dvx run process_data
+
+   # Export DAG visualization
+   dvx run --dot pipeline.dot
 
 Installation
 ------------
