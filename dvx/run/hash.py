@@ -40,7 +40,7 @@ def _hash_file(file_path: Path) -> str:
     Returns:
         MD5 hash of file contents
     """
-    md5 = hashlib.md5()
+    md5 = hashlib.md5()  # noqa: S324
     with open(file_path, "rb") as f:
         # Read in 64KB chunks to handle large files efficiently
         for chunk in iter(lambda: f.read(65536), b""):
@@ -71,7 +71,7 @@ def _hash_directory(dir_path: Path) -> str:
 
     # Hash the JSON representation (sorted for determinism)
     json_str = json.dumps(file_hashes, sort_keys=True, separators=(",", ":"))
-    return hashlib.md5(json_str.encode()).hexdigest()
+    return hashlib.md5(json_str.encode()).hexdigest()  # noqa: S324
 
 
 def compute_file_size(file_path: Path) -> int:

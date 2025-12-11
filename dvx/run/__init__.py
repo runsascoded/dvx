@@ -2,7 +2,7 @@
 
 This module provides the core DVX functionality:
 - Artifact and Computation classes for lazy pipeline construction
-- DAG-based execution engine
+- Parallel execution engine for .dvc file computations
 - .dvc file read/write with provenance tracking
 - Efficient freshness checking with mtime caching
 
@@ -22,8 +22,9 @@ Example usage:
     # Option A: Write .dvc files only (prep)
     result.write_dvc()
 
-    # Option B: Write and execute (prep + run)
-    materialize([result])
+    # Option B: Execute with parallel support
+    from dvx.run import run, ExecutionConfig
+    run([Path("output.dvc")], ExecutionConfig(max_workers=4))
 """
 
 from dvx.run.artifact import (
@@ -33,23 +34,23 @@ from dvx.run.artifact import (
     materialize,
     write_all_dvc,
 )
-from dvx.run.repro import (
-    ReproConfig,
-    ReproResult,
-    repro,
-    status,
+from dvx.run.executor import (
+    ExecutionConfig,
+    ExecutionResult,
+    ParallelExecutor,
+    run,
 )
 
 __all__ = [
     # artifact module
     "Artifact",
     "Computation",
+    # executor module
+    "ExecutionConfig",
+    "ExecutionResult",
+    "ParallelExecutor",
     "delayed",
     "materialize",
+    "run",
     "write_all_dvc",
-    # repro module
-    "ReproConfig",
-    "ReproResult",
-    "repro",
-    "status",
 ]

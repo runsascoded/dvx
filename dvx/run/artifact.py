@@ -336,17 +336,14 @@ def write_all_dvc(artifacts: list[Artifact], capture_code_ref: bool = True) -> l
                 all_artifacts.append(a)
 
     # Write .dvc files in dependency order (leaves first)
-    paths = []
-    for artifact in all_artifacts:
-        if artifact.computation:  # Only write computed artifacts
-            paths.append(artifact.write_dvc(capture_code_ref))
+    # Only write computed artifacts
+    return [artifact.write_dvc(capture_code_ref) for artifact in all_artifacts if artifact.computation]
 
-    return paths
 
 
 def materialize(
     artifacts: list[Artifact],
-    parallel: int = 1,
+    parallel: int = 1,  # noqa: ARG001
     force: bool = False,
 ) -> list[Artifact]:
     """Execute computations for all stale artifacts.
@@ -385,7 +382,7 @@ def materialize(
 
         # Check if already fresh
         if not force:
-            fresh, reason = is_output_fresh(path)
+            fresh, _reason = is_output_fresh(path)
             if fresh:
                 continue
 

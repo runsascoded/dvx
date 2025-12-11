@@ -1,180 +1,298 @@
-"""Parallel executor for DVC pipeline stages."""
+"""Parallel executor for DVX artifact computations.
 
+Executes artifact computations in parallel, respecting dependencies.
+Uses the provenance information in .dvc files (computation blocks).
+"""
+
+import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
 
-from dvx.run.dag import DAG
-from dvx.run.dvc import DVCClient
+from dvx.run.artifact import Artifact
 from dvx.run.dvc_files import get_git_head_sha, is_output_fresh, write_dvc_file
 from dvx.run.hash import compute_file_size, compute_md5
 
 
 @dataclass
 class ExecutionResult:
-    """Result of executing a stage."""
+    """Result of executing an artifact computation."""
 
-    stage_name: str
+    path: str
     success: bool
     skipped: bool = False
-    message: str = ""
-    dvc_files: list[Path] | None = None  # .dvc files created
+    reason: str = ""
+    duration: float = 0.0
+    dvc_file: Path | None = None
+
+
+@dataclass
+class ExecutionConfig:
+    """Configuration for execution."""
+
+    max_workers: int | None = None
+    dry_run: bool = False
+    force: bool = False
+    force_patterns: list[str] = field(default_factory=list)
+    cached_patterns: list[str] = field(default_factory=list)
+    provenance: bool = True
+    verbose: bool = False
+
+
+def _matches_patterns(path: str, patterns: list[str]) -> bool:
+    """Check if path matches any glob pattern."""
+    import fnmatch
+    return any(fnmatch.fnmatch(path, p) for p in patterns)
+
+
+def _group_into_levels(artifacts: list[Artifact]) -> list[list[Artifact]]:
+    """Group artifacts into execution levels for parallel execution.
+
+    Artifacts in the same level have no dependencies on each other
+    and can be executed in parallel.
+
+    Args:
+        artifacts: List of artifacts in topological order (deps first)
+
+    Returns:
+        List of levels, where each level is a list of artifacts
+    """
+    # Track which artifacts are "done" (either executed or scheduled)
+    done: set[str] = set()
+    levels: list[list[Artifact]] = []
+
+    remaining = list(artifacts)
+
+    while remaining:
+        # Find artifacts whose deps are all done
+        ready = []
+        not_ready = []
+
+        for artifact in remaining:
+            if artifact.computation is None:
+                # Leaf nodes are always ready
+                ready.append(artifact)
+            else:
+                # Check if all deps are done
+                deps_done = True
+                for dep in artifact.computation.deps:
+                    dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
+                    if dep_path not in done:
+                        deps_done = False
+                        break
+
+                if deps_done:
+                    ready.append(artifact)
+                else:
+                    not_ready.append(artifact)
+
+        if not ready:
+            # This shouldn't happen with a valid DAG
+            raise RuntimeError("Circular dependency detected")
+
+        # Add ready artifacts to current level
+        levels.append(ready)
+        for a in ready:
+            done.add(a.path)
+
+        remaining = not_ready
+
+    return levels
 
 
 class ParallelExecutor:
-    """Execute DVC pipeline stages in parallel."""
+    """Execute artifact computations in parallel."""
 
     def __init__(
         self,
-        dag: DAG,
-        max_workers: int | None = None,
-        dry_run: bool = False,
-        output: TextIO = sys.stderr,
-        force: bool = False,
-        provenance: bool = True,
+        artifacts: list[Artifact],
+        config: ExecutionConfig | None = None,
+        output: TextIO | None = None,
     ):
         """Initialize parallel executor.
 
         Args:
-            dag: Dependency graph of stages
-            max_workers: Maximum number of parallel workers (default: CPU count)
-            dry_run: If True, don't actually run stages
+            artifacts: List of artifacts to execute (in dependency order)
+            config: Execution configuration
             output: Stream for logging output (default: stderr)
-            force: If True, skip all freshness checks and re-run everything
-            provenance: If True, include provenance metadata in .dvc files
         """
-        self.dag = dag
-        self.max_workers = max_workers
-        self.dry_run = dry_run
-        self.output = output
-        self.force = force
-        self.provenance = provenance
-        self.dvc = DVCClient()
+        self.artifacts = artifacts
+        self.config = config or ExecutionConfig()
+        self.output = output or sys.stderr
         # Capture git SHA once at start for consistent provenance
-        self.code_ref = get_git_head_sha() if provenance else None
+        self.code_ref = get_git_head_sha() if self.config.provenance else None
 
     def execute(self) -> list[ExecutionResult]:
-        """Execute all stages in the DAG, respecting dependencies.
+        """Execute all artifacts, respecting dependencies.
 
         Returns:
-            List of ExecutionResult for each stage
-
-        Raises:
-            RuntimeError: If any stage fails
+            List of ExecutionResult for each artifact
         """
-        levels = self.dag.topological_sort()
+        # Group into levels
+        levels = _group_into_levels(self.artifacts)
 
-        self._log(f"Execution plan ({len(levels)} levels, {len(self.dag.stages)} stages):")
-        for i, level in enumerate(levels, 1):
-            self._log(f"  Level {i}: {', '.join(level)}")
+        # Filter out leaf nodes (no computation)
+        levels = [
+            [a for a in level if a.computation is not None]
+            for level in levels
+        ]
+        levels = [level for level in levels if level]  # Remove empty levels
 
-        if self.dry_run:
-            self._log("\nDry run - no stages will be executed")
+        if not levels:
+            self._log("No computations to execute")
             return []
 
-        self._log("")  # blank line before execution
+        total_stages = sum(len(level) for level in levels)
+        self._log(f"Execution plan: {len(levels)} levels, {total_stages} computations")
+
+        if self.config.verbose:
+            for i, level in enumerate(levels, 1):
+                paths = [a.path for a in level]
+                self._log(f"  Level {i}: {', '.join(paths)}")
+
+        if self.config.dry_run:
+            self._log("\nDry run - showing what would execute:")
+            results = []
+            for level in levels:
+                for artifact in level:
+                    should_run, reason = self._should_run(artifact)
+                    status = "would run" if should_run else f"skip ({reason})"
+                    self._log(f"  {artifact.path}: {status}")
+                    results.append(ExecutionResult(
+                        path=artifact.path,
+                        success=True,
+                        skipped=not should_run,
+                        reason=reason,
+                    ))
+            return results
+
+        self._log("")
 
         results = []
         for level_num, level in enumerate(levels, 1):
-            self._log(f"Level {level_num}/{len(levels)}: {len(level)} stage(s)")
+            self._log(f"Level {level_num}/{len(levels)}: {len(level)} computation(s)")
             level_results = self._execute_level(level)
             results.extend(level_results)
 
             # Check for failures
-            failures = [r for r in level_results if not r.success and not r.skipped]
+            failures = [r for r in level_results if not r.success]
             if failures:
-                failed_stages = ", ".join(r.stage_name for r in failures)
-                raise RuntimeError(f"Stage(s) failed: {failed_stages}")
+                failed = ", ".join(r.path for r in failures)
+                self._log(f"\nFailed: {failed}")
+                break
 
         return results
 
-    def _execute_level(self, stage_names: list[str]) -> list[ExecutionResult]:
-        """Execute all stages in a level in parallel.
-
-        Args:
-            stage_names: List of stage names to execute
+    def _should_run(self, artifact: Artifact) -> tuple[bool, str]:
+        """Check if artifact should be executed.
 
         Returns:
-            List of ExecutionResult, one per stage
+            Tuple of (should_run, reason)
         """
-        if len(stage_names) == 1:
-            # Single stage - run directly without thread pool overhead
-            return [self._execute_stage(stage_names[0])]
+        path = artifact.path
 
-        # Multiple stages - run in parallel
+        # Check cached patterns
+        if _matches_patterns(path, self.config.cached_patterns):
+            return False, "cached by pattern"
+
+        # Check force
+        if self.config.force or _matches_patterns(path, self.config.force_patterns):
+            return True, "forced"
+
+        # Check freshness
+        fresh, reason = is_output_fresh(Path(path))
+        if fresh:
+            return False, reason
+
+        return True, reason
+
+    def _execute_level(self, artifacts: list[Artifact]) -> list[ExecutionResult]:
+        """Execute all artifacts in a level in parallel.
+
+        Args:
+            artifacts: List of artifacts to execute
+
+        Returns:
+            List of ExecutionResult, one per artifact
+        """
+        if len(artifacts) == 1:
+            # Single artifact - run directly without thread pool overhead
+            return [self._execute_artifact(artifacts[0])]
+
+        # Multiple artifacts - run in parallel
         results = []
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+        with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
             futures = {
-                executor.submit(self._execute_stage, stage_name): stage_name
-                for stage_name in stage_names
+                executor.submit(self._execute_artifact, artifact): artifact
+                for artifact in artifacts
             }
 
             for future in as_completed(futures):
-                stage_name = futures[future]
+                artifact = futures[future]
                 try:
                     result = future.result()
                     results.append(result)
                 except Exception as e:
-                    self._log(f"  ✗ {stage_name}: {e}")
-                    results.append(
-                        ExecutionResult(
-                            stage_name=stage_name,
-                            success=False,
-                            message=str(e),
-                        )
-                    )
+                    self._log(f"  ✗ {artifact.path}: {e}")
+                    results.append(ExecutionResult(
+                        path=artifact.path,
+                        success=False,
+                        reason=str(e),
+                    ))
 
         return results
 
-    def _execute_stage(self, stage_name: str) -> ExecutionResult:
-        """Execute a single stage.
+    def _execute_artifact(self, artifact: Artifact) -> ExecutionResult:
+        """Execute a single artifact computation.
 
         Args:
-            stage_name: Name of stage to execute
+            artifact: Artifact to execute
 
         Returns:
-            ExecutionResult for this stage
+            ExecutionResult for this artifact
         """
-        stage = self.dag.stages[stage_name]
+        import time
 
-        # Check if all outputs are fresh (unless forcing)
-        if not self.force and stage.outs:
-            all_fresh = True
-            for out_path in stage.outs:
-                fresh, reason = is_output_fresh(Path(out_path))
-                if not fresh:
-                    all_fresh = False
-                    break
+        path = artifact.path
 
-            if all_fresh:
-                self._log(f"  ⊙ {stage_name}: up-to-date")
-                return ExecutionResult(
-                    stage_name=stage_name,
-                    success=True,
-                    skipped=True,
-                    message="up-to-date",
-                )
+        # Check if should run
+        should_run, reason = self._should_run(artifact)
+        if not should_run:
+            self._log(f"  ○ {path}: {reason}")
+            return ExecutionResult(
+                path=path,
+                success=True,
+                skipped=True,
+                reason=reason,
+            )
 
-        # Run the stage command
-        self._log(f"  ⟳ {stage_name}: running...")
+        # Run the computation
+        cmd = artifact.computation.cmd
+        self._log(f"  ⟳ {path}: running...")
+
+        start_time = time.time()
+
         try:
-            self.dvc.run_command(stage.cmd)
+            subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            duration = time.time() - start_time
 
             # Compute dependency hashes for provenance
             deps_hashes = {}
-            if self.provenance:
-                for dep_path in stage.deps:
-                    try:
-                        deps_hashes[dep_path] = compute_md5(Path(dep_path))
-                    except (FileNotFoundError, ValueError) as e:
-                        self._log(f"  ⚠ {stage_name}: couldn't hash dep {dep_path}: {e}")
+            if self.config.provenance:
+                deps_hashes = artifact.computation.get_dep_hashes()
 
-            # Write .dvc files for all outputs
-            dvc_files = []
-            for out_path in stage.outs:
-                out = Path(out_path)
+            # Write .dvc file for output
+            out = Path(path)
+            dvc_file = None
+            if out.exists():
                 try:
                     md5 = compute_md5(out)
                     size = compute_file_size(out)
@@ -183,30 +301,122 @@ class ParallelExecutor:
                         output_path=out,
                         md5=md5,
                         size=size,
-                        cmd=stage.cmd if self.provenance else None,
+                        cmd=cmd if self.config.provenance else None,
                         code_ref=self.code_ref,
-                        deps=deps_hashes if self.provenance else None,
+                        deps=deps_hashes if self.config.provenance else None,
                     )
-                    dvc_files.append(dvc_file)
-                    self._log(f"       → {dvc_file}")
+                    if self.config.verbose:
+                        self._log(f"       → {dvc_file}")
                 except (FileNotFoundError, ValueError) as e:
-                    self._log(f"  ⚠ {stage_name}: couldn't write .dvc for {out_path}: {e}")
+                    self._log(f"  ⚠ {path}: couldn't write .dvc: {e}")
 
-            self._log(f"  ✓ {stage_name}: completed")
+            self._log(f"  ✓ {path}: completed ({duration:.1f}s)")
             return ExecutionResult(
-                stage_name=stage_name,
+                path=path,
                 success=True,
-                message="completed",
-                dvc_files=dvc_files,
+                reason="completed",
+                duration=duration,
+                dvc_file=dvc_file,
             )
-        except RuntimeError as e:
-            self._log(f"  ✗ {stage_name}: failed")
+
+        except subprocess.CalledProcessError as e:
+            duration = time.time() - start_time
+            error_msg = e.stderr[:200] if e.stderr else str(e)
+            self._log(f"  ✗ {path}: failed")
+            if self.config.verbose:
+                self._log(f"       {error_msg}")
             return ExecutionResult(
-                stage_name=stage_name,
+                path=path,
                 success=False,
-                message=str(e),
+                reason=f"command failed: {error_msg}",
+                duration=duration,
             )
 
     def _log(self, message: str):
         """Write log message to output stream."""
         print(message, file=self.output)
+
+
+def run(
+    targets: list[Path],
+    config: ExecutionConfig | None = None,
+    output: TextIO | None = None,
+) -> list[ExecutionResult]:
+    """Execute computations for .dvc file targets.
+
+    This is the main entry point for `dvx run`.
+
+    Args:
+        targets: List of .dvc files or output paths
+        config: Execution configuration
+        output: Output stream for logging
+
+    Returns:
+        List of ExecutionResult for each artifact
+    """
+    from dvx.run.artifact import Artifact
+
+    # Build artifact graph from .dvc files
+    artifacts: dict[str, Artifact] = {}
+    pending = list(targets)
+
+    while pending:
+        target = pending.pop(0)
+
+        # Get output path from .dvc path
+        if str(target).endswith(".dvc"):
+            output_path = Path(str(target)[:-4])
+        else:
+            output_path = target
+
+        output_str = str(output_path)
+
+        if output_str in artifacts:
+            continue
+
+        # Load artifact from .dvc file
+        artifact = Artifact.from_dvc(output_path)
+        if artifact is None:
+            # No .dvc file - treat as leaf
+            artifact = Artifact(path=output_str)
+
+        artifacts[output_str] = artifact
+
+        # Queue dependencies
+        if artifact.computation:
+            for dep in artifact.computation.deps:
+                dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
+                dvc_file = Path(str(dep_path) + ".dvc")
+                if dvc_file.exists() and dep_path not in artifacts:
+                    pending.append(dvc_file)
+
+    # Topological sort (deps first)
+    sorted_artifacts = _topological_sort(artifacts)
+
+    # Execute
+    executor = ParallelExecutor(sorted_artifacts, config, output)
+    return executor.execute()
+
+
+def _topological_sort(artifacts: dict[str, Artifact]) -> list[Artifact]:
+    """Sort artifacts in dependency order (deps first)."""
+    visited: set[str] = set()
+    result: list[Artifact] = []
+
+    def visit(artifact: Artifact):
+        if artifact.path in visited:
+            return
+        visited.add(artifact.path)
+
+        if artifact.computation:
+            for dep in artifact.computation.deps:
+                dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
+                if dep_path in artifacts:
+                    visit(artifacts[dep_path])
+
+        result.append(artifact)
+
+    for artifact in artifacts.values():
+        visit(artifact)
+
+    return result

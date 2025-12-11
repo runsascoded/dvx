@@ -1,4 +1,7 @@
+"""DVX run command - execute artifact computations from .dvc files."""
+
 import sys
+from pathlib import Path
 
 from dvx.cli import formatter
 from dvx.cli.command import CmdBase
@@ -9,129 +12,57 @@ logger = logger.getChild(__name__)
 
 class CmdRun(CmdBase):
     def run(self):
-        from pathlib import Path
-
-        from dvx.run.dag import DAG
-        from dvx.run.executor import ParallelExecutor
-        from dvx.run.parser import DVCYamlParser
+        from dvx.run.executor import ExecutionConfig, run
 
         args = self.args
-        dvc_yaml = Path(args.file)
+
+        # Find targets
+        targets = list(args.targets) if args.targets else []
+        if not targets:
+            # Default: find all .dvc files in current directory
+            targets = list(Path(".").glob("*.dvc"))
+            if not targets:
+                logger.error("No .dvc files found in current directory")
+                logger.error("Specify targets or run from a directory with .dvc files")
+                return 1
+
+        config = ExecutionConfig(
+            max_workers=args.jobs,
+            dry_run=args.dry_run,
+            force=args.force,
+            force_patterns=list(args.force_upstream) if args.force_upstream else [],
+            cached_patterns=list(args.cached) if args.cached else [],
+            provenance=not args.no_provenance,
+            verbose=args.verbose,
+        )
 
         try:
-            # Parse dvc.yaml
-            if args.verbose:
-                logger.info("Parsing %s...", dvc_yaml)
+            results = run(targets, config, output=sys.stderr)
 
-            parser = DVCYamlParser(dvc_yaml)
-            all_stages = parser.parse()
+            # Print summary
+            total = len(results)
+            executed = sum(1 for r in results if r.success and not r.skipped)
+            skipped = sum(1 for r in results if r.skipped)
+            failed = sum(1 for r in results if not r.success)
 
-            if not all_stages:
-                logger.error("No stages found in dvc.yaml")
+            logger.info("")
+            logger.info("Summary:")
+            logger.info("  Total: %s", total)
+            logger.info("  Executed: %s", executed)
+            logger.info("  Skipped: %s", skipped)
+            if failed:
+                logger.info("  Failed: %s", failed)
                 return 1
-
-            if args.verbose:
-                logger.info(f"Found {len(all_stages)} stage(s)")
-
-            # Build DAG
-            dag = DAG(all_stages)
-
-            # Filter to selected stages if specified
-            if args.targets:
-                try:
-                    dag = dag.filter_to_targets(list(args.targets))
-                    if args.verbose:
-                        logger.info(
-                            f"Filtered to {len(dag.stages)} stage(s) "
-                            f"(targets + dependencies)"
-                        )
-                except ValueError as e:
-                    logger.error(str(e))
-                    return 1
-
-            # Check for cycles
-            cycle = dag.check_cycles()
-            if cycle:
-                logger.error(f"Circular dependency detected: {' -> '.join(cycle)}")
-                return 1
-
-            # Export visualizations if requested
-            if args.dot or args.svg or args.mermaid:
-                from dvx.run.viz import DAGVisualizer
-
-                viz = DAGVisualizer(dag)
-
-                if args.dot:
-                    viz.to_dot_file(Path(args.dot))
-                    logger.info(f"Exported DOT to {args.dot}")
-
-                if args.svg:
-                    try:
-                        viz.to_svg(Path(args.svg))
-                        logger.info(f"Exported SVG to {args.svg}")
-                    except RuntimeError as e:
-                        logger.error(str(e))
-                        return 1
-
-                if args.mermaid:
-                    Path(args.mermaid).write_text(viz.to_mermaid())
-                    logger.info(f"Exported Mermaid to {args.mermaid}")
-
-                # If only exporting visualizations (no execution), exit
-                if args.dry_run:
-                    return 0
-
-            # Execute
-            executor = ParallelExecutor(
-                dag=dag,
-                max_workers=args.jobs,
-                dry_run=args.dry_run,
-                output=sys.stderr,
-                force=args.force,
-                provenance=not args.no_provenance,
-            )
-
-            results = executor.execute()
-
-            if not args.dry_run:
-                # Print summary
-                total = len(results)
-                succeeded = sum(1 for r in results if r.success and not r.skipped)
-                skipped = sum(1 for r in results if r.skipped)
-                failed = sum(1 for r in results if not r.success)
-
-                logger.info("Summary:")
-                logger.info("  Total stages: %s", total)
-                logger.info("  Executed: %s", succeeded)
-                logger.info("  Skipped (up-to-date): %s", skipped)
-                if failed:
-                    logger.info("  Failed: %s", failed)
-
-                # Count .dvc files created
-                dvc_files_created = sum(
-                    len(r.dvc_files) for r in results if r.dvc_files
-                )
-                if dvc_files_created:
-                    logger.info("  .dvc files created: %s", dvc_files_created)
-
-                if failed > 0:
-                    return 1
 
             return 0
 
-        except FileNotFoundError as e:
-            logger.error(str(e))
-            return 1
-        except ValueError as e:
-            logger.error(str(e))
-            return 1
-        except RuntimeError as e:
-            logger.error(str(e))
+        except Exception as e:
+            logger.exception(str(e))
             return 1
 
 
 def add_parser(subparsers, parent_parser):
-    RUN_HELP = "Execute pipeline stages in parallel."
+    RUN_HELP = "Execute artifact computations from .dvc files."
 
     parser = subparsers.add_parser(
         "run",
@@ -143,14 +74,15 @@ def add_parser(subparsers, parent_parser):
     parser.add_argument(
         "targets",
         nargs="*",
-        help="Stage names to run (runs all if not specified).",
+        type=Path,
+        help=".dvc files or output paths to run (runs all *.dvc if not specified).",
     )
     parser.add_argument(
-        "-d",
+        "-n",
         "--dry-run",
         action="store_true",
         default=False,
-        help="Show execution plan without running stages.",
+        help="Show execution plan without running.",
     )
     parser.add_argument(
         "-j",
@@ -162,36 +94,27 @@ def add_parser(subparsers, parent_parser):
     )
     parser.add_argument(
         "-f",
-        "--file",
-        default="dvc.yaml",
-        metavar="<path>",
-        help="Path to dvc.yaml file.",
-    )
-    parser.add_argument(
         "--force",
         action="store_true",
         default=False,
-        help="Force re-run all stages (ignore freshness checks).",
+        help="Force re-run all computations (ignore freshness).",
+    )
+    parser.add_argument(
+        "--force-upstream",
+        action="append",
+        metavar="<pattern>",
+        help="Force re-run upstream artifacts matching pattern.",
+    )
+    parser.add_argument(
+        "--cached",
+        action="append",
+        metavar="<pattern>",
+        help="Use cached value for artifacts matching pattern.",
     )
     parser.add_argument(
         "--no-provenance",
         action="store_true",
         default=False,
         help="Do not include provenance metadata in .dvc files.",
-    )
-    parser.add_argument(
-        "--dot",
-        metavar="<path>",
-        help="Export DAG as GraphViz DOT format to file.",
-    )
-    parser.add_argument(
-        "--svg",
-        metavar="<path>",
-        help="Export DAG as SVG to file (requires graphviz).",
-    )
-    parser.add_argument(
-        "--mermaid",
-        metavar="<path>",
-        help="Export DAG as Mermaid diagram to file.",
     )
     parser.set_defaults(func=CmdRun)

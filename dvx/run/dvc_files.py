@@ -201,7 +201,7 @@ def write_dvc_file(
     cmd: str | None = None,
     code_ref: str | None = None,
     deps: dict[str, str] | None = None,
-    stage: str | None = None,  # Legacy, deprecated
+    stage: str | None = None,  # noqa: ARG001 (legacy, deprecated)
 ) -> Path:
     """Write .dvc file for an output with provenance.
 
@@ -281,7 +281,7 @@ def is_output_fresh(
     if use_mtime_cache:
         from dvx.run.status import get_artifact_hash_cached
         try:
-            current_md5, _, was_cached = get_artifact_hash_cached(path, compute_md5)
+            current_md5, _, _was_cached = get_artifact_hash_cached(path, compute_md5)
         except (FileNotFoundError, ValueError) as e:
             return False, f"hash error: {e}"
     else:

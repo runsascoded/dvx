@@ -54,8 +54,8 @@ class TestArtifactStatusDB:
 
     def test_update_existing(self, status_db):
         """Test updating an existing record."""
-        status_db.set("output.txt", mtime=100.0, hash="hash1", size=100)
-        status_db.set("output.txt", mtime=200.0, hash="hash2", size=200)
+        status_db.set("output.txt", mtime=100.0, hash_value="hash1", size=100)
+        status_db.set("output.txt", mtime=200.0, hash_value="hash2", size=200)
 
         result = status_db.get("output.txt")
 
@@ -65,7 +65,7 @@ class TestArtifactStatusDB:
 
     def test_delete(self, status_db):
         """Test deleting a record."""
-        status_db.set("output.txt", mtime=100.0, hash="hash1", size=100)
+        status_db.set("output.txt", mtime=100.0, hash_value="hash1", size=100)
 
         deleted = status_db.delete("output.txt")
         assert deleted is True
@@ -80,9 +80,9 @@ class TestArtifactStatusDB:
 
     def test_clear(self, status_db):
         """Test clearing all records."""
-        status_db.set("a.txt", mtime=100.0, hash="h1", size=100)
-        status_db.set("b.txt", mtime=200.0, hash="h2", size=200)
-        status_db.set("c.txt", mtime=300.0, hash="h3", size=300)
+        status_db.set("a.txt", mtime=100.0, hash_value="h1", size=100)
+        status_db.set("b.txt", mtime=200.0, hash_value="h2", size=200)
+        status_db.set("c.txt", mtime=300.0, hash_value="h3", size=300)
 
         count = status_db.clear()
         assert count == 3
@@ -93,7 +93,7 @@ class TestArtifactStatusDB:
 
     def test_path_types(self, status_db):
         """Test that both str and Path work for paths."""
-        status_db.set(Path("output.txt"), mtime=100.0, hash="h1", size=100)
+        status_db.set(Path("output.txt"), mtime=100.0, hash_value="h1", size=100)
 
         # Get with str
         result = status_db.get("output.txt")
@@ -162,7 +162,7 @@ class TestGetArtifactHashCached:
         db.clear()
 
         # First call should be cache miss
-        hash_val, size, was_cached = get_artifact_hash_cached(test_file, compute_md5)
+        hash_val, size, _was_cached = get_artifact_hash_cached(test_file, compute_md5)
 
         assert hash_val == compute_md5(test_file)
         assert size == test_file.stat().st_size

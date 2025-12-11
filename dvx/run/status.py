@@ -19,7 +19,7 @@ Usage:
     else:
         # Compute hash, update cache
         hash = compute_md5(path)
-        status_db.set(path, mtime=current_mtime, hash=hash, size=size)
+        status_db.set(path, mtime=current_mtime, hash_value=hash, size=size)
 """
 
 import sqlite3
@@ -136,7 +136,7 @@ class ArtifactStatusDB:
         self,
         path: str | Path,
         mtime: float,
-        hash: str,
+        hash_value: str,
         size: int,
     ) -> None:
         """Set or update cached status for an artifact.
@@ -144,7 +144,7 @@ class ArtifactStatusDB:
         Args:
             path: Path to the artifact
             mtime: File modification time
-            hash: MD5 hash of the artifact
+            hash_value: MD5 hash of the artifact
             size: Size in bytes
         """
         path_str = str(path)
@@ -154,7 +154,7 @@ class ArtifactStatusDB:
             INSERT OR REPLACE INTO artifact_status (path, mtime, hash, size, updated_at)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (path_str, mtime, hash, size, time.time()),
+            (path_str, mtime, hash_value, size, time.time()),
         )
 
     def delete(self, path: str | Path) -> bool:
