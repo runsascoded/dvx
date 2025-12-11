@@ -54,6 +54,91 @@ def get_git_head_sha(repo_path: Path | None = None) -> str | None:
         return None
 
 
+def get_git_blob_sha(path: str, ref: str = "HEAD", repo_path: Path | None = None) -> str | None:
+    """Get the git blob SHA for a file at a specific ref.
+
+    Args:
+        path: Path to the file (relative to repo root)
+        ref: Git ref (commit SHA, branch, tag, HEAD, etc.)
+        repo_path: Path to git repository (default: current directory)
+
+    Returns:
+        Blob SHA string, or None if file doesn't exist at that ref
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", f"{ref}:{path}"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
+def has_file_changed_since(
+    path: str,
+    since_ref: str,
+    repo_path: Path | None = None,
+) -> bool | None:
+    """Check if a file has changed between a ref and HEAD.
+
+    This is a fast check using git blob SHAs - no file content reading needed.
+
+    Args:
+        path: Path to the file (relative to repo root)
+        since_ref: Git ref to compare from (e.g., a commit SHA)
+        repo_path: Path to git repository (default: current directory)
+
+    Returns:
+        True if file changed, False if unchanged, None if can't determine
+        (e.g., file doesn't exist in git, or not in a git repo)
+    """
+    old_blob = get_git_blob_sha(path, since_ref, repo_path)
+    new_blob = get_git_blob_sha(path, "HEAD", repo_path)
+
+    if old_blob is None or new_blob is None:
+        # Can't determine - file not tracked or ref invalid
+        return None
+
+    return old_blob != new_blob
+
+
+def have_deps_changed_since(
+    deps: dict[str, str],
+    code_ref: str,
+    repo_path: Path | None = None,
+) -> tuple[bool, list[str]]:
+    """Check if any dependencies have changed since a commit.
+
+    Uses git blob comparison for tracked files - fast, no hashing needed.
+    Falls back to hash comparison for untracked files.
+
+    Args:
+        deps: Dict of {dep_path: recorded_hash}
+        code_ref: Git SHA when artifact was computed
+        repo_path: Path to git repository
+
+    Returns:
+        Tuple of (any_changed, list_of_changed_paths)
+    """
+    changed = []
+
+    for dep_path in deps:
+        file_changed = has_file_changed_since(dep_path, code_ref, repo_path)
+
+        if file_changed is True:
+            changed.append(dep_path)
+        elif file_changed is None:
+            # Can't use git - file might be untracked or generated
+            # Fall back to hash comparison (handled by caller)
+            pass
+
+    return len(changed) > 0, changed
+
+
 @dataclass
 class DVCFileInfo:
     """Content of a .dvc file."""
@@ -164,21 +249,22 @@ def write_dvc_file(
 def is_output_fresh(
     output_path: Path,
     check_deps: bool = True,
+    check_code_ref: bool = True,
+    use_mtime_cache: bool = True,
 ) -> tuple[bool, str]:
     """Check if output is fresh (up-to-date with its .dvc file and deps).
 
     Freshness is determined by:
     1. Output file exists
-    2. Output hash matches .dvc file
-    3. All dependency hashes match (if check_deps=True and deps recorded)
-
-    Note: code_ref checking is not done here - that would require determining
-    if relevant code changed between recorded SHA and current HEAD, which is
-    more complex. For now, code_ref serves as documentation/audit trail.
+    2. Output hash matches .dvc file (uses mtime cache to avoid redundant hashing)
+    3. Dependencies haven't changed since code_ref (via git blob comparison)
+    4. For untracked deps, fall back to hash comparison
 
     Args:
         output_path: Path to the output file/directory
-        check_deps: Whether to verify dependency hashes (default: True)
+        check_deps: Whether to verify dependencies (default: True)
+        check_code_ref: Whether to use code_ref for dep checking (default: True)
+        use_mtime_cache: Whether to use mtime cache for output hash (default: True)
 
     Returns:
         Tuple of (is_fresh, reason)
@@ -191,25 +277,59 @@ def is_output_fresh(
     if not path.exists():
         return False, "output missing"
 
-    # Check output hash
-    try:
-        current_md5 = compute_md5(path)
-    except (FileNotFoundError, ValueError) as e:
-        return False, f"hash error: {e}"
+    # Check output hash (with mtime cache optimization)
+    if use_mtime_cache:
+        from dvx.run.status import get_artifact_hash_cached
+        try:
+            current_md5, _, was_cached = get_artifact_hash_cached(path, compute_md5)
+        except (FileNotFoundError, ValueError) as e:
+            return False, f"hash error: {e}"
+    else:
+        try:
+            current_md5 = compute_md5(path)
+        except (FileNotFoundError, ValueError) as e:
+            return False, f"hash error: {e}"
 
     if current_md5 != info.md5:
         return False, f"output hash mismatch ({info.md5[:8]}... vs {current_md5[:8]}...)"
 
-    # Check dependency hashes if requested and deps are recorded
+    # Check dependencies if requested
     if check_deps and info.deps:
+        # First, try fast git blob comparison if we have code_ref
+        if check_code_ref and info.code_ref:
+            git_changed, changed_paths = have_deps_changed_since(info.deps, info.code_ref)
+            if git_changed:
+                return False, f"dep changed (git): {changed_paths[0]}"
+
+        # For deps not in git (or if no code_ref), fall back to hash comparison
         for dep_path, recorded_md5 in info.deps.items():
+            # Skip if we already checked via git and it was unchanged
+            if check_code_ref and info.code_ref:
+                git_result = has_file_changed_since(dep_path, info.code_ref)
+                if git_result is False:
+                    # Git says unchanged, trust it
+                    continue
+                if git_result is True:
+                    # Already caught above, but just in case
+                    return False, f"dep changed: {dep_path}"
+                # git_result is None - file not in git, check hash
+
             dep = Path(dep_path)
             if not dep.exists():
                 return False, f"dep missing: {dep_path}"
-            try:
-                current_dep_md5 = compute_md5(dep)
-            except (FileNotFoundError, ValueError) as e:
-                return False, f"dep hash error ({dep_path}): {e}"
+
+            # Use mtime cache for dep hash too
+            if use_mtime_cache:
+                from dvx.run.status import get_artifact_hash_cached
+                try:
+                    current_dep_md5, _, _ = get_artifact_hash_cached(dep, compute_md5)
+                except (FileNotFoundError, ValueError) as e:
+                    return False, f"dep hash error ({dep_path}): {e}"
+            else:
+                try:
+                    current_dep_md5 = compute_md5(dep)
+                except (FileNotFoundError, ValueError) as e:
+                    return False, f"dep hash error ({dep_path}): {e}"
 
             if current_dep_md5 != recorded_md5:
                 return False, f"dep changed: {dep_path}"
