@@ -3,17 +3,13 @@ build-backend = "setuptools.build_meta"
 requires = ["setuptools>=77", "setuptools_scm[toml]>=8"]
 
 [project]
-name = "dvc"
-description = "Git for data scientists - manage your code and data together"
+name = "dvx"
+description = "Minimal data version control - content-addressable storage for data files"
 readme = "README.rst"
 keywords = [
-    "ai",
-    "collaboration",
     "data-science",
     "data-version-control",
-    "developer-tools",
     "git",
-    "machine-learning",
     "reproducibility",
 ]
 license = "Apache-2.0"
@@ -35,7 +31,6 @@ dynamic = ["version"]
 
 dependencies = [
     "attrs>=22.2.0",
-    "celery",
     "colorama>=0.3.9",
     "configobj>=5.0.9",
     "distro>=1.3",
@@ -44,25 +39,15 @@ dependencies = [
     "dvc-data>=3.16.2,<3.17",
     "dvc-http>=2.29.0",
     "dvc-objects",
-    "dvc-render>=1.0.1,<2",
-    "dvc-studio-client>=0.21,<1",
-    "dvc-task>=0.3.0,<1",
     "flatten_dict<1,>=0.4.1",
     "flufl.lock>=8.1.0,<9",
     "fsspec>=2024.2.0",
     "funcy>=1.14",
-    "grandalf<1,>=0.7",
-    "gto>=1.6.0,<2",
-    "hydra-core>=1.1",
-    "iterative-telemetry>=0.0.7",
-    "kombu",
     "networkx>=2.5",
-    "omegaconf",
     "packaging>=19",
     "pathspec>=0.10.3",
     "platformdirs<5,>=3.1.1",
     "psutil>=5.8",
-    "pydot>=1.2.4",
     "pygtrie>=2.3.2",
     "pyparsing>=2.4.7",
     "requests>=2.22",
@@ -79,9 +64,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-all = ["dvc[azure,gdrive,gs,hdfs,oss,s3,ssh,webdav,webhdfs]"]
+all = ["dvx[azure,gdrive,gs,hdfs,oss,s3,ssh,webdav,webhdfs]"]
 azure = ["dvc-azure>=3.1.0,<4"]
-dev = ["dvc[azure,gdrive,gs,hdfs,lint,oss,s3,ssh,tests,webdav,webhdfs]"]
+dev = ["dvx[azure,gdrive,gs,hdfs,lint,oss,s3,ssh,tests,webdav,webhdfs]"]
 gdrive = ["dvc-gdrive>=3,<4"]
 gs = ["dvc-gs>=3.0.2,<4"]
 hdfs = ["dvc-hdfs>=3,<4"]
@@ -107,7 +92,7 @@ testing = [
   "uv",
 ]
 tests = [
-    "dvc[testing]",
+    "dvx[testing]",
     "beautifulsoup4>=4.4",
     "dvc-ssh",
     "filelock",
@@ -134,29 +119,29 @@ Issues = "https://github.com/treeverse/dvc/issues"
 Source = "https://github.com/treeverse/dvc"
 
 [project.scripts]
-dvc = "dvc.cli:main"
+dvx = "dvx.cli:main"
 
 [project.entry-points."fsspec.specs"]
-dvc = "dvc.api:DVCFileSystem"
+dvx = "dvx.api:DVCFileSystem"
 
 [project.entry-points."universal_pathlib.implementations"]
-dvc = "dvc.fs.dvc_path:DVCPath"
+dvx = "dvx.fs.dvc_path:DVCPath"
 # universal_pathlib does not support fsspec url chaining yet.
 # see https://github.com/fsspec/universal_pathlib/issues/28.
-"dvc+http" = "dvc.fs.dvc_path:DVCPath"
-"dvc+https" = "dvc.fs.dvc_path:DVCPath"
-"dvc+ssh" = "dvc.fs.dvc_path:DVCPath"
+"dvx+http" = "dvx.fs.dvc_path:DVCPath"
+"dvx+https" = "dvx.fs.dvc_path:DVCPath"
+"dvx+ssh" = "dvx.fs.dvc_path:DVCPath"
 
 [project.entry-points."pyinstaller40"]
-hook-dirs = "dvc.__pyinstaller:get_hook_dirs"
-tests = "dvc.__pyinstaller:get_PyInstaller_tests"
+hook-dirs = "dvx.__pyinstaller:get_hook_dirs"
+tests = "dvx.__pyinstaller:get_PyInstaller_tests"
 
 [tool.setuptools.packages.find]
 exclude = ["tests", "tests.*"]
 namespaces = false
 
 [tool.setuptools_scm]
-write_to = "dvc/_version.py"
+write_to = "dvx/_version.py"
 
 [tool.pytest.ini_options]
 addopts = "-ra --cov-config pyproject.toml"
@@ -186,10 +171,10 @@ xfail_strict = true
 
 [tool.coverage.run]
 branch = true
-source = ["dvc", "tests"]
+source = ["dvx", "tests"]
 
 [tool.coverage.paths]
-source = ["dvc"]
+source = ["dvx"]
 
 [tool.coverage.report]
 exclude_lines = [
