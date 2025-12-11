@@ -33,11 +33,23 @@ from dvx.run.artifact import (
     materialize,
     write_all_dvc,
 )
+from dvx.run.repro import (
+    ReproConfig,
+    ReproResult,
+    repro,
+    status,
+)
 
 __all__ = [
+    # artifact module
     "Artifact",
     "Computation",
     "delayed",
     "materialize",
     "write_all_dvc",
+    # repro module
+    "ReproConfig",
+    "ReproResult",
+    "repro",
+    "status",
 ]
