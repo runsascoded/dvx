@@ -1655,17 +1655,42 @@ all = [
 azure = [
     { name = "dvc-azure" },
 ]
+gdrive = [
+    { name = "dvc-gdrive" },
+]
+gs = [
+    { name = "dvc-gs" },
+]
+hdfs = [
+    { name = "dvc-hdfs" },
+]
+oss = [
+    { name = "dvc-oss" },
+]
+s3 = [
+    { name = "dvc-s3" },
+]
+ssh = [
+    { name = "dvc-ssh" },
+]
+ssh-gssapi = [
+    { name = "dvc-ssh", extra = ["gssapi"] },
+]
+webdav = [
+    { name = "dvc-webdav" },
+]
+webhdfs = [
+    { name = "dvc-webhdfs" },
+]
+webhdfs-kerberos = [
+    { name = "dvc-webhdfs", extra = ["kerberos"] },
+]
+
+[package.dev-dependencies]
 dev = [
     { name = "beautifulsoup4" },
-    { name = "dvc-azure" },
-    { name = "dvc-gdrive" },
-    { name = "dvc-gs" },
-    { name = "dvc-hdfs" },
-    { name = "dvc-oss" },
-    { name = "dvc-s3" },
     { name = "dvc-ssh" },
-    { name = "dvc-webdav" },
-    { name = "dvc-webhdfs" },
+    { name = "dvx", extra = ["all"] },
     { name = "filelock", version = "3.19.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "filelock", version = "3.20.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "mypy" },
@@ -1695,15 +1720,6 @@ dev = [
     { name = "typing-extensions" },
     { name = "tzdata", marker = "sys_platform == 'win32'" },
     { name = "uv" },
-]
-gdrive = [
-    { name = "dvc-gdrive" },
-]
-gs = [
-    { name = "dvc-gs" },
-]
-hdfs = [
-    { name = "dvc-hdfs" },
 ]
 lint = [
     { name = "mypy" },
@@ -1719,24 +1735,7 @@ lint = [
     { name = "types-tqdm" },
     { name = "typing-extensions" },
 ]
-oss = [
-    { name = "dvc-oss" },
-]
-s3 = [
-    { name = "dvc-s3" },
-]
-ssh = [
-    { name = "dvc-ssh" },
-]
-ssh-gssapi = [
-    { name = "dvc-ssh", extra = ["gssapi"] },
-]
-testing = [
-    { name = "pytest-benchmark", extra = ["histogram"] },
-    { name = "pytest-test-utils" },
-    { name = "uv" },
-]
-tests = [
+test = [
     { name = "beautifulsoup4" },
     { name = "dvc-ssh" },
     { name = "filelock", version = "3.19.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
@@ -1757,20 +1756,10 @@ tests = [
     { name = "tzdata", marker = "sys_platform == 'win32'" },
     { name = "uv" },
 ]
-webdav = [
-    { name = "dvc-webdav" },
-]
-webhdfs = [
-    { name = "dvc-webhdfs" },
-]
-webhdfs-kerberos = [
-    { name = "dvc-webhdfs", extra = ["kerberos"] },
-]
 
 [package.metadata]
 requires-dist = [
     { name = "attrs", specifier = ">=22.2.0" },
-    { name = "beautifulsoup4", marker = "extra == 'tests'", specifier = ">=4.4" },
     { name = "colorama", specifier = ">=0.3.9" },
     { name = "configobj", specifier = ">=5.0.9" },
     { name = "distro", specifier = ">=1.3" },
@@ -1786,64 +1775,98 @@ requires-dist = [
     { name = "dvc-oss", marker = "extra == 'oss'", specifier = ">=3,<4" },
     { name = "dvc-s3", marker = "extra == 's3'", specifier = ">=3.2.1,<4" },
     { name = "dvc-ssh", marker = "extra == 'ssh'", specifier = ">=4,<5" },
-    { name = "dvc-ssh", marker = "extra == 'tests'" },
     { name = "dvc-ssh", extras = ["gssapi"], marker = "extra == 'ssh-gssapi'", specifier = ">=4,<5" },
     { name = "dvc-webdav", marker = "extra == 'webdav'", specifier = ">=3.0.1,<4" },
     { name = "dvc-webhdfs", marker = "extra == 'webhdfs'", specifier = ">=3.1,<4" },
     { name = "dvc-webhdfs", extras = ["kerberos"], marker = "extra == 'webhdfs-kerberos'", specifier = ">=3.1,<4" },
-    { name = "dvx", extras = ["azure", "gdrive", "gs", "hdfs", "lint", "oss", "s3", "ssh", "tests", "webdav", "webhdfs"], marker = "extra == 'dev'" },
     { name = "dvx", extras = ["azure", "gdrive", "gs", "hdfs", "oss", "s3", "ssh", "webdav", "webhdfs"], marker = "extra == 'all'" },
-    { name = "dvx", extras = ["testing"], marker = "extra == 'tests'" },
-    { name = "filelock", marker = "extra == 'tests'" },
     { name = "flatten-dict", specifier = ">=0.4.1,<1" },
     { name = "flufl-lock", specifier = ">=8.1.0,<9" },
     { name = "fsspec", specifier = ">=2024.2.0" },
     { name = "funcy", specifier = ">=1.14" },
-    { name = "mypy", marker = "extra == 'lint'", specifier = "==1.19.0" },
     { name = "networkx", specifier = ">=2.5" },
     { name = "packaging", specifier = ">=19" },
-    { name = "pandas", marker = "extra == 'tests'", specifier = ">=1" },
-    { name = "pandas-stubs", marker = "extra == 'lint'" },
     { name = "pathspec", specifier = ">=0.10.3" },
     { name = "platformdirs", specifier = ">=3.1.1,<5" },
     { name = "psutil", specifier = ">=5.8" },
     { name = "pygtrie", specifier = ">=2.3.2" },
     { name = "pyparsing", specifier = ">=2.4.7" },
-    { name = "pytest", marker = "extra == 'tests'", specifier = ">=7,<9" },
-    { name = "pytest-benchmark", extras = ["histogram"], marker = "extra == 'testing'", specifier = ">=5,<6" },
-    { name = "pytest-cov", marker = "extra == 'tests'", specifier = ">=4.1.0" },
-    { name = "pytest-docker", marker = "extra == 'tests'", specifier = ">=1,<4" },
-    { name = "pytest-mock", marker = "extra == 'tests'" },
-    { name = "pytest-rerunfailures", marker = "extra == 'tests'", specifier = "<17.0" },
-    { name = "pytest-test-utils", marker = "extra == 'testing'" },
-    { name = "pytest-test-utils", marker = "extra == 'tests'" },
-    { name = "pytest-timeout", marker = "extra == 'tests'", specifier = ">=2" },
-    { name = "pytest-xdist", marker = "extra == 'tests'", specifier = ">=3.2" },
-    { name = "pywin32", marker = "sys_platform == 'win32' and extra == 'tests'", specifier = ">=225" },
     { name = "requests", specifier = ">=2.22" },
     { name = "rich", specifier = ">=12" },
     { name = "ruamel-yaml", specifier = ">=0.17.11" },
     { name = "scmrepo", specifier = ">=3.5.2,<4" },
     { name = "shortuuid", specifier = ">=0.5" },
     { name = "shtab", specifier = ">=1.3.4,<2" },
-    { name = "sqlalchemy", marker = "extra == 'tests'", specifier = ">=1,<3" },
     { name = "tabulate", specifier = ">=0.8.7" },
     { name = "tomlkit", specifier = ">=0.11.1" },
     { name = "tqdm", specifier = ">=4.63.1,<5" },
-    { name = "types-colorama", marker = "extra == 'lint'" },
-    { name = "types-psutil", marker = "extra == 'lint'" },
-    { name = "types-pyinstaller", marker = "extra == 'lint'" },
-    { name = "types-requests", marker = "extra == 'lint'" },
-    { name = "types-tabulate", marker = "extra == 'lint'" },
-    { name = "types-toml", marker = "extra == 'lint'" },
-    { name = "types-tqdm", marker = "extra == 'lint'" },
-    { name = "typing-extensions", marker = "extra == 'lint'" },
-    { name = "tzdata", marker = "sys_platform == 'win32' and extra == 'tests'" },
-    { name = "uv", marker = "extra == 'testing'" },
     { name = "voluptuous", specifier = ">=0.11.7" },
     { name = "zc-lockfile", specifier = ">=1.2.1" },
 ]
-provides-extras = ["all", "azure", "dev", "gdrive", "gs", "hdfs", "lint", "oss", "s3", "ssh", "ssh-gssapi", "testing", "tests", "webdav", "webhdfs", "webhdfs-kerberos"]
+provides-extras = ["all", "azure", "gdrive", "gs", "hdfs", "oss", "s3", "ssh", "ssh-gssapi", "webdav", "webhdfs", "webhdfs-kerberos"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "beautifulsoup4", specifier = ">=4.4" },
+    { name = "dvc-ssh" },
+    { name = "dvx", extras = ["all"] },
+    { name = "filelock" },
+    { name = "mypy", specifier = "==1.19.0" },
+    { name = "pandas", specifier = ">=1" },
+    { name = "pandas-stubs" },
+    { name = "pytest", specifier = ">=7,<9" },
+    { name = "pytest-benchmark", extras = ["histogram"], specifier = ">=5,<6" },
+    { name = "pytest-cov", specifier = ">=4.1.0" },
+    { name = "pytest-docker", specifier = ">=1,<4" },
+    { name = "pytest-mock" },
+    { name = "pytest-rerunfailures", specifier = "<17.0" },
+    { name = "pytest-test-utils" },
+    { name = "pytest-timeout", specifier = ">=2" },
+    { name = "pytest-xdist", specifier = ">=3.2" },
+    { name = "pywin32", marker = "sys_platform == 'win32'", specifier = ">=225" },
+    { name = "sqlalchemy", specifier = ">=1,<3" },
+    { name = "types-colorama" },
+    { name = "types-psutil" },
+    { name = "types-pyinstaller" },
+    { name = "types-requests" },
+    { name = "types-tabulate" },
+    { name = "types-toml" },
+    { name = "types-tqdm" },
+    { name = "typing-extensions" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
+    { name = "uv" },
+]
+lint = [
+    { name = "mypy", specifier = "==1.19.0" },
+    { name = "pandas-stubs" },
+    { name = "types-colorama" },
+    { name = "types-psutil" },
+    { name = "types-pyinstaller" },
+    { name = "types-requests" },
+    { name = "types-tabulate" },
+    { name = "types-toml" },
+    { name = "types-tqdm" },
+    { name = "typing-extensions" },
+]
+test = [
+    { name = "beautifulsoup4", specifier = ">=4.4" },
+    { name = "dvc-ssh" },
+    { name = "filelock" },
+    { name = "pandas", specifier = ">=1" },
+    { name = "pytest", specifier = ">=7,<9" },
+    { name = "pytest-benchmark", extras = ["histogram"], specifier = ">=5,<6" },
+    { name = "pytest-cov", specifier = ">=4.1.0" },
+    { name = "pytest-docker", specifier = ">=1,<4" },
+    { name = "pytest-mock" },
+    { name = "pytest-rerunfailures", specifier = "<17.0" },
+    { name = "pytest-test-utils" },
+    { name = "pytest-timeout", specifier = ">=2" },
+    { name = "pytest-xdist", specifier = ">=3.2" },
+    { name = "pywin32", marker = "sys_platform == 'win32'", specifier = ">=225" },
+    { name = "sqlalchemy", specifier = ">=1,<3" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
+    { name = "uv" },
+]
 
 [[package]]
 name = "entrypoints"
