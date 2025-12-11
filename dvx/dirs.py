@@ -5,8 +5,8 @@ import platformdirs
 
 from . import env
 
-APPNAME = "dvc"
-APPAUTHOR = "iterative"
+APPNAME = "dvc"  # Keep for compatibility with .dvc/ directories
+APPAUTHOR = "dvx"
 
 
 def system_config_dir():

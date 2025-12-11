@@ -682,10 +682,7 @@ class Output:
     def save(self) -> None:
         if self.use_cache and not self.is_in_repo:
             raise DvcException(
-                f"Saving cached external output {self!s} is not supported "
-                "since DVC 3.0. See "
-                f"{format_link('https://dvc.org/doc/user-guide/upgrade')} "
-                "for more info."
+                f"Saving cached external output {self!s} is not supported."
             )
 
         if not self.exists:

@@ -2,7 +2,6 @@ from dvx.commands.data_sync import CmdDataBase
 from dvx.exceptions import DvcException
 from dvx.log import logger
 from dvx.ui import ui
-from dvx.utils import format_link
 
 logger = logger.getChild(__name__)
 
@@ -12,10 +11,7 @@ class CmdDataStatus(CmdDataBase):
     STATUS_INDENT = "\t"
     UP_TO_DATE_MSG = "Data and pipelines are up to date."
     IN_SYNC_MSG = "Cache and remote '{remote}' are in sync."
-    EMPTY_PROJECT_MSG = (
-        "There are no data or pipelines tracked in this project yet.\n"
-        "See {link} to get started!"
-    ).format(link=format_link("https://dvc.org/doc/start"))
+    EMPTY_PROJECT_MSG = "There are no data files tracked in this project yet."
 
     def _normalize(self, s):
         s += ":"

@@ -7,7 +7,6 @@ from rich.pager import Pager
 
 from dvx.env import DVC_PAGER
 from dvx.log import logger
-from dvx.utils import format_link
 
 logger = logger.getChild(__name__)
 
@@ -62,10 +61,7 @@ def find_pager():
     if not pager:
         ret = os.system(f"({DEFAULT_PAGER}) 2>{os.devnull}")  # noqa: S605
         if ret != 0:
-            logger.warning(
-                "Unable to find `less` in the PATH. Check out %s for more info.",
-                format_link("https://man.dvc.org/pipeline/show"),
-            )
+            logger.warning("Unable to find `less` in the PATH.")
         else:
             pager = DEFAULT_PAGER
 
