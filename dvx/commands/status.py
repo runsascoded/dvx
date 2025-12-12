@@ -69,13 +69,12 @@ class CmdStatus(CmdBase):
         completed = 0
 
         # Use thread pool for parallel checking
-        max_workers = getattr(args, "jobs", None) or 4
+        max_workers = getattr(args, "jobs", None)  # None = ThreadPoolExecutor default
         show_progress = not args.quiet and not args.json and sys.stderr.isatty()
 
-        if show_progress:
-            ui.write(f"Checking {total} artifacts...", stderr=True)
-
         with ThreadPoolExecutor(max_workers=max_workers, cancel_on_error=False) as executor:
+            if show_progress:
+                ui.write(f"Checking {total} artifacts ({executor._max_workers} workers)...", stderr=True)
             # Use imap_unordered for lazy evaluation and better memory usage
             check_fn = partial(_check_one_target, with_deps=args.with_deps)
             for result in executor.imap_unordered(check_fn, targets):
