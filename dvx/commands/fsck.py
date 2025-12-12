@@ -90,7 +90,7 @@ class CmdFsck(CmdBase):
         results = []
 
         # Use thread pool for parallel hashing
-        max_workers = getattr(args, 'jobs', None) or 4
+        max_workers = getattr(args, 'jobs', None)  # None = ThreadPoolExecutor default
         show_progress = not args.quiet and sys.stderr.isatty()
 
         if args.clear_cache:
@@ -98,10 +98,9 @@ class CmdFsck(CmdBase):
             db.clear()
             ui.write("Cleared hash cache", stderr=True)
 
-        if show_progress:
-            ui.write(f"Verifying {total} artifacts (using {max_workers} workers)...", stderr=True)
-
         with ThreadPoolExecutor(max_workers=max_workers, cancel_on_error=False) as executor:
+            if show_progress:
+                ui.write(f"Verifying {total} artifacts ({executor._max_workers} workers)...", stderr=True)
             # Use imap_unordered for lazy evaluation and better memory usage
             for result in executor.imap_unordered(_hash_one_artifact, dvc_files):
                 results.append(result)
