@@ -190,18 +190,19 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
     is_dir = md5_raw.endswith(".dir")
     md5 = md5_raw[:-4] if is_dir else md5_raw  # Strip .dir suffix
 
-    # Try new computation block first, fall back to legacy meta block
-    computation = data.get("computation", {})
+    # Computation info lives in meta.computation for DVC compatibility
+    # Also check top-level computation for backward compat with old DVX files
     meta = data.get("meta", {})
+    computation = meta.get("computation", {}) or data.get("computation", {})
 
     return DVCFileInfo(
         path=out.get("path", str(output_path)),
         md5=md5,
         size=out.get("size", 0),
-        # Prefer computation block, fall back to meta
-        cmd=computation.get("cmd") or meta.get("cmd"),
+        # Provenance from computation block
+        cmd=computation.get("cmd"),
         code_ref=computation.get("code_ref"),
-        deps=computation.get("deps") or meta.get("deps") or {},
+        deps=computation.get("deps") or {},
         # Directory metadata
         nfiles=out.get("nfiles"),
         is_dir=is_dir,
@@ -276,15 +277,17 @@ def write_dvc_file(
         "outs": [out_entry]
     }
 
-    # Add computation block for provenance
+    # Add computation block inside meta for DVC compatibility
+    # (DVC allows arbitrary data in meta, but rejects unknown top-level keys)
     if cmd or code_ref or deps:
-        data["computation"] = {}
+        computation = {}
         if cmd:
-            data["computation"]["cmd"] = cmd
+            computation["cmd"] = cmd
         if code_ref:
-            data["computation"]["code_ref"] = code_ref
+            computation["code_ref"] = code_ref
         if deps:
-            data["computation"]["deps"] = deps
+            computation["deps"] = deps
+        data["meta"] = {"computation": computation}
 
     with open(dvc_path, "w") as f:
         yaml.dump(data, f, sort_keys=False, default_flow_style=False)
