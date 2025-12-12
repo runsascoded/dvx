@@ -136,7 +136,6 @@ def shared_parent_parser():
 
 
 def add_parser(subparsers, _parent_parser):
-    from dvx.commands.status import CmdDataStatus
 
     # Pull
     PULL_HELP = "Download tracked files or directories from remote storage."
@@ -347,94 +346,31 @@ def add_parser(subparsers, _parent_parser):
     )
     fetch_parser.set_defaults(func=CmdDataFetch)
 
-    # Status
-    STATUS_HELP = "Show changed stages, compare local cache and a remote storage."
+    # Status - DVX freshness-based status
+    from dvx.commands.status import CmdStatus
+
+    STATUS_HELP = "Check freshness status of artifacts."
 
     status_parser = subparsers.add_parser(
         "status",
         parents=[shared_parent_parser()],
-        description=append_doc_link(STATUS_HELP, "status"),
+        description=STATUS_HELP,
         help=STATUS_HELP,
         conflict_handler="resolve",
         formatter_class=formatter.RawDescriptionHelpFormatter,
-    )
-    status_parser.add_argument(
-        "-q",
-        "--quiet",
-        action="store_true",
-        default=False,
-        help=(
-            "Suppresses all output."
-            " Exit with 0 if pipelines are up to date, otherwise 1."
-        ),
-    )
-    status_parser.add_argument(
-        "-c",
-        "--cloud",
-        action="store_true",
-        default=False,
-        help="Show status of a local cache compared to a remote repository.",
-    )
-    status_parser.add_argument(
-        "-r",
-        "--remote",
-        help="Remote storage to compare local cache to",
-        metavar="<name>",
-    ).complete = completion.REMOTE
-    status_parser.add_argument(
-        "-a",
-        "--all-branches",
-        action="store_true",
-        default=False,
-        help=(
-            "Show status of a local cache compared to a remote repository "
-            "for all branches."
-        ),
-    )
-    status_parser.add_argument(
-        "-T",
-        "--all-tags",
-        action="store_true",
-        default=False,
-        help=(
-            "Show status of a local cache compared to a remote repository for all tags."
-        ),
-    )
-    status_parser.add_argument(
-        "-A",
-        "--all-commits",
-        action="store_true",
-        default=False,
-        help=(
-            "Show status of a local cache compared to a remote repository "
-            "for all commits."
-        ),
     )
     status_parser.add_argument(
         "-d",
         "--with-deps",
         action="store_true",
         default=False,
-        help="Show status for all dependencies of the specified target.",
-    )
-    status_parser.add_argument(
-        "-R",
-        "--recursive",
-        action="store_true",
-        default=False,
-        help="Show status of all stages in the specified directory.",
+        help="Check upstream dependencies as well.",
     )
     status_parser.add_argument(
         "--json",
         action="store_true",
         default=False,
-        help="Show status in JSON format.",
-    )
-    status_parser.add_argument(
-        "--no-updates",
-        dest="check_updates",
-        action="store_false",
-        help="Ignore updates to imported data.",
+        help="Output results as JSON.",
     )
 
-    status_parser.set_defaults(func=CmdDataStatus)
+    status_parser.set_defaults(func=CmdStatus)
