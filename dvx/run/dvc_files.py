@@ -160,12 +160,16 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
     Handles both DVX format (computation block) and legacy format (meta block).
 
     Args:
-        output_path: Path to the output file/directory
+        output_path: Path to the output file/directory, or directly to the .dvc file
 
     Returns:
         DVCFileInfo if .dvc file exists and is valid, None otherwise
     """
-    dvc_path = Path(str(output_path) + ".dvc")
+    # Support both output path and direct .dvc path
+    if output_path.suffix == ".dvc":
+        dvc_path = output_path
+    else:
+        dvc_path = Path(str(output_path) + ".dvc")
 
     if not dvc_path.exists():
         return None

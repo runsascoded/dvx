@@ -2,6 +2,19 @@
 
 DVX is a fork/evolution of DVC focused on **self-documenting computational artifacts**. The core idea: each `.dvc` file should encode its own provenance—not just what the artifact *is*, but *how it was produced*.
 
+## Status Overview
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1 | Enhanced `.dvc` File Format | ✅ Complete |
+| 2 | Staleness Detection | ✅ Complete |
+| 3 | Selective Recomputation | ✅ Complete |
+| 4 | Incremental State Tracking | ✅ Complete (SQLite mtime cache) |
+| 5 | Python Library API | ✅ Complete |
+| 6 | Advanced Features | Future |
+
+---
+
 ## Core Philosophy
 
 Traditional DVC treats `.dvc` files as passive storage descriptors:
@@ -30,17 +43,17 @@ computation:
 
 2. **Git SHA over wall-clock time**: Staleness is determined by comparing git SHAs of code and input artifact hashes, never by timestamps. An artifact is "dirty" if its recorded `code_ref` or `deps` hashes don't match current state.
 
-3. **Computation as a DAG node**: Each artifact's computation is a node in a larger workflow graph. DVX should be able to traverse this DAG to determine what needs recomputation.
+3. **Computation as a DAG node**: Each artifact's computation is a node in a larger workflow graph. DVX traverses this DAG to determine what needs recomputation.
 
-4. **Directory outputs for multi-file results**: When a computation produces multiple outputs, they go into a DVC-tracked directory. This simplifies the model (one computation → one output path).
+4. **No dvc.yaml**: Unlike DVC, DVX does not use a separate `dvc.yaml` file. All pipeline information is embedded in the `.dvc` files themselves. This eliminates the split-brain problem of keeping two files in sync.
 
 ---
 
-## Phase 1: Enhanced `.dvc` File Format
+## Phase 1: Enhanced `.dvc` File Format ✅
 
 ### 1.1 Computation Block
 
-Add a `computation` section to `.dvc` files:
+`.dvc` files contain a `computation` section:
 
 ```yaml
 outs:
@@ -68,28 +81,14 @@ computation:
     split: 0.2
 ```
 
-### 1.2 Execution Metadata (Optional)
-
-For debugging and audit trails:
-
-```yaml
-computation:
-  # ... core fields above ...
-
-  exec:
-    timestamp: "2025-12-11T14:30:00Z"
-    duration_seconds: 42.5
-    executor: "github-actions"  # or "local", username, etc.
-```
-
-### 1.3 Backward Compatibility
+### 1.2 Backward Compatibility
 
 - Existing `.dvc` files without `computation` block remain valid
-- DVX treats them as "untracked provenance" (imported or legacy data)
+- DVX treats them as "leaf nodes" (imported or legacy data)
 
 ---
 
-## Phase 2: Staleness Detection
+## Phase 2: Staleness Detection ✅
 
 ### 2.1 Freshness Model
 
@@ -103,46 +102,49 @@ An artifact is **stale** if any of these conditions fail.
 ### 2.2 Commands
 
 ```bash
-# Check if an artifact is stale
+# Check if artifacts are stale
 dvx status output.parquet.dvc
 
-# Show what would need recomputation
+# Show what would need recomputation (including upstream)
 dvx status --upstream output.parquet.dvc
 
+# JSON output for programmatic use
+dvx status --json output.parquet.dvc
+
 # Recompute stale artifacts
-dvx repro output.parquet.dvc
+dvx run output.parquet.dvc
 ```
 
 ### 2.3 DAG Traversal
 
 Given a target artifact, DVX traverses `computation.deps` recursively to build the dependency graph. For recomputation:
 1. Find all stale ancestors
-2. Topologically sort them
-3. Recompute in order, updating `.dvc` files as each completes
+2. Group into execution levels (artifacts in same level can run in parallel)
+3. Execute level by level, updating `.dvc` files as each completes
 
 ---
 
-## Phase 3: Selective Recomputation
+## Phase 3: Selective Recomputation ✅
 
 ### 3.1 Pattern Matching for Upstream Control
 
-Users should be able to specify which upstream nodes to recompute vs. use cached:
+Users can specify which upstream nodes to recompute vs. use cached:
 
 ```bash
 # Recompute everything from scratch
-dvx repro --force output.dvc
+dvx run --force output.dvc
 
 # Recompute only if deps changed, trust cached intermediates
-dvx repro output.dvc
+dvx run output.dvc
 
 # Force recompute of specific upstream pattern
-dvx repro --force-upstream "*/normalized/*" output.dvc
+dvx run --force-upstream "*/normalized/*" output.dvc
 
 # Use cached version of specific upstream even if stale
-dvx repro --cached "*/raw/*" output.dvc
+dvx run --cached "*/raw/*" output.dvc
 ```
 
-### 3.2 Glob/Regex Patterns
+### 3.2 Glob Patterns
 
 Support flexible patterns for specifying which nodes to force/cache:
 - `*/normalized/*` — any normalized artifacts
@@ -151,43 +153,28 @@ Support flexible patterns for specifying which nodes to force/cache:
 
 ---
 
-## Phase 4: Incremental State Tracking (Future)
+## Phase 4: Incremental State Tracking ✅
 
 ### 4.1 Problem
 
 For large repos, checking freshness of all artifacts requires reading many files and computing hashes. This can be slow.
 
-### 4.2 Solution: State Cache
+### 4.2 Solution: SQLite Mtime Cache
 
-Maintain a cached view of project state (similar to `watchman` or git's index):
+DVX maintains a cached view of file states:
 
 ```
 .dvx/
-  state.json   # cached hashes and freshness status
-  index.db     # optional SQLite for faster queries
+  mtime_cache.db   # SQLite database for mtime-based caching
 ```
 
-This cache is:
-- Updated incrementally on file changes
-- Invalidated by git operations (checkout, pull, merge)
-- Optional—DVX works without it, just slower
-
-### 4.3 Reactive Updates
-
-Consider integration with filesystem watchers for real-time freshness tracking in development workflows.
+The cache maps `(path, mtime, size)` to MD5 hashes, avoiding recomputation when files haven't changed. Cache is automatically invalidated when file metadata changes.
 
 ---
 
-## Phase 5: Templated/Parameterized Pipelines
+## Phase 5: Python Library API ✅
 
-### 5.1 The Problem
-
-Many pipelines have repetitive structure across a dimension (e.g., YYYYMM):
-- `normalized/202501.dvc`, `normalized/202502.dvc`, ... all have identical logic
-- Only the month parameter differs
-- Manually maintaining N identical `.dvc` files is error-prone
-
-### 5.2 Two-Phase Model: Prep + Run
+### 5.1 Two-Phase Model: Prep + Run
 
 Separate pipeline **definition** from **execution**:
 
@@ -202,13 +189,13 @@ dvx run s3/ctbk/normalized/*.dvc
 # Runs computations, fills in output hashes, updates metadata
 ```
 
-### 5.3 DVX as Library + Engine
+### 5.2 DVX as Library + Engine
 
 DVX serves two roles:
 
 1. **Library**: Python API for constructing lazy pipeline representations
    ```python
-   from dvx import Artifact, Computation
+   from dvx.run import Artifact, Computation
 
    def normalized_month(ym: str) -> Artifact:
        return Artifact(
@@ -226,15 +213,15 @@ DVX serves two roles:
 
 2. **Engine**: CLI/runtime that executes `.dvc` computations
    ```bash
-   dvx run --parallel 4 s3/ctbk/normalized/*.dvc
+   dvx run -j 4 s3/ctbk/normalized/*.dvc
    ```
 
-### 5.4 Lazy Pipeline Representation
+### 5.3 Lazy Pipeline Representation
 
 Inspired by Dask's `Delayed` abstraction—build a computation graph without executing it:
 
 ```python
-from dvx import delayed, materialize
+from dvx.run import delayed, materialize, Artifact, Computation
 
 @delayed
 def normalize(ym: str, src: Artifact) -> Artifact:
@@ -261,64 +248,32 @@ normalized = [normalize(ym, r) for ym, r in zip(months, raw)]
 aggregated = [aggregate(ym, n, "ge") for ym, n in zip(months, normalized)]
 
 # Option A: Write .dvc files only (prep)
-for a in aggregated:
-    a.write_dvc()
+from dvx.run import write_all_dvc
+write_all_dvc(aggregated)
 
 # Option B: Write and execute (prep + run)
 materialize(aggregated, parallel=4)
 ```
 
-### 5.5 Why Not Just Dask?
-
-Dask's `Delayed` is appealing but may bring baggage:
-- Heavy dependencies (numpy, pandas optional but common)
-- Designed for in-process execution, not shell commands
-- Graph serialization format doesn't match `.dvc` YAML
-
-**Options**:
-1. **Dask-inspired, custom impl**: Borrow the API pattern, implement lightweight
-2. **Dask interop**: Let users build graphs with Dask, export to DVX format
-3. **Pure functional**: Simple Python functions returning Artifact objects, no decorator magic
-
-Leaning toward (1)—a minimal `dvx.delayed` that feels like Dask but serializes to `.dvc` files.
-
-### 5.6 CLI Pattern for User Projects
-
-Each `ctbk` subcommand gets `prep` and `run` variants:
-
-```bash
-# Generate .dvc files for normalized stage
-ctbk normalized prep 202501-202512
-
-# Execute (delegates to dvx)
-ctbk normalized run 202501-202512
-# Equivalent to: dvx run s3/ctbk/normalized/2025*.dvc
-
-# Or just: prep + run in one
-ctbk normalized create 202501-202512  # existing behavior, but now uses dvx
-```
-
-### 5.7 Handling Complex Parameterization
-
-Some stages have more than just YYYYMM:
-- Tripdata: `{JC-,}` × YYYYMM (two zips per month)
-- Aggregated: YYYYMM × group_by × aggregate_by
-
-The lazy representation handles this naturally:
+### 5.4 API Summary
 
 ```python
-def tripdata_zips(ym: str) -> list[Artifact]:
-    return [
-        Artifact(path=f"tripdata/{ym}-citibike-tripdata.zip", ...),
-        Artifact(path=f"tripdata/JC-{ym}-citibike-tripdata.csv.zip", ...),
-    ]
+from dvx.run import (
+    # Core types
+    Artifact,        # Data artifact with optional computation
+    Computation,     # Command + deps + params
 
-def aggregated_variants(ym: str, norm: Artifact) -> list[Artifact]:
-    variants = []
-    for group_by in ["ge", "gse", "ymrgtb"]:
-        for agg_by in ["c", "cd"]:
-            variants.append(aggregate(ym, norm, group_by, agg_by))
-    return variants
+    # Lazy construction
+    delayed,         # Decorator for lazy functions
+    write_all_dvc,   # Write .dvc files for artifact graph
+    materialize,     # Write .dvc files and execute
+
+    # Execution
+    run,             # Execute from .dvc file paths
+    ExecutionConfig, # Configuration for execution
+    ExecutionResult, # Result of artifact execution
+    ParallelExecutor,# Low-level executor class
+)
 ```
 
 ---
@@ -339,20 +294,7 @@ computation:
       md5: ...
 ```
 
-This provides stronger reproducibility guarantees than `code_ref` alone.
-
-### 6.2 Artifact Aliasing
-
-For cases where an artifact needs to appear at multiple paths:
-
-```yaml
-# In /reports/monthly/202506.parquet.dvc
-alias_of: s3/ctbk/aggregated/ge_c_202506.parquet.dvc
-```
-
-Uses OS-level linking where available; DVX manages the relationship.
-
-### 6.3 Remote Execution
+### 6.2 Remote Execution
 
 Track whether computation was local or remote:
 
@@ -366,63 +308,133 @@ computation:
 
 ---
 
-## Migration Path
+## Phase 7: Performance Optimization (Future)
 
-### From DVC
+### 7.1 Rust-based Hashing
 
-1. Existing `.dvc` files work unchanged
-2. `dvx add` creates enhanced `.dvc` files with computation block
-3. `dvx migrate` can add computation blocks to existing files (requires re-running the computation or manual annotation)
+The hash computation for large files is CPU-bound. A Rust extension could provide:
+- 2-5x faster MD5 computation via SIMD
+- Memory-mapped file reading for large files
+- Parallel chunk hashing within a single file
 
-### From This Repo (ctbk)
+Potential implementation:
+```rust
+// dvx-hash crate
+#[pyo3::pyfunction]
+fn compute_md5(path: &str) -> PyResult<String> {
+    // SIMD-accelerated MD5 with mmap
+}
+```
 
-The ctbk pipeline currently uses DVC for:
-- Importing raw data (`dvc import-url`)
-- Tracking generated outputs (`dvc add`)
+### 7.2 Native DAG Traversal
 
-Migration would involve:
-1. Enhancing `has_root_cli.py` to write computation blocks
-2. Recording `code_ref` at computation time
-3. Explicitly listing input `.dvc` files as deps
+For very large DAGs (thousands of .dvc files), Rust-based graph traversal could reduce latency:
+- Parallel file stat/parsing
+- Lock-free concurrent hash map for caching
+- Zero-copy YAML parsing
+
+### 7.3 SQLite Optimization
+
+The mtime cache could be optimized:
+- WAL mode for concurrent reads (already supported)
+- Bulk upserts for fsck operations
+- In-memory caching layer
 
 ---
 
-## Open Questions
+## CLI Reference
 
-1. **Granularity of code_ref**: Should we track the SHA of specific files, or just the repo HEAD? File-level is more precise but complex.
+### dvx run
 
-2. **Params handling**: Should params be in the `.dvc` file (inspectable) or referenced from `params.yaml` (DVC-style)?
+Execute artifact computations from .dvc files:
 
-3. **Lock file**: DVC uses `dvc.lock` for pipelines. Do we need something similar, or is per-artifact `.dvc` sufficient?
+```bash
+dvx run [OPTIONS] [TARGETS]...
 
-4. **Multi-repo deps**: What if a computation depends on artifacts in another repo?
+Options:
+  -n, --dry-run              Show execution plan without running
+  -j, --jobs N               Number of parallel jobs (default: CPU count)
+  -f, --force                Force re-run all computations
+  --force-upstream PATTERN   Force re-run upstream artifacts matching pattern
+  --cached PATTERN           Use cached value for artifacts matching pattern
+  --no-provenance            Don't include provenance metadata in .dvc files
+  -v, --verbose              Enable verbose output
+
+Examples:
+  dvx run                              # Run all *.dvc in current dir
+  dvx run output.parquet.dvc           # Run specific artifact
+  dvx run normalized/*.dvc             # Run with glob pattern
+  dvx run --dry-run                    # Show what would execute
+  dvx run --force                      # Force re-run everything
+  dvx run -j 4                         # Parallel with 4 workers
+```
+
+### dvx status
+
+Check freshness status of artifacts:
+
+```bash
+dvx status [OPTIONS] [TARGETS]...
+
+Options:
+  -j, --jobs N         Number of parallel workers (default: 4)
+  -d, --with-deps      Check upstream dependencies as well
+  --json               Output as JSON
+
+Examples:
+  dvx status                           # Check all *.dvc in current dir
+  dvx status output.parquet.dvc        # Check specific artifact
+  dvx status -d output.dvc             # Include upstream deps
+  dvx status --json                    # Output as JSON
+```
+
+### dvx fsck
+
+Verify artifact hashes and rebuild the hash cache:
+
+```bash
+dvx fsck [OPTIONS] [TARGETS]...
+
+Options:
+  -j, --jobs N         Number of parallel workers (default: 4)
+  --clear-cache        Clear hash cache before verifying (forces full rehash)
+  --json               Output as JSON
+
+Examples:
+  dvx fsck                             # Verify all **/*.dvc recursively
+  dvx fsck s3/tripdata/*.dvc           # Verify specific artifacts
+  dvx fsck --clear-cache               # Force full rehash
+  dvx fsck -j 8                        # Parallel with 8 workers
+```
 
 ---
 
-## Relationship to DVC Concepts
+## Module Structure
+
+```
+dvx/run/
+  __init__.py      # Public API exports
+  artifact.py      # Artifact, Computation, delayed, materialize
+  executor.py      # ParallelExecutor, run(), ExecutionConfig
+  dvc_files.py     # .dvc file read/write, freshness checking
+  hash.py          # MD5 computation with mtime caching
+  status.py        # SQLite mtime cache for artifact status
+
+dvx/commands/
+  run.py           # dvx run command implementation
+  status.py        # dvx status command implementation
+  fsck.py          # dvx fsck command implementation
+```
+
+---
+
+## Relationship to DVC
 
 | DVC Concept | DVX Equivalent |
 |-------------|----------------|
 | `dvc.yaml` stages | `computation` block in each `.dvc` file |
 | `dvc.lock` | Embedded in `.dvc` files (deps with hashes) |
-| `dvc repro` | `dvx repro` with DAG traversal |
+| `dvc repro` | `dvx run` with DAG traversal |
 | Pipeline | Implicit from `computation.deps` graph |
 
-The key difference: DVC separates pipeline definition (`dvc.yaml`) from artifact tracking (`.dvc` files). DVX unifies them—each artifact carries its own pipeline node definition.
-
----
-
-## Implementation Notes
-
-### Files to Modify
-
-- `dvc/dvcfile.py` — Schema for `.dvc` files
-- `dvc/schema.py` — Validation for new fields
-- `dvc/stage/` — Stage representation with computation info
-- `dvc/commands/` — CLI for new operations
-
-### New Modules
-
-- `dvx/freshness.py` — Staleness detection logic
-- `dvx/dag.py` — Dependency graph construction and traversal
-- `dvx/state.py` — Optional state caching (Phase 4)
+The key difference: DVC separates pipeline definition (`dvc.yaml`) from artifact tracking (`.dvc` files). DVX unifies them—each artifact carries its own pipeline node definition. This eliminates the need to keep two files in sync and makes each `.dvc` file truly self-documenting.
