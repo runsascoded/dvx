@@ -150,6 +150,9 @@ class DVCFileInfo:
     cmd: str | None = None
     code_ref: str | None = None  # git SHA
     deps: dict[str, str] = field(default_factory=dict)  # {path: md5}
+    # Directory metadata
+    nfiles: int | None = None
+    is_dir: bool = False
     # Legacy field for backward compatibility
     stage: str | None = None
 
@@ -182,18 +185,26 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
 
     out = data['outs'][0]
 
+    # Handle .dir suffix for directory hashes (DVC convention)
+    md5_raw = out.get('md5', '')
+    is_dir = md5_raw.endswith('.dir')
+    md5 = md5_raw[:-4] if is_dir else md5_raw  # Strip .dir suffix
+
     # Try new computation block first, fall back to legacy meta block
     computation = data.get('computation', {})
     meta = data.get('meta', {})
 
     return DVCFileInfo(
         path=out.get('path', str(output_path)),
-        md5=out.get('md5', ''),
+        md5=md5,
         size=out.get('size', 0),
         # Prefer computation block, fall back to meta
         cmd=computation.get('cmd') or meta.get('cmd'),
         code_ref=computation.get('code_ref'),
         deps=computation.get('deps') or meta.get('deps') or {},
+        # Directory metadata
+        nfiles=out.get('nfiles'),
+        is_dir=is_dir,
         stage=meta.get('stage'),  # Legacy only
     )
 
@@ -205,6 +216,8 @@ def write_dvc_file(
     cmd: str | None = None,
     code_ref: str | None = None,
     deps: dict[str, str] | None = None,
+    nfiles: int | None = None,
+    is_dir: bool | None = None,
     stage: str | None = None,  # Legacy, deprecated
 ) -> Path:
     """Write .dvc file for an output with provenance.
@@ -216,22 +229,51 @@ def write_dvc_file(
         cmd: Command that was run (provenance)
         code_ref: Git SHA when computation was run (provenance)
         deps: {dep_path: md5} of inputs (provenance)
+        nfiles: Number of files (for directories)
+        is_dir: Whether output is a directory (auto-detected if None)
         stage: Deprecated, kept for backward compatibility
 
     Returns:
         Path to the created .dvc file
     """
+    output_path = Path(output_path)
     dvc_path = Path(str(output_path) + '.dvc')
 
     # Ensure parent directory exists
     dvc_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Auto-detect if directory
+    if is_dir is None:
+        is_dir = output_path.is_dir() if output_path.exists() else False
+
+    # Path in .dvc file should be relative to the .dvc file location (just the filename)
+    relative_path = output_path.name
+
+    # For directories, add .dir suffix to hash (DVC convention)
+    hash_value = f"{md5}.dir" if is_dir else md5
+
+    out_entry = {
+        'md5': hash_value,
+        'size': size,
+        'path': relative_path,
+    }
+
+    # Add nfiles for directories
+    if is_dir:
+        if nfiles is None and output_path.exists():
+            # Count files in directory
+            nfiles = sum(1 for f in output_path.rglob('*') if f.is_file())
+        if nfiles is not None:
+            # Insert nfiles after size (for nicer ordering)
+            out_entry = {
+                'md5': hash_value,
+                'size': size,
+                'nfiles': nfiles,
+                'path': relative_path,
+            }
+
     data = {
-        'outs': [{
-            'md5': md5,
-            'size': size,
-            'path': str(output_path),
-        }]
+        'outs': [out_entry]
     }
 
     # Add computation block for provenance

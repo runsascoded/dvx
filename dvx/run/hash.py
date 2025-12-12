@@ -50,28 +50,36 @@ def _hash_file(file_path: Path) -> str:
 
 
 def _hash_directory(dir_path: Path) -> str:
-    """Hash a directory by hashing the JSON of {relpath: md5} mapping.
+    """Hash a directory using DVC's .dir manifest format.
 
-    This matches DVC's .dir format for directory outputs.
+    DVC represents directory contents as a JSON list of {md5, relpath} objects,
+    sorted by relpath. The directory hash is the MD5 of this JSON.
 
     Args:
         dir_path: Path to directory
 
     Returns:
-        MD5 hash of the sorted {relpath: md5} JSON representation
+        MD5 hash of the DVC-format directory manifest
     """
-    file_hashes = {}
+    entries = []
 
-    # Recursively hash all files in directory
-    for subfile in sorted(dir_path.rglob('*')):
+    # Recursively collect all files in directory
+    for subfile in dir_path.rglob('*'):
         if subfile.is_file():
             rel_path = subfile.relative_to(dir_path)
-            # Use forward slashes for cross-platform compatibility
+            # Use forward slashes for cross-platform compatibility (DVC convention)
             rel_path_str = str(rel_path).replace('\\', '/')
-            file_hashes[rel_path_str] = _hash_file(subfile)
+            entries.append({
+                "md5": _hash_file(subfile),
+                "relpath": rel_path_str,
+            })
 
-    # Hash the JSON representation (sorted for determinism)
-    json_str = json.dumps(file_hashes, sort_keys=True, separators=(',', ':'))
+    # Sort by relpath (DVC convention)
+    entries.sort(key=lambda e: e["relpath"])
+
+    # Hash the JSON representation
+    # DVC uses separators=(', ', ': ') - space after comma and colon
+    json_str = json.dumps(entries, separators=(', ', ': '))
     return hashlib.md5(json_str.encode()).hexdigest()
 
 

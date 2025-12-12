@@ -161,7 +161,8 @@ class Artifact:
         Returns:
             Artifact with all metadata populated, or None if no .dvc file
         """
-        info = read_dvc_file(Path(path))
+        path = Path(path)
+        info = read_dvc_file(path)
         if info is None:
             return None
 
@@ -178,8 +179,10 @@ class Artifact:
                 code_ref=info.code_ref,
             )
 
+        # Use the original path passed in (full path), not info.path (relative)
+        # This preserves the full path for cross-directory references
         return cls(
-            path=info.path,
+            path=str(path),
             md5=info.md5,
             size=info.size,
             computation=computation,
