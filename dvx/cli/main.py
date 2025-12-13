@@ -636,9 +636,9 @@ def cache_dir_cmd(ctx, value, unset, global_, system, local):
 @click.argument("target")
 @click.option("-r", "--rev", metavar="<rev>", help="Git revision.")
 @click.option("--remote", metavar="<name>", help="Get remote blob URL.")
-@click.option("--relative", is_flag=True, help="Output relative path.")
+@click.option("--absolute", is_flag=True, help="Output absolute path (default is relative).")
 @click.pass_context
-def cache_path_cmd(ctx, target, rev, remote, relative):
+def cache_path_cmd(ctx, target, rev, remote, absolute):
     """Get the cache path for a DVC-tracked file."""
     from dvx.commands.cache import _get_output_from_target
     from dvx.repo import Repo
@@ -662,7 +662,7 @@ def cache_path_cmd(ctx, target, rev, remote, relative):
                 ui.write(url)
             else:
                 cache_path = out.cache_path
-                if relative:
+                if not absolute:
                     cache_path = os.path.relpath(cache_path)
                 ui.write(cache_path)
 
