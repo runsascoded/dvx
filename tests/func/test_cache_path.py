@@ -4,12 +4,14 @@ from dvx.cli import main
 
 
 def test_cache_path(tmp_dir, dvc, capsys):
-    """Test dvx cache path returns the cache path for a tracked file."""
+    """Test dvx cache path returns a relative path by default."""
     tmp_dir.dvc_gen("file.txt", "test content")
 
     assert main(["cache", "path", "file.txt"]) == 0
     out = capsys.readouterr()[0].strip()
 
+    # Should be relative by default (not starting with /)
+    assert not out.startswith("/")
     # Should be a path containing the cache structure
     assert "cache" in out or ".dvc" in out
     assert os.path.exists(out)
@@ -29,15 +31,15 @@ def test_cache_path_with_dvc_extension(tmp_dir, dvc, capsys):
     assert out1 == out2
 
 
-def test_cache_path_relative(tmp_dir, dvc, capsys):
-    """Test --relative flag outputs relative path."""
+def test_cache_path_absolute(tmp_dir, dvc, capsys):
+    """Test --absolute flag outputs absolute path."""
     tmp_dir.dvc_gen("file.txt", "test content")
 
-    assert main(["cache", "path", "--relative", "file.txt"]) == 0
+    assert main(["cache", "path", "--absolute", "file.txt"]) == 0
     out = capsys.readouterr()[0].strip()
 
-    # Should be relative (not starting with /)
-    assert not out.startswith("/")
+    # Should be absolute (starting with /)
+    assert out.startswith("/")
 
 
 def test_cache_md5(tmp_dir, dvc, capsys):
