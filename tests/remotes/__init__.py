@@ -1,6 +1,10 @@
-from dvc_ssh.tests.fixtures import make_ssh, ssh, ssh_server  # noqa: F401
+try:
+    from dvc_ssh.tests.fixtures import make_ssh, ssh, ssh_server  # noqa: F401
 
-from .git_server import git_server, git_ssh  # noqa: F401
+    from .git_server import git_server, git_ssh  # noqa: F401
+except ImportError:
+    # dvc-ssh is optional, only needed for SSH remote tests
+    pass
 
 TEST_REMOTE = "upstream"
 TEST_CONFIG = {

@@ -1,6 +1,6 @@
 import pytest
 
-from dvc.testing.scripts import _add_script
+from dvx.testing.scripts import _add_script
 
 
 @pytest.fixture
