@@ -27,15 +27,21 @@ outs:
 DVX evolves these into **computational records**:
 ```yaml
 outs:
-- md5: abc123...
-  path: output.parquet
-computation:
-  cmd: "ctbk agg create -ge -ac 202506"
-  code_ref: "a1b2c3d"  # git SHA, not timestamp
-  deps:
-  - path: s3/ctbk/consolidated/202506.dvc
-    md5: def456...
+- md5: 8a6c7c6a8e4dbf9f20a8204ee043ce8a.dir
+  size: 92626204
+  nfiles: 2
+  path: '202501'
+meta:
+  computation:
+    cmd: ctbk norm create 202501
+    code_ref: a1b2c3d4...
+    deps:
+      s3/tripdata/202501-citibike-tripdata.zip: 26fe8d7a...
+      s3/tripdata/JC-202501-citibike-tripdata.csv.zip: c41d27cc...
 ```
+
+Note: Computation info is stored in `meta.computation` for DVC compatibility
+(DVC rejects unknown top-level keys but allows arbitrary data in `meta`).
 
 ## Design Principles
 
@@ -58,27 +64,26 @@ computation:
 ```yaml
 outs:
 - md5: abc123...
+  size: 12345
   path: output.parquet
+meta:
+  computation:
+    # What command produced this artifact
+    cmd: "python train.py --model rf"
 
-computation:
-  # What command produced this artifact
-  cmd: "python train.py --model rf"
+    # Git SHA of the repo when this was last computed
+    # Used to detect if code has changed
+    code_ref: "a1b2c3d4e5f6..."
 
-  # Git SHA of the repo when this was last computed
-  # Used to detect if code has changed
-  code_ref: "a1b2c3d4e5f6..."
+    # Input dependencies with their hashes at computation time
+    deps:
+      data/input.csv: 111222...
+      src/train.py: 333444...
 
-  # Input dependencies with their hashes at computation time
-  deps:
-  - path: data/input.csv.dvc
-    md5: 111222...
-  - path: src/train.py
-    md5: 333444...
-
-  # Optional: explicit parameters (for inspection/debugging)
-  params:
-    model: "rf"
-    split: 0.2
+    # Optional: explicit parameters (for inspection/debugging)
+    params:
+      model: "rf"
+      split: 0.2
 ```
 
 ### 1.2 Backward Compatibility
@@ -285,13 +290,13 @@ from dvx.run import (
 For maximum reproducibility, support container-based computation:
 
 ```yaml
-computation:
-  container:
-    image: "sha256:abc123..."  # immutable image reference
-    cmd: "python train.py"
-  deps:
-    - path: data/input.csv.dvc
-      md5: ...
+meta:
+  computation:
+    container:
+      image: "sha256:abc123..."  # immutable image reference
+      cmd: "python train.py"
+    deps:
+      data/input.csv: ...
 ```
 
 ### 6.2 Remote Execution
@@ -299,11 +304,12 @@ computation:
 Track whether computation was local or remote:
 
 ```yaml
-computation:
-  exec:
-    remote: "github-actions"
-    run_id: "12345"
-    logs_url: "https://..."
+meta:
+  computation:
+    exec:
+      remote: "github-actions"
+      run_id: "12345"
+      logs_url: "https://..."
 ```
 
 ---
