@@ -119,7 +119,7 @@ Issues = "https://github.com/runsascoded/dvx/issues"
 Source = "https://github.com/runsascoded/dvx"
 
 [project.scripts]
-dvx = "dvx.cli:main"
+dvx = "dvx.cli.main:main"
 
 [project.entry-points."fsspec.specs"]
 dvx = "dvx.api:DVCFileSystem"
