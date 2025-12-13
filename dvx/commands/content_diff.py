@@ -181,20 +181,55 @@ def _diff_directory(path1, path2, data_path, after):
     return 1 if has_diff else 0
 
 
-@click.command("xdiff", no_args_is_help=True)
+def _show_summary(ctx, refspec, ref, targets):
+    """Show summary of file/hash changes (like old dvx diff)."""
+    from dvx.commands.diff import CmdDiff
+    from dvx.repo import Repo
+
+    # Parse refspec
+    if refspec and ref:
+        raise click.UsageError("Specify -r/--refspec or -R/--ref, not both")
+
+    if ref:
+        # -R <ref> means compare <ref>^ to <ref>
+        a_rev = f"{ref}^"
+        b_rev = ref
+    elif refspec and ".." in refspec:
+        a_rev, b_rev = refspec.split("..", 1)
+    elif refspec:
+        a_rev = refspec
+        b_rev = None
+    else:
+        a_rev = None
+        b_rev = None
+
+    try:
+        repo = Repo()
+    except Exception as e:
+        raise click.ClickException(f"Not a DVX repository: {e}") from None
+
+    with repo:
+        diff_result = repo.diff(a_rev, b_rev, targets=targets or None)
+
+    CmdDiff._show_diff(diff_result)
+    ctx.exit(0)
+
+
+@click.command("diff")
 @click.option("-b", "--both", is_flag=True, help="Merge stderr into stdout in pipeline commands.")
 @click.option("-c/-C", "--color/--no-color", default=None, help="Force or prevent colorized output.")
 @click.option("-r", "--refspec", help="<commit1>..<commit2> or <commit> (compare to worktree).")
 @click.option("-R", "--ref", help="Shorthand for -r <ref>^..<ref> (compare commit to parent).")
-@click.option("-s", "--shell-executable", help="Shell to use for executing commands.")
+@click.option("-e", "--shell-executable", help="Shell to use for executing commands.")
 @click.option("-S", "--no-shell", is_flag=True, help="Don't use shell for subprocess execution.")
+@click.option("-s", "--summary", is_flag=True, help="Show summary of changes (files and hashes) instead of content diff.")
 @click.option("-U", "--unified", type=int, help="Number of lines of context.")
 @click.option("-v", "--verbose", is_flag=True, help="Log intermediate commands to stderr.")
 @click.option("-w", "--ignore-whitespace", is_flag=True, help="Ignore whitespace differences.")
 @click.option("-x", "--exec-cmd", "exec_cmds", multiple=True, help="Command to execute before diffing.")
 @click.argument("args", nargs=-1, metavar="[cmd...] <path>")
 @click.pass_context
-def xdiff(
+def diff(
     ctx,
     both: bool,
     color: Optional[bool],
@@ -202,35 +237,47 @@ def xdiff(
     ref: Optional[str],
     shell_executable: Optional[str],
     no_shell: bool,
+    summary: bool,
     unified: Optional[int],
     verbose: bool,
     ignore_whitespace: bool,
     exec_cmds: tuple[str, ...],
     args: tuple[str, ...],
 ):
-    """Diff a DVC-tracked file between commits, optionally through preprocessing commands.
+    """Diff DVC-tracked files between commits.
+
+    By default, shows actual content differences. Use -s/--summary to show
+    a summary of which files changed (with hashes) instead.
 
     Examples:
 
     \b
-      dvx xdiff -r HEAD^..HEAD wc -l foo.dvc
-        Compare line count of foo at previous vs current commit.
+      dvx diff data.csv
+        Show content diff of data.csv between HEAD and worktree.
 
     \b
-      dvx xdiff md5sum foo
-        Diff md5sum of foo at HEAD vs current worktree.
+      dvx diff -r HEAD^..HEAD data.csv
+        Show content diff between previous and current commit.
 
     \b
-      dvx xdiff -R abc123 cat data.csv
-        Show what changed in data.csv at commit abc123.
+      dvx diff -s
+        Show summary of all changed files with hashes.
+
+    \b
+      dvx diff -R abc123 wc -l data.csv
+        Compare line count of data.csv at commit abc123 vs its parent.
     """
     from dvx.repo import Repo
+
+    # Handle summary mode (shows file/hash changes, not content)
+    if summary:
+        return _show_summary(ctx, refspec, ref, args)
 
     # Combine exec_cmds and args
     remaining = list(exec_cmds) + list(args)
 
     if not remaining:
-        raise click.UsageError("Must specify [cmd...] <path>")
+        raise click.UsageError("Must specify [cmd...] <path> (or use -s/--summary)")
 
     *cmds, target = remaining
     data_path, dvc_path = _normalize_path(target)
@@ -300,6 +347,7 @@ def xdiff(
         )
 
     ctx.exit(returncode)
+    return None
 
 
 # Adapter to integrate Click command with DVX's argparse-based CLI
@@ -338,7 +386,7 @@ class CmdContentDiff:
             argv.extend(self.args.args)
 
         try:
-            xdiff(argv, standalone_mode=False)
+            diff(argv, standalone_mode=False)
             return 0
         except click.ClickException as e:
             e.show()
