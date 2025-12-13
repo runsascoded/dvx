@@ -8,6 +8,7 @@ from dvx import __version__
 from dvx.commands import (
     add,
     cache,
+    cat,
     check_ignore,
     checkout,
     commit,
@@ -48,6 +49,7 @@ logger = logger.getChild(__name__)
 COMMANDS = [
     add,
     cache,
+    cat,
     check_ignore,
     checkout,
     commit,
