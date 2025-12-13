@@ -420,32 +420,6 @@ def commit_cmd(ctx, targets, force, with_deps, recursive):
         )
 
 
-@cli.command("diff")
-@click.argument("a_rev", required=False)
-@click.argument("b_rev", required=False)
-@click.option("--targets", "-t", multiple=True, help="Specific targets to diff.")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
-@click.option("--md", "as_md", is_flag=True, help="Output as Markdown.")
-@click.option("--hide-missing", is_flag=True, help="Hide missing entries.")
-@click.pass_context
-def diff_cmd(ctx, a_rev, b_rev, targets, as_json, as_md, hide_missing):
-    """Show changes between commits or cache and workspace."""
-    from dvx.repo import Repo
-    from dvx.ui import ui
-    from dvx.compare import show_diff
-
-    os.chdir(ctx.obj.cd)
-    repo = Repo(_wait_for_lock=ctx.obj.wait_for_lock)
-    with repo:
-        diff_result = repo.diff(a_rev, b_rev, targets=targets or None)
-
-    if as_json:
-        ui.write_json(diff_result)
-    elif as_md:
-        from dvx.compare import show_md
-        show_md(diff_result)
-    else:
-        show_diff(diff_result, hide_missing=hide_missing)
 
 
 @cli.command("gc")
@@ -786,9 +760,9 @@ def remote_list_cmd(ctx, global_, system, local):
         ui.write(f"{name}\t{url}")
 
 
-# Register the xdiff command from content_diff module
-from dvx.commands.content_diff import xdiff
-cli.add_command(xdiff)
+# Register the diff command from content_diff module
+from dvx.commands.content_diff import diff
+cli.add_command(diff)
 
 
 def main(argv=None):
