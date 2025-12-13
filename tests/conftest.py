@@ -5,9 +5,9 @@ from contextlib import ExitStack, suppress
 
 import pytest
 
-from dvc import env
-from dvc.stage import PipelineStage
-from dvc.testing.fixtures import *  # noqa: F403
+from dvx import env
+from dvx.stage import PipelineStage
+from dvx.testing.fixtures import *  # noqa: F403
 
 from .dir_helpers import *  # noqa: F403
 from .remotes import *  # noqa: F403
@@ -55,14 +55,14 @@ def reset_loglevel(request, caplog):
 
 @pytest.fixture(autouse=True)
 def enable_ui():
-    from dvc.ui import ui
+    from dvx.ui import ui
 
     ui.enable()
 
 
 @pytest.fixture(autouse=True)
 def clean_repos():
-    from dvc.repo.open_repo import clean_repos
+    from dvx.repo.open_repo import clean_repos
 
     clean_repos()
 
