@@ -6,7 +6,7 @@ optionally passing content through preprocessing commands before diffing.
 
 import os
 import subprocess
-from typing import Optional, Tuple
+from typing import Optional
 
 import click
 
@@ -205,8 +205,8 @@ def xdiff(
     unified: Optional[int],
     verbose: bool,
     ignore_whitespace: bool,
-    exec_cmds: Tuple[str, ...],
-    args: Tuple[str, ...],
+    exec_cmds: tuple[str, ...],
+    args: tuple[str, ...],
 ):
     """Diff a DVC-tracked file between commits, optionally through preprocessing commands.
 
@@ -255,7 +255,7 @@ def xdiff(
     try:
         repo = Repo()
     except Exception as e:
-        raise click.ClickException(f"Not a DVX repository: {e}")
+        raise click.ClickException(f"Not a DVX repository: {e}") from None
 
     # Get cache paths
     path1 = _get_cache_path_for_ref(repo, dvc_path, before)

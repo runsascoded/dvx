@@ -1,7 +1,6 @@
 """This module provides an entrypoint to the dvc cli and parsing utils."""
 
 import logging
-import sys
 from typing import Optional
 
 from dvx.log import logger
@@ -22,21 +21,8 @@ class DvcParserError(Exception):
         super().__init__("parser error")
 
 
-def parse_args(argv=None):
-    """Parses CLI arguments.
-
-    Args:
-        argv: optional list of arguments to parse. sys.argv is used by default.
-
-    Raises:
-        DvcParserError: raised for argument parsing errors.
-    """
-    from .parser import get_main_parser
-
-    parser = get_main_parser()
-    args = parser.parse_args(argv)
-    args.parser = parser
-    return args
+# Re-export main from Click-based CLI
+from .main import main  # noqa: E402, F401
 
 
 def _log_unknown_exceptions() -> None:
@@ -146,107 +132,3 @@ def _log_exceptions(exc: Exception) -> Optional[int]:
 
     _log_unknown_exceptions()
     return None
-
-
-def main(argv=None):  # noqa: PLR0915
-    """Main entry point for dvc CLI.
-
-    Args:
-        argv: optional list of arguments to parse. sys.argv is used by default.
-
-    Returns:
-        int: command's return code.
-    """
-    from contextlib import ExitStack
-
-    from dvx._debug import debugtools
-    from dvx.config import ConfigError
-    from dvx.exceptions import DvcException, NotDvcRepoError
-    from dvx.logger import set_loggers_level
-
-    # NOTE: stderr/stdout may be closed if we are running from dvx.daemon.
-    # On Linux we directly call cli.main after double forking and closing
-    # the copied parent's standard file descriptors. If we make any logging
-    # calls in this state it will cause an exception due to writing to a closed
-    # file descriptor.
-    if not sys.stderr or sys.stderr.closed:
-        logging.disable()
-    elif not sys.stdout or sys.stdout.closed:
-        logging.disable(logging.INFO)
-
-    args = None
-    stack = ExitStack()
-    try:
-        args = parse_args(argv)
-
-        level = None
-        if args.quiet:
-            level = logging.CRITICAL
-        elif args.verbose == 1:
-            level = logging.DEBUG
-        elif args.verbose > 1:
-            level = logging.TRACE  # type: ignore[attr-defined]
-
-        if level is not None:
-            stack.enter_context(set_loggers_level(level))
-
-        if level and level <= logging.DEBUG:
-            from platform import platform, python_implementation, python_version
-
-            from dvx import PKG, __version__
-
-            pyv = f"{python_implementation()} {python_version()}"
-            pkg = f" ({PKG})" if PKG else ""
-            logger.debug("v%s%s, %s on %s", __version__, pkg, pyv, platform())
-            logger.debug("command: %s", " ".join(argv or sys.argv))
-
-        logger.trace(args)
-
-        if sys.stdout and not sys.stdout.closed and not args.quiet:
-            from dvx.ui import ui
-
-            ui.enable()
-
-        with debugtools(args):
-            cmd = args.func(args)
-            ret = cmd.do_run()
-    except ConfigError:
-        logger.exception("configuration error")
-        ret = 251
-    except KeyboardInterrupt:
-        logger.exception("interrupted by the user")
-        ret = 252
-    except BrokenPipeError:
-        import os
-
-        # Python flushes standard streams on exit; redirect remaining output
-        # to devnull to avoid another BrokenPipeError at shutdown
-        # See: https://docs.python.org/3/library/signal.html#note-on-sigpipe
-        devnull = os.open(os.devnull, os.O_WRONLY)
-        os.dup2(devnull, sys.stdout.fileno())
-        ret = 141  # 128 + 13 (SIGPIPE)
-    except NotDvcRepoError:
-        logger.exception("")
-        ret = 253
-    except DvcException:
-        ret = 255
-        logger.exception("")
-    except DvcParserError:
-        ret = 254
-    except Exception as exc:
-        ret = _log_exceptions(exc) or 255
-
-    try:
-        import os
-
-        logger.trace("Process %s exiting with %s", os.getpid(), ret)
-
-        return ret
-    finally:
-        stack.close()
-
-        from dvx.repo.open_repo import clean_repos
-
-        # Remove cached repos in the end of the call, these are anonymous
-        # so won't be reused by any other subsequent run anyway.
-        clean_repos()
