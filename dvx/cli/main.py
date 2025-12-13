@@ -29,7 +29,7 @@ class DvxContext:
         """Lazily initialize repo."""
         if self._repo is None:
             from dvx.repo import Repo
-            self._repo = Repo(wait_for_lock=self.wait_for_lock)
+            self._repo = Repo(_wait_for_lock=self.wait_for_lock)
         return self._repo
 
 
@@ -215,7 +215,7 @@ def unprotect_cmd(ctx, targets):
     from dvx.repo import Repo
 
     os.chdir(ctx.obj.cd)
-    repo = Repo(wait_for_lock=ctx.obj.wait_for_lock)
+    repo = Repo(_wait_for_lock=ctx.obj.wait_for_lock)
     with repo:
         for target in targets:
             repo.unprotect(target)
@@ -253,7 +253,7 @@ def add_cmd(ctx, targets, no_commit, glob, out, to_remote, remote, remote_jobs, 
         if remote_jobs:
             raise click.ClickException("--remote-jobs can't be used without --to-remote")
 
-    repo = Repo(wait_for_lock=ctx.obj.wait_for_lock)
+    repo = Repo(_wait_for_lock=ctx.obj.wait_for_lock)
     try:
         with repo:
             repo.add(
@@ -288,7 +288,7 @@ def checkout_cmd(ctx, targets, summary, with_deps, recursive, force, relink, all
     from dvx.utils.humanize import get_summary
 
     os.chdir(ctx.obj.cd)
-    repo = Repo(wait_for_lock=ctx.obj.wait_for_lock)
+    repo = Repo(_wait_for_lock=ctx.obj.wait_for_lock)
 
     exc = None
     with repo:
@@ -380,7 +380,7 @@ def remove_cmd(ctx, targets, force, outs):
     from dvx.repo import Repo
 
     os.chdir(ctx.obj.cd)
-    repo = Repo(wait_for_lock=ctx.obj.wait_for_lock)
+    repo = Repo(_wait_for_lock=ctx.obj.wait_for_lock)
     with repo:
         repo.remove(targets, force=force, outs=outs)
 
@@ -394,7 +394,7 @@ def move_cmd(ctx, src, dst):
     from dvx.repo import Repo
 
     os.chdir(ctx.obj.cd)
-    repo = Repo(wait_for_lock=ctx.obj.wait_for_lock)
+    repo = Repo(_wait_for_lock=ctx.obj.wait_for_lock)
     with repo:
         repo.move(src, dst)
 
@@ -410,7 +410,7 @@ def commit_cmd(ctx, targets, force, with_deps, recursive):
     from dvx.repo import Repo
 
     os.chdir(ctx.obj.cd)
-    repo = Repo(wait_for_lock=ctx.obj.wait_for_lock)
+    repo = Repo(_wait_for_lock=ctx.obj.wait_for_lock)
     with repo:
         repo.commit(
             targets,
@@ -435,7 +435,7 @@ def diff_cmd(ctx, a_rev, b_rev, targets, as_json, as_md, hide_missing):
     from dvx.compare import show_diff
 
     os.chdir(ctx.obj.cd)
-    repo = Repo(wait_for_lock=ctx.obj.wait_for_lock)
+    repo = Repo(_wait_for_lock=ctx.obj.wait_for_lock)
     with repo:
         diff_result = repo.diff(a_rev, b_rev, targets=targets or None)
 
@@ -467,7 +467,7 @@ def gc_cmd(ctx, workspace, all_branches, all_tags, all_commits, all_experiments,
     from dvx.repo import Repo
 
     os.chdir(ctx.obj.cd)
-    repo = Repo(wait_for_lock=ctx.obj.wait_for_lock)
+    repo = Repo(_wait_for_lock=ctx.obj.wait_for_lock)
     with repo:
         repo.gc(
             workspace=workspace,
@@ -505,7 +505,7 @@ def pull_cmd(ctx, targets, remote, all_branches, all_tags, all_commits, with_dep
     from dvx.ui import ui
 
     os.chdir(ctx.obj.cd)
-    repo = Repo(wait_for_lock=ctx.obj.wait_for_lock)
+    repo = Repo(_wait_for_lock=ctx.obj.wait_for_lock)
     with repo:
         result = repo.pull(
             targets=targets,
@@ -541,7 +541,7 @@ def push_cmd(ctx, targets, remote, all_branches, all_tags, all_commits, with_dep
     from dvx.ui import ui
 
     os.chdir(ctx.obj.cd)
-    repo = Repo(wait_for_lock=ctx.obj.wait_for_lock)
+    repo = Repo(_wait_for_lock=ctx.obj.wait_for_lock)
     with repo:
         result = repo.push(
             targets=targets,
@@ -574,7 +574,7 @@ def fetch_cmd(ctx, targets, remote, all_branches, all_tags, all_commits, with_de
     from dvx.ui import ui
 
     os.chdir(ctx.obj.cd)
-    repo = Repo(wait_for_lock=ctx.obj.wait_for_lock)
+    repo = Repo(_wait_for_lock=ctx.obj.wait_for_lock)
     with repo:
         result = repo.fetch(
             targets=targets,
@@ -621,7 +621,7 @@ def cache_dir_cmd(ctx, value, unset, global_, system, local):
         except Exception:
             ui.write(".dvc/cache")
     else:
-        repo = Repo(wait_for_lock=ctx.obj.wait_for_lock)
+        repo = Repo(_wait_for_lock=ctx.obj.wait_for_lock)
         with repo:
             level = "global" if global_ else "system" if system else "local" if local else None
             with repo.config.edit(level=level) as conf:
@@ -645,7 +645,7 @@ def cache_path_cmd(ctx, target, rev, remote, relative):
     from dvx.ui import ui
 
     os.chdir(ctx.obj.cd)
-    repo = Repo(wait_for_lock=ctx.obj.wait_for_lock)
+    repo = Repo(_wait_for_lock=ctx.obj.wait_for_lock)
     with repo:
         outs = _get_output_from_target(repo, target, rev)
         if not outs:
@@ -678,7 +678,7 @@ def cache_md5_cmd(ctx, target, rev):
     from dvx.ui import ui
 
     os.chdir(ctx.obj.cd)
-    repo = Repo(wait_for_lock=ctx.obj.wait_for_lock)
+    repo = Repo(_wait_for_lock=ctx.obj.wait_for_lock)
     with repo:
         outs = _get_output_from_target(repo, target, rev)
         if not outs:
@@ -701,7 +701,7 @@ def cat_cmd(ctx, target, rev):
     from dvx.repo import Repo
 
     os.chdir(ctx.obj.cd)
-    repo = Repo(wait_for_lock=ctx.obj.wait_for_lock)
+    repo = Repo(_wait_for_lock=ctx.obj.wait_for_lock)
     with repo:
         outs = _get_output_from_target(repo, target, rev)
         if not outs:
@@ -742,7 +742,7 @@ def remote_add_cmd(ctx, name, url, default, force, global_, system, local):
 
     os.chdir(ctx.obj.cd)
     level = "global" if global_ else "system" if system else "local" if local else None
-    repo = Repo(wait_for_lock=ctx.obj.wait_for_lock)
+    repo = Repo(_wait_for_lock=ctx.obj.wait_for_lock)
     with repo:
         repo.config.set(f"remote.{name}.url", url, level=level, force=force)
         if default:
@@ -761,7 +761,7 @@ def remote_remove_cmd(ctx, name, global_, system, local):
 
     os.chdir(ctx.obj.cd)
     level = "global" if global_ else "system" if system else "local" if local else None
-    repo = Repo(wait_for_lock=ctx.obj.wait_for_lock)
+    repo = Repo(_wait_for_lock=ctx.obj.wait_for_lock)
     with repo:
         with repo.config.edit(level=level) as conf:
             if "remote" in conf and name in conf["remote"]:
