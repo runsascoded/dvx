@@ -768,8 +768,8 @@ cli.add_command(diff)
 def main(argv=None):
     """Main entry point."""
     try:
-        cli(argv, standalone_mode=False)
-        return 0
+        result = cli(argv, standalone_mode=False)
+        return result if result is not None else 0
     except click.ClickException as e:
         e.show()
         return e.exit_code

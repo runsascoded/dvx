@@ -31,23 +31,37 @@ def _normalize_path(path: str) -> tuple[str, str]:
 
 def _get_cache_path_for_ref(repo, dvc_path: str, ref: Optional[str]) -> Optional[str]:
     """Get cache path for a .dvc file at a specific git ref."""
-    from dvx.dvcfile import SingleStageFile
-    from dvx.repo.brancher import switch
-
-    abs_path = os.path.abspath(dvc_path)
+    import subprocess
+    import yaml
 
     try:
         if ref:
-            with switch(repo, ref):
-                dvcfile = SingleStageFile(repo, abs_path, verify=False)
-                stage = dvcfile.stage
-                if not stage.outs:
-                    return None
-                out = stage.outs[0]
-                if not out.hash_info or not out.hash_info.value:
-                    return None
-                return out.cache_path
+            # Read .dvc file content directly from git
+            result = subprocess.run(
+                ["git", "show", f"{ref}:{dvc_path}"],
+                capture_output=True, text=True, cwd=repo.root_dir
+            )
+            if result.returncode != 0:
+                logger.debug(f"Failed to read {dvc_path} at {ref}: {result.stderr}")
+                return None
+
+            dvc_content = yaml.safe_load(result.stdout)
+            outs = dvc_content.get('outs', [])
+            if not outs:
+                return None
+
+            md5 = outs[0].get('md5', '')
+            if not md5:
+                return None
+
+            # Strip .dir suffix if present
+            md5 = md5.replace('.dir', '')
+            cache_path = os.path.join(repo.root_dir, '.dvc', 'cache', 'files', 'md5', md5[:2], md5[2:])
+            return cache_path
         else:
+            # Read from current working tree
+            from dvx.dvcfile import SingleStageFile
+            abs_path = os.path.abspath(dvc_path)
             dvcfile = SingleStageFile(repo, abs_path, verify=False)
             stage = dvcfile.stage
             if not stage.outs:
@@ -384,8 +398,8 @@ class CmdContentDiff:
             argv.extend(self.args.args)
 
         try:
-            xdiff(argv, standalone_mode=False)
-            return 0
+            result = diff(argv, standalone_mode=False)
+            return result if result is not None else 0
         except click.ClickException as e:
             e.show()
             return 1
