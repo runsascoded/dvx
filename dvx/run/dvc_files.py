@@ -300,6 +300,7 @@ def is_output_fresh(
     check_deps: bool = True,
     check_code_ref: bool = True,
     use_mtime_cache: bool = True,
+    info: DVCFileInfo | None = None,
 ) -> tuple[bool, str]:
     """Check if output is fresh (up-to-date with its .dvc file and deps).
 
@@ -314,11 +315,13 @@ def is_output_fresh(
         check_deps: Whether to verify dependencies (default: True)
         check_code_ref: Whether to use code_ref for dep checking (default: True)
         use_mtime_cache: Whether to use mtime cache for output hash (default: True)
+        info: Pre-parsed DVCFileInfo (avoids re-reading .dvc file if already parsed)
 
     Returns:
         Tuple of (is_fresh, reason)
     """
-    info = read_dvc_file(output_path)
+    if info is None:
+        info = read_dvc_file(output_path)
     if info is None:
         return False, "no .dvc file"
 

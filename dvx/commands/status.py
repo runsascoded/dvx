@@ -42,8 +42,8 @@ def _check_one_target(target, with_deps: bool) -> dict:
     # Get output path from .dvc file
     output_path = dvc_path.parent / dvc_data.path
 
-    # Check freshness
-    is_fresh, reason = is_output_fresh(output_path, check_deps=with_deps)
+    # Check freshness (pass pre-parsed info to avoid re-reading .dvc file)
+    is_fresh, reason = is_output_fresh(output_path, check_deps=with_deps, info=dvc_data)
     return {
         "path": str(dvc_path),
         "status": "fresh" if is_fresh else "stale",
@@ -103,7 +103,14 @@ class CmdStatus(CmdBase):
             fresh_count = sum(1 for r in results if r["status"] == "fresh")
             other_count = len(results) - fresh_count - stale_count
 
+            # By default, only show non-fresh files (like git status hides unchanged files)
+            show_all = getattr(args, "verbose", False)
+
             for r in results:
+                # Skip fresh files unless -v/--verbose
+                if r["status"] == "fresh" and not show_all:
+                    continue
+
                 status_icon = {
                     "fresh": "✓",
                     "stale": "✗",
@@ -156,5 +163,20 @@ def add_parser(subparsers, parent_parser):
         action="store_true",
         default=False,
         help="Output results as JSON.",
+    )
+    parser.add_argument(
+        "-j",
+        "--jobs",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Number of parallel workers (default: CPU count).",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        default=False,
+        help="Show all files including fresh (default: only stale/missing).",
     )
     parser.set_defaults(func=CmdStatus)

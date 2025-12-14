@@ -287,9 +287,11 @@ def checkout_cmd(ctx, targets, summary, with_deps, recursive, force, relink, all
 @cli.command("status")
 @click.argument("targets", nargs=-1)
 @click.option("-d", "--with-deps", is_flag=True, help="Check upstream dependencies.")
+@click.option("-j", "--jobs", type=int, default=None, help="Number of parallel workers.")
+@click.option("-v", "--verbose", is_flag=True, help="Show all files including fresh.")
 @click.option("--json", "as_json", is_flag=True, help="Output results as JSON.")
 @click.pass_context
-def status_cmd(ctx, targets, with_deps, as_json):
+def status_cmd(ctx, targets, with_deps, jobs, verbose, as_json):
     """Check freshness status of artifacts."""
     from functools import partial
     from pathlib import Path
@@ -300,32 +302,38 @@ def status_cmd(ctx, targets, with_deps, as_json):
 
     os.chdir(ctx.obj.cd)
 
-    # Find targets
-    targets = list(targets) if targets else list(Path(".").glob("**/*.dvc"))
+    # Find targets - filter to files only (exclude .dvc directory)
+    if targets:
+        targets = list(targets)
+    else:
+        targets = [p for p in Path(".").glob("**/*.dvc") if p.is_file()]
     if not targets:
         ui.write("No .dvc files found")
         return
 
     results = []
-    with ThreadPoolExecutor(cancel_on_error=False) as executor:
+    with ThreadPoolExecutor(max_workers=jobs, cancel_on_error=False) as executor:
         check_fn = partial(_check_one_target, with_deps=with_deps)
         for result in executor.imap_unordered(check_fn, targets):
             results.append(result)
 
     results.sort(key=lambda r: r["path"])
     stale_count = sum(1 for r in results if r["status"] == "stale")
+    fresh_count = sum(1 for r in results if r["status"] == "fresh")
 
     if as_json:
         ui.write_json(results)
     else:
+        # By default, only show non-fresh files (like git status)
         for r in results:
+            if r["status"] == "fresh" and not verbose:
+                continue
             icon = {"fresh": "✓", "stale": "✗", "missing": "?", "error": "!"}.get(r["status"], "?")
             line = f"{icon} {r['path']}"
             if r.get("reason"):
                 line += f" ({r['reason']})"
             ui.write(line)
 
-        fresh_count = sum(1 for r in results if r["status"] == "fresh")
         ui.write(f"\nFresh: {fresh_count}, Stale: {stale_count}")
 
     ctx.exit(1 if stale_count > 0 else 0)
