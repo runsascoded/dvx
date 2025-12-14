@@ -55,9 +55,10 @@ def _get_cache_path_for_ref(repo, dvc_path: str, ref: Optional[str]) -> Optional
             if not md5:
                 return None
 
-            # Strip .dir suffix if present
-            md5 = md5.replace(".dir", "")
-            return os.path.join(repo.root_dir, ".dvc", "cache", "files", "md5", md5[:2], md5[2:])
+            # For directories, md5 ends with .dir - strip for prefix, keep for suffix
+            md5_base = md5.replace(".dir", "")
+            suffix = ".dir" if md5.endswith(".dir") else ""
+            return os.path.join(repo.root_dir, ".dvc", "cache", "files", "md5", md5_base[:2], md5_base[2:] + suffix)
         # Read from current working tree
         from dvx.dvcfile import SingleStageFile
         abs_path = os.path.abspath(dvc_path)
