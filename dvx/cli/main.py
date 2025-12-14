@@ -336,8 +336,6 @@ def status_cmd(ctx, targets, with_deps, jobs, verbose, as_json):
 
         ui.write(f"\nFresh: {fresh_count}, Stale: {stale_count}")
 
-    ctx.exit(1 if stale_count > 0 else 0)
-
 
 @cli.command("remove")
 @click.argument("targets", nargs=-1, required=True)
