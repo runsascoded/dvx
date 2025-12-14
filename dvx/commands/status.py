@@ -59,7 +59,8 @@ class CmdStatus(CmdBase):
         targets = list(args.targets) if args.targets else []
         if not targets:
             # Default: find all .dvc files recursively (like git status)
-            targets = list(Path(".").glob("**/*.dvc"))
+            # Filter to files only (exclude .dvc directory itself)
+            targets = [p for p in Path(".").glob("**/*.dvc") if p.is_file()]
             if not targets:
                 logger.warning("No .dvc files found")
                 return 0
