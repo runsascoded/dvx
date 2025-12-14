@@ -42,9 +42,10 @@ The `delayed` decorator enables lazy function composition:
 from __future__ import annotations
 
 import functools
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from dvx.run.dvc_files import (
     get_git_head_sha,

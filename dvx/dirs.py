@@ -1,5 +1,4 @@
 import os
-from typing import Optional
 
 import platformdirs
 
@@ -21,7 +20,7 @@ def global_config_dir():
     )
 
 
-def site_cache_dir(config_site_cache_dir: Optional[str] = None):
+def site_cache_dir(config_site_cache_dir: str | None = None):
     from platformdirs import PlatformDirs
     from platformdirs.unix import Unix
 

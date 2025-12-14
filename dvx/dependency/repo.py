@@ -1,5 +1,5 @@
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, ClassVar, Optional, Union
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import voluptuous as vol
 
@@ -87,13 +87,13 @@ class RepoDependency(Dependency):
             repo[cls.PARAM_REMOTE] = remote
         return repo
 
-    def dumpd(self, **kwargs) -> dict[str, Union[str, dict[str, str]]]:
+    def dumpd(self, **kwargs) -> dict[str, str | dict[str, str]]:
         return {
             self.PARAM_PATH: self.def_path,
             self.PARAM_REPO: self._dump_def_repo(self.def_repo),
         }
 
-    def download(self, to: "Output", jobs: Optional[int] = None):
+    def download(self, to: "Output", jobs: int | None = None):
         from dvx.fs import LocalFileSystem
 
         files = super().download(to=to, jobs=jobs)
@@ -114,7 +114,7 @@ class RepoDependency(Dependency):
         cache = to.cache if to.use_cache else to.local_cache
         cache.state.save_many(hashes, to.fs)
 
-    def update(self, rev: Optional[str] = None):
+    def update(self, rev: str | None = None):
         if rev:
             self.def_repo[self.PARAM_REV] = rev
         self.fs = self._make_fs(rev=rev, locked=False)
@@ -127,7 +127,7 @@ class RepoDependency(Dependency):
         return False
 
     def _make_fs(
-        self, rev: Optional[str] = None, locked: bool = True
+        self, rev: str | None = None, locked: bool = True
     ) -> "DVCFileSystem":
         from dvx.config import Config
         from dvx.fs import DVCFileSystem

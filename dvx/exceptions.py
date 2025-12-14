@@ -1,7 +1,7 @@
 """Exceptions raised by the dvc."""
 
 import errno
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from dvx.utils import format_link
 
@@ -348,8 +348,8 @@ class ArtifactNotFoundError(DvcException):
     def __init__(
         self,
         name: str,
-        version: Optional[str] = None,
-        stage: Optional[str] = None,
+        version: str | None = None,
+        stage: str | None = None,
     ):
         self.name = name
         self.version = version

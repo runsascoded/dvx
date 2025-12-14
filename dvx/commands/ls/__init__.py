@@ -1,4 +1,4 @@
-from typing import Callable
+from collections.abc import Callable
 
 from dvx.cli import completion, formatter
 from dvx.cli.command import CmdBaseNoRepo

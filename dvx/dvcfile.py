@@ -1,6 +1,7 @@
 import contextlib
 import os
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Optional, TypeVar, Union
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from dvx.exceptions import DvcException
 from dvx.log import logger
@@ -140,7 +141,7 @@ class FileMixin:
         return self._load_yaml(**kwargs)
 
     @classmethod
-    def validate(cls, d: _T, fname: Optional[str] = None) -> _T:
+    def validate(cls, d: _T, fname: str | None = None) -> _T:
         from dvx.utils.strictyaml import validate
 
         return validate(d, cls.SCHEMA, path=fname)  # type: ignore[arg-type]
@@ -178,7 +179,7 @@ class SingleStageFile(FileMixin):
     metrics: ClassVar[list[str]] = []
     plots: ClassVar[Any] = {}
     params: ClassVar[list[str]] = []
-    artifacts: ClassVar[dict[str, Optional[dict[str, Any]]]] = {}
+    artifacts: ClassVar[dict[str, dict[str, Any] | None]] = {}
 
     @property
     def stage(self) -> "Stage":
@@ -338,7 +339,7 @@ class ProjectFile(FileMixin):
         return self.LOADER(self, self.contents, self.lockfile_contents)
 
     @property
-    def artifacts(self) -> dict[str, Optional[dict[str, Any]]]:
+    def artifacts(self) -> dict[str, dict[str, Any] | None]:
         return self.resolver.resolve_artifacts()
 
     @property
@@ -478,7 +479,7 @@ class Lockfile(FileMixin):
 
 def load_file(
     repo: "Repo", path: "StrOrBytesPath", **kwargs: Any
-) -> Union[ProjectFile, SingleStageFile]:
+) -> ProjectFile | SingleStageFile:
     _, ext = os.path.splitext(path)
     if ext in (".yaml", ".yml"):
         return ProjectFile(repo, path, **kwargs)

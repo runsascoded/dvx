@@ -3,7 +3,7 @@ import os
 import re
 from collections.abc import Iterable, Iterator
 from itertools import chain, groupby, takewhile
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, Optional, Union, overload
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, Optional, overload
 
 from pathspec.patterns import GitWildMatchPattern
 from pathspec.util import normalize_file
@@ -32,7 +32,7 @@ class DvcIgnore:
 
 class DvcIgnorePatterns(DvcIgnore):
     def __init__(
-        self, pattern_list: Iterable[Union[PatternInfo, str]], dirname: str, sep: str
+        self, pattern_list: Iterable[PatternInfo | str], dirname: str, sep: str
     ) -> None:
         from pathspec.patterns.gitwildmatch import _DIR_MARK
 
@@ -65,7 +65,7 @@ class DvcIgnorePatterns(DvcIgnore):
                 re.Pattern[str],
                 bool,
                 bool,
-                dict[Optional[str], tuple[str, PatternInfo]],
+                dict[str | None, tuple[str, PatternInfo]],
             ]
         ]
         self.ignore_spec = []
@@ -77,7 +77,7 @@ class DvcIgnorePatterns(DvcIgnore):
                 # But we still need to figure out which pattern matched which rule,
                 # (eg: to show in `dvc check-ignore`).
                 # So, we use named groups and keep a map of group name to pattern.
-                pattern_map: dict[Optional[str], tuple[str, PatternInfo]] = {
+                pattern_map: dict[str | None, tuple[str, PatternInfo]] = {
                     f"rule_{i}": (regex, pi)
                     for i, (regex, _, _, pi) in enumerate(group)
                 }
@@ -116,7 +116,7 @@ class DvcIgnorePatterns(DvcIgnore):
 
         return dirs, files
 
-    def _get_normalize_path(self, dirname: str, basename: str) -> Optional[str]:
+    def _get_normalize_path(self, dirname: str, basename: str) -> str | None:
         # NOTE: `relpath` is too slow, so we have to assume that both
         # `dirname` and `self.dirname` are relative or absolute together.
 
@@ -160,7 +160,7 @@ class DvcIgnorePatterns(DvcIgnore):
         basename: str,
         is_dir: bool = False,
         details: bool = False,
-    ) -> Union[bool, tuple[bool, list[PatternInfo]]]: ...
+    ) -> bool | tuple[bool, list[PatternInfo]]: ...
 
     def matches(
         self,
@@ -168,7 +168,7 @@ class DvcIgnorePatterns(DvcIgnore):
         basename: str,
         is_dir: bool = False,
         details: bool = False,
-    ) -> Union[bool, tuple[bool, list[PatternInfo]]]:
+    ) -> bool | tuple[bool, list[PatternInfo]]:
         path = self._get_normalize_path(dirname, basename)
         result = False
         _match: list[PatternInfo] = []
@@ -380,11 +380,11 @@ class DvcIgnoreFilter:
     @overload
     def ls(
         self, fs: "FileSystem", path: str, detail: bool = True, **kwargs
-    ) -> Union[list[str], list[dict[str, Any]]]: ...
+    ) -> list[str] | list[dict[str, Any]]: ...
 
     def ls(
         self, fs: "FileSystem", path: str, detail: bool = True, **kwargs: Any
-    ) -> Union[list[str], list[dict[str, Any]]]:
+    ) -> list[str] | list[dict[str, Any]]:
         fs_dict = {}
         dirs = []
         nondirs = []
@@ -407,10 +407,7 @@ class DvcIgnoreFilter:
     def walk(
         self, fs: "FileSystem", path: str, **kwargs: Any
     ) -> Iterator[
-        Union[
-            tuple[str, list[str], list[str]],
-            tuple[str, dict[str, dict], dict[str, dict]],
-        ]
+        tuple[str, list[str], list[str]] | tuple[str, dict[str, dict], dict[str, dict]]
     ]:
         detail = kwargs.get("detail", False)
         ignore_subrepos = kwargs.pop("ignore_subrepos", True)
@@ -445,7 +442,7 @@ class DvcIgnoreFilter:
             yield from fs.find(path)
 
     def _get_trie_pattern(
-        self, dirname: str, dnames: Optional[list[str]] = None, ignore_subrepos=True
+        self, dirname: str, dnames: list[str] | None = None, ignore_subrepos=True
     ) -> Optional["DvcIgnorePatterns"]:
         if ignore_subrepos:
             ignores_trie = self.ignores_trie_fs
@@ -537,7 +534,7 @@ class DvcIgnoreFilter:
         )
 
 
-def init(path: Union[str, os.PathLike[str]]) -> str:
+def init(path: str | os.PathLike[str]) -> str:
     dvcignore = os.path.join(path, DvcIgnore.DVCIGNORE_FILE)
     if os.path.exists(dvcignore):
         return dvcignore
@@ -552,7 +549,7 @@ def init(path: Union[str, os.PathLike[str]]) -> str:
     return dvcignore
 
 
-def destroy(path: Union[str, os.PathLike[str]]) -> None:
+def destroy(path: str | os.PathLike[str]) -> None:
     from dvx.utils.fs import remove
 
     dvcignore = os.path.join(path, DvcIgnore.DVCIGNORE_FILE)

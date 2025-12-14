@@ -2,14 +2,13 @@
 
 from collections.abc import Collection
 from getpass import getpass
-from typing import Optional
 
 from dvx.log import logger
 
 logger = logger.getChild(__name__)
 
 
-def ask(prompt: str, limited_to: Optional[Collection[str]] = None):
+def ask(prompt: str, limited_to: Collection[str] | None = None):
     from dvx.ui import Console
 
     if not Console.isatty():

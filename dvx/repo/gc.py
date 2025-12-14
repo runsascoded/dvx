@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from dvx.exceptions import InvalidArgumentError
 from dvx.log import logger
@@ -32,7 +32,7 @@ def _validate_args(**kwargs):
 
 
 def _used_obj_ids_not_in_remote(
-    remote_odb_to_obj_ids: "ObjectContainer", jobs: Optional[int] = None
+    remote_odb_to_obj_ids: "ObjectContainer", jobs: int | None = None
 ):
     used_obj_ids = set()
     remote_oids = set()
@@ -53,17 +53,17 @@ def gc(
     self: "Repo",
     all_branches: bool = False,
     cloud: bool = False,
-    remote: Optional[str] = None,
+    remote: str | None = None,
     with_deps: bool = False,
     all_tags: bool = False,
     all_commits: bool = False,
     force: bool = False,
-    jobs: Optional[int] = None,
-    repos: Optional[list[str]] = None,
+    jobs: int | None = None,
+    repos: list[str] | None = None,
     workspace: bool = False,
-    commit_date: Optional[str] = None,
-    rev: Optional[str] = None,
-    num: Optional[int] = None,
+    commit_date: str | None = None,
+    rev: str | None = None,
+    num: int | None = None,
     not_in_remote: bool = False,
     dry: bool = False,
     skip_failed: bool = False,
@@ -147,7 +147,7 @@ def gc(
 
 
 def _merge_remote_obj_ids(
-    repo: "Repo", remote: Optional[str], used_objs: "ObjectContainer"
+    repo: "Repo", remote: str | None, used_objs: "ObjectContainer"
 ):
     # Merge default remote used objects with remote-per-output used objects
     default_obj_ids = used_objs.pop(None, set())

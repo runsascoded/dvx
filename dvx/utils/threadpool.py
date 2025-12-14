@@ -1,7 +1,7 @@
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from concurrent import futures
 from itertools import islice
-from typing import Any, Callable, Optional, TypeVar
+from typing import Any, TypeVar
 
 _T = TypeVar("_T")
 
@@ -9,7 +9,7 @@ _T = TypeVar("_T")
 class ThreadPoolExecutor(futures.ThreadPoolExecutor):
     def __init__(
         self,
-        max_workers: Optional[int] = None,
+        max_workers: int | None = None,
         cancel_on_error: bool = False,
         **kwargs,
     ):

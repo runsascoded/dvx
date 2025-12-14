@@ -1,6 +1,7 @@
+from collections.abc import Callable
 from contextlib import ExitStack, contextmanager
 from datetime import datetime
-from typing import TYPE_CHECKING, Callable, Optional, Union
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from argparse import Namespace
@@ -9,7 +10,7 @@ if TYPE_CHECKING:
 
 @contextmanager
 def viztracer_profile(
-    path: Union[Callable[[], str], str],
+    path: Callable[[], str] | str,
     depth: int = -1,
     log_async: bool = False,
 ):
@@ -32,9 +33,9 @@ def viztracer_profile(
 
 @contextmanager
 def yappi_profile(
-    path: Optional[Union[Callable[[], str], str]] = None,
-    wall_clock: Optional[bool] = True,
-    separate_threads: Optional[bool] = False,
+    path: Callable[[], str] | str | None = None,
+    wall_clock: bool | None = True,
+    separate_threads: bool | None = False,
 ):
     try:
         import yappi  # ty: ignore[unresolved-import]
@@ -100,7 +101,7 @@ def instrument(html_output=False):
 
 
 @contextmanager
-def profile(dump_path: Optional[str] = None):
+def profile(dump_path: str | None = None):
     """Run a cprofile"""
     import cProfile
 

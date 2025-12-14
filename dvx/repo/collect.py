@@ -1,5 +1,5 @@
-from collections.abc import Iterable
-from typing import TYPE_CHECKING, Callable, Optional
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING
 
 from dvx.log import logger
 
@@ -16,7 +16,7 @@ StrPaths = list[str]
 
 
 def _collect_outs(
-    repo: "Repo", output_filter: Optional[FilterFn] = None, deps: bool = False
+    repo: "Repo", output_filter: FilterFn | None = None, deps: bool = False
 ) -> Outputs:
     index = repo.index
     index.check_graph()  # ensure graph is correct
@@ -62,8 +62,8 @@ def _filter_outs(
 def collect(
     repo: "Repo",
     deps: bool = False,
-    targets: Optional[Iterable[str]] = None,
-    output_filter: Optional[FilterFn] = None,
+    targets: Iterable[str] | None = None,
+    output_filter: FilterFn | None = None,
     recursive: bool = False,
     duplicates: bool = False,
 ) -> tuple[Outputs, StrPaths]:

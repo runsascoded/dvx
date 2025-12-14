@@ -40,7 +40,7 @@ def _log_unknown_exceptions() -> None:
     ui.error_write(footer)
 
 
-def _log_exceptions(exc: Exception) -> Optional[int]:
+def _log_exceptions(exc: Exception) -> int | None:
     """Try to log some known exceptions, that are not DVCExceptions."""
     from dvx.utils import error_link, format_link
 

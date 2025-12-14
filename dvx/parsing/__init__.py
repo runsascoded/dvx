@@ -82,7 +82,7 @@ def format_and_raise(exc: Exception, msg: str, path: str) -> "NoReturn":
 
 
 def _reraise_err(
-    exc_cls: type[Exception], *args, from_exc: Optional[Exception] = None
+    exc_cls: type[Exception], *args, from_exc: Exception | None = None
 ) -> "NoReturn":
     err = exc_cls(*args)
     if from_exc and logger.isEnabledFor(logging.DEBUG):
@@ -105,7 +105,7 @@ def is_map_or_seq(data: Any) -> bool:
     return not isinstance(data, str) and _is_map_or_seq(data)
 
 
-def split_group_name(name: str) -> tuple[str, Optional[str]]:
+def split_group_name(name: str) -> tuple[str, str | None]:
     group, *keys = name.rsplit(JOIN, maxsplit=1)
     return group, first(keys)
 
@@ -217,8 +217,8 @@ class DataResolver:
     # Top-level sections are eagerly evaluated, whereas stages are lazily evaluated,
     # one-by-one.
 
-    def resolve_artifacts(self) -> dict[str, Optional[dict[str, Any]]]:
-        d: dict[str, Optional[dict[str, Any]]] = {}
+    def resolve_artifacts(self) -> dict[str, dict[str, Any] | None]:
+        d: dict[str, dict[str, Any] | None] = {}
         for item in self.artifacts:
             d.update(item.resolve())
         return d
@@ -238,7 +238,7 @@ class DataResolver:
     def has_key(self, key: str):
         return self._has_group_and_key(*split_group_name(key))
 
-    def _has_group_and_key(self, group: str, key: Optional[str] = None):
+    def _has_group_and_key(self, group: str, key: str | None = None):
         try:
             definition = self.definitions[group]
         except KeyError:
@@ -278,7 +278,7 @@ class EntryDefinition:
         self.where = where
 
     def _resolve_wdir(
-        self, context: Context, name: str, wdir: Optional[str] = None
+        self, context: Context, name: str, wdir: str | None = None
     ) -> str:
         if not wdir:
             return self.wdir
@@ -641,7 +641,7 @@ class TopDefinition:
 
 
 class ArtifactDefinition(TopDefinition):
-    def resolve(self) -> dict[str, Optional[dict[str, Any]]]:
+    def resolve(self) -> dict[str, dict[str, Any] | None]:
         try:
             check_expression(self.name)
             name = self.context.resolve(self.name)

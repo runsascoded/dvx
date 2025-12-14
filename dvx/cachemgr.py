@@ -1,5 +1,5 @@
 import os
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from dvc_data.hashfile.db import get_odb
 from dvc_data.hashfile.hash import DEFAULT_ALGORITHM
@@ -15,8 +15,8 @@ def _get_odb(
     repo,
     settings,
     fs=None,
-    prefix: Optional[tuple[str, ...]] = None,
-    hash_name: Optional[str] = None,
+    prefix: tuple[str, ...] | None = None,
+    hash_name: str | None = None,
     **kwargs,
 ):
     from dvx.fs import get_cloud_fs
@@ -117,7 +117,7 @@ class CacheManager:
         return self.legacy.path
 
     @property
-    def default_local_cache_dir(self) -> Optional[str]:
+    def default_local_cache_dir(self) -> str | None:
         repo = self._repo
         if repo and repo.local_dvc_dir:
             return os.path.join(repo.local_dvc_dir, self.CACHE_DIR)

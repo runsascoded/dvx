@@ -1,5 +1,5 @@
 from dataclasses import asdict, dataclass, field, fields
-from typing import Any, ClassVar, Optional
+from typing import Any, ClassVar
 
 from funcy import compact
 from voluptuous import Required
@@ -12,8 +12,8 @@ class Annotation:
     PARAM_LABELS: ClassVar[str] = "labels"
     PARAM_META: ClassVar[str] = "meta"
 
-    desc: Optional[str] = None
-    type: Optional[str] = None
+    desc: str | None = None
+    type: str | None = None
     labels: list[str] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
 
@@ -30,8 +30,8 @@ class Artifact:
     PARAM_META: ClassVar[str] = "meta"
 
     path: str
-    desc: Optional[str] = None
-    type: Optional[str] = None
+    desc: str | None = None
+    type: str | None = None
     labels: list[str] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
 

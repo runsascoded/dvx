@@ -3,7 +3,7 @@ import shlex
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 from dvx.log import logger
 from dvx.utils import relpath
@@ -18,7 +18,7 @@ logger = logger.getChild(__name__)
 
 
 class SCMContext:
-    def __init__(self, scm: "Base", config: Optional[dict[str, Any]] = None) -> None:
+    def __init__(self, scm: "Base", config: dict[str, Any] | None = None) -> None:
         from funcy import get_in
 
         self.scm: Base = scm
@@ -29,16 +29,16 @@ class SCMContext:
         self.files_to_track: set[str] = set()
         self.quiet: bool = False
 
-    def track_file(self, paths: Union[str, Iterable[str], None] = None) -> None:
+    def track_file(self, paths: str | Iterable[str] | None = None) -> None:
         """Track file to remind user to track new files or autostage later."""
         return self.files_to_track.update(ensure_list(paths))
 
     @staticmethod
-    def _make_git_add_cmd(paths: Union[str, Iterable[str]]) -> str:
+    def _make_git_add_cmd(paths: str | Iterable[str]) -> str:
         files = " ".join(map(shlex.quote, ensure_list(paths)))
         return f"\tgit add {files}"
 
-    def add(self, paths: Union[str, Iterable[str]]) -> None:
+    def add(self, paths: str | Iterable[str]) -> None:
         from scmrepo.exceptions import UnsupportedIndexFormat
 
         from dvx.scm import add_no_submodules
@@ -95,7 +95,7 @@ class SCMContext:
 
     @contextmanager
     def __call__(
-        self, autostage: Optional[bool] = None, quiet: Optional[bool] = None
+        self, autostage: bool | None = None, quiet: bool | None = None
     ) -> Iterator["SCMContext"]:
         try:
             yield self
@@ -140,7 +140,7 @@ class SCMContext:
         self._cm.__exit__(*exc_args)
 
 
-def scm_context(method, autostage: Optional[bool] = None, quiet: Optional[bool] = None):
+def scm_context(method, autostage: bool | None = None, quiet: bool | None = None):
     @wraps(method)
     def run(repo: "Repo", *args, **kw):
         with repo.scm_context(autostage=autostage, quiet=quiet):

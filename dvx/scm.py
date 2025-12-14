@@ -4,7 +4,7 @@ import os
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from functools import partial
-from typing import TYPE_CHECKING, Literal, Optional, Union, overload
+from typing import TYPE_CHECKING, Literal, Union, overload
 
 from funcy import group_by
 from scmrepo.base import Base  # noqa: TC002
@@ -183,12 +183,12 @@ def _get_n_commits(scm: "Git", revs: list[str], num: int) -> list[str]:
 
 def iter_revs(
     scm: "Git",
-    revs: Optional[list[str]] = None,
+    revs: list[str] | None = None,
     num: int = 1,
     all_branches: bool = False,
     all_tags: bool = False,
     all_commits: bool = False,
-    commit_date: Optional[str] = None,
+    commit_date: str | None = None,
 ) -> Mapping[str, list[str]]:
     from scmrepo.exceptions import SCMError as _SCMError
 
@@ -263,7 +263,7 @@ def lfs_prefetch(fs: "FileSystem", paths: list[str]):
 
 def add_no_submodules(
     scm: "Base",
-    paths: Union[str, Iterable[str]],
+    paths: str | Iterable[str],
     **kwargs,
 ) -> None:
     """Stage paths to Git, excluding those inside submodules."""

@@ -1,5 +1,5 @@
 import os
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from dvx.fs.dvc import DVCFileSystem
@@ -7,10 +7,10 @@ if TYPE_CHECKING:
 
 def _open_repo(
     url: str,
-    rev: Optional[str] = None,
-    config: Union[dict[str, Any], str, None] = None,
-    remote: Optional[str] = None,
-    remote_config: Optional[dict] = None,
+    rev: str | None = None,
+    config: dict[str, Any] | str | None = None,
+    remote: str | None = None,
+    remote_config: dict | None = None,
 ):
     from dvx.config import Config
 
@@ -45,14 +45,14 @@ def _adapt_info(info: dict[str, Any]) -> dict[str, Any]:
 
 def ls(
     url: str,
-    path: Optional[str] = None,
-    rev: Optional[str] = None,
-    recursive: Optional[bool] = None,
+    path: str | None = None,
+    rev: str | None = None,
+    recursive: bool | None = None,
     dvc_only: bool = False,
-    config: Union[dict[str, Any], str, None] = None,
-    remote: Optional[str] = None,
-    remote_config: Optional[dict] = None,
-    maxdepth: Optional[int] = None,
+    config: dict[str, Any] | str | None = None,
+    remote: str | None = None,
+    remote_config: dict | None = None,
+    maxdepth: int | None = None,
 ):
     """Methods for getting files and outputs for the repo.
 
@@ -87,13 +87,13 @@ def ls(
 
 def ls_tree(
     url: str,
-    path: Optional[str] = None,
-    rev: Optional[str] = None,
+    path: str | None = None,
+    rev: str | None = None,
     dvc_only: bool = False,
-    config: Union[dict[str, Any], str, None] = None,
-    remote: Optional[str] = None,
-    remote_config: Optional[dict] = None,
-    maxdepth: Optional[int] = None,
+    config: dict[str, Any] | str | None = None,
+    remote: str | None = None,
+    remote_config: dict | None = None,
+    maxdepth: int | None = None,
 ):
     with _open_repo(url, rev, config, remote, remote_config) as repo:
         path = path or ""
@@ -107,9 +107,9 @@ def ls_tree(
 def _ls(
     fs: "DVCFileSystem",
     path: str,
-    recursive: Optional[bool] = None,
+    recursive: bool | None = None,
     dvc_only: bool = False,
-    maxdepth: Optional[int] = None,
+    maxdepth: int | None = None,
 ):
     fs_path = fs.info(path)["name"]
 

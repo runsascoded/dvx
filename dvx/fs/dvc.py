@@ -5,9 +5,10 @@ import os
 import posixpath
 import threading
 from collections import defaultdict, deque
+from collections.abc import Callable
 from contextlib import ExitStack, nullcontext, suppress
 from glob import has_magic
-from typing import TYPE_CHECKING, Any, Callable, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from fsspec.spec import DEFAULT_CALLBACK, AbstractFileSystem
 from funcy import wrap_with
@@ -86,14 +87,14 @@ class _DVCFileSystem(AbstractFileSystem):
     def __init__(
         self,
         repo: Union["Repo", os.PathLike[str], str, None] = None,
-        rev: Optional[str] = None,
+        rev: str | None = None,
         subrepos: bool = False,
-        repo_factory: Optional[RepoFactory] = None,
-        fo: Optional[str] = None,
-        target_options: Optional[dict[str, Any]] = None,  # noqa: ARG002
-        target_protocol: Optional[str] = None,  # noqa: ARG002
+        repo_factory: RepoFactory | None = None,
+        fo: str | None = None,
+        target_options: dict[str, Any] | None = None,  # noqa: ARG002
+        target_protocol: str | None = None,  # noqa: ARG002
         config: Optional["DictStrAny"] = None,
-        remote: Optional[str] = None,
+        remote: str | None = None,
         remote_config: Optional["DictStrAny"] = None,
         **kwargs,
     ) -> None:
@@ -140,7 +141,7 @@ class _DVCFileSystem(AbstractFileSystem):
         # kwargs.get("url") is for maintaining backward compatibility
         repo = repo or fo or kwargs.get("url")
         if isinstance(repo, Repo):
-            self._repo: Optional[Repo] = repo
+            self._repo: Repo | None = repo
             url = None
         else:
             self._repo = None
@@ -197,12 +198,12 @@ class _DVCFileSystem(AbstractFileSystem):
             path = self.join(self.getcwd(), path)
         return self.normpath(path)
 
-    def relpath(self, path: str, start: Optional[str] = None) -> str:
+    def relpath(self, path: str, start: str | None = None) -> str:
         if start is None:
             start = "."
         return posixpath.relpath(self.abspath(path), start=self.abspath(start))
 
-    def relparts(self, path: str, start: Optional[str] = None) -> tuple[str, ...]:
+    def relparts(self, path: str, start: str | None = None) -> tuple[str, ...]:
         return self.parts(self.relpath(path, start=start))
 
     @functools.cached_property
@@ -336,7 +337,7 @@ class _DVCFileSystem(AbstractFileSystem):
 
     def _get_subrepo_info(
         self, key: Key
-    ) -> tuple["Repo", Optional[DataFileSystem], Key]:
+    ) -> tuple["Repo", DataFileSystem | None, Key]:
         """
         Returns information about the subrepo the key is part of.
         """
@@ -518,7 +519,7 @@ class _DVCFileSystem(AbstractFileSystem):
         maxdepth=None,
         batch_size=None,
         **kwargs,
-    ) -> list[tuple[str, str, Optional[dict]]]:
+    ) -> list[tuple[str, str, dict | None]]:
         if (
             isinstance(rpath, list)
             or isinstance(lpath, list)
@@ -544,9 +545,9 @@ class _DVCFileSystem(AbstractFileSystem):
                 self.get_file(rpath, lpath, callback=child, **kwargs)
                 return [(rpath, lpath, None)]
 
-        result: list[tuple[str, str, Optional[dict]]] = []
+        result: list[tuple[str, str, dict | None]] = []
         _dirs: list[str] = []
-        _files: dict[FileSystem, list[tuple[str, str, Optional[dict]]]]
+        _files: dict[FileSystem, list[tuple[str, str, dict | None]]]
         _files = defaultdict(list)
 
         for root, dirs, files in self.walk(rpath, maxdepth=maxdepth, detail=True):
@@ -582,7 +583,7 @@ class _DVCFileSystem(AbstractFileSystem):
         for d in _dirs:
             os.makedirs(d, exist_ok=True)
 
-        def get_file(arg: tuple[FileSystem, tuple[str, str, Optional[dict]]]):
+        def get_file(arg: tuple[FileSystem, tuple[str, str, dict | None]]):
             fs, (src, dest, info) = arg
             kw = kwargs
             if isinstance(fs, DataFileSystem):
@@ -689,13 +690,13 @@ class DVCFileSystem(FileSystem):
 
     def _get(
         self,
-        from_info: Union[AnyFSPath, list[AnyFSPath]],
-        to_info: Union[AnyFSPath, list[AnyFSPath]],
+        from_info: AnyFSPath | list[AnyFSPath],
+        to_info: AnyFSPath | list[AnyFSPath],
         callback: "Callback" = DEFAULT_CALLBACK,
         recursive: bool = False,
-        batch_size: Optional[int] = None,
+        batch_size: int | None = None,
         **kwargs,
-    ) -> list[tuple[str, str, Optional[dict]]]:
+    ) -> list[tuple[str, str, dict | None]]:
         # FileSystem.get is non-recursive by default if arguments are lists
         # otherwise, it's recursive.
         recursive = not (isinstance(from_info, list) and isinstance(to_info, list))
@@ -710,11 +711,11 @@ class DVCFileSystem(FileSystem):
 
     def get(
         self,
-        from_info: Union[AnyFSPath, list[AnyFSPath]],
-        to_info: Union[AnyFSPath, list[AnyFSPath]],
+        from_info: AnyFSPath | list[AnyFSPath],
+        to_info: AnyFSPath | list[AnyFSPath],
         callback: "Callback" = DEFAULT_CALLBACK,
         recursive: bool = False,
-        batch_size: Optional[int] = None,
+        batch_size: int | None = None,
         **kwargs,
     ) -> None:
         self._get(

@@ -5,7 +5,6 @@ import os
 import time
 from abc import ABC, abstractmethod
 from datetime import timedelta
-from typing import Optional, Union
 
 import flufl.lock
 import zc.lockfile
@@ -193,7 +192,7 @@ class HardlinkLock(flufl.lock.Lock, LockBase):
         self._retry_errnos = []
         self._friendly = kwargs.get("friendly", False)
 
-    def lock(self, timeout: Optional[Union[timedelta, int]] = None):
+    def lock(self, timeout: timedelta | int | None = None):
         try:
             if not self._wait:
                 timeout = timeout or timedelta(seconds=DEFAULT_TIMEOUT)

@@ -92,12 +92,12 @@ class Config(dict):
 
     def __init__(
         self,
-        dvc_dir: Optional[str] = None,
-        local_dvc_dir: Optional[str] = None,
+        dvc_dir: str | None = None,
+        local_dvc_dir: str | None = None,
         validate: bool = True,
         fs: Optional["FileSystem"] = None,
         config: Optional["DictStrAny"] = None,
-        remote: Optional[str] = None,
+        remote: str | None = None,
         remote_config: Optional["DictStrAny"] = None,
     ):
         from dvx.fs import LocalFileSystem
@@ -177,7 +177,7 @@ class Config(dict):
         self,
         validate: bool = True,
         config: Optional["DictStrAny"] = None,
-        remote: Optional[str] = None,
+        remote: str | None = None,
         remote_config: Optional["DictStrAny"] = None,
     ):
         """Loads config from all the config files.

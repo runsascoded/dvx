@@ -4,7 +4,7 @@ from collections.abc import Mapping, MutableMapping, MutableSequence, Sequence
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from typing import Any, Optional, Union
+from typing import Any, Union
 
 from funcy import identity, lfilter, nullcontext, select
 
@@ -99,12 +99,12 @@ def recurse_not_a_node(data: dict):
 
 @dataclass
 class Meta:
-    source: Optional[str] = None
+    source: str | None = None
     dpaths: list[str] = field(default_factory=list)
     local: bool = True
 
     @staticmethod
-    def update_path(meta: "Meta", path: Union[str, int]):
+    def update_path(meta: "Meta", path: str | int):
         dpaths = [*meta.dpaths, str(path)]
         return replace(meta, dpaths=dpaths)
 
@@ -157,7 +157,7 @@ PRIMITIVES = (int, float, str, bytes, bool)
 
 class Container(Node, ABC):  # noqa: PLW1641
     meta: Meta
-    data: Union[list, dict]
+    data: list | dict
     _key_transform = staticmethod(identity)
 
     def __init__(self, meta=None) -> None:
@@ -168,7 +168,7 @@ class Container(Node, ABC):  # noqa: PLW1641
         return self._convert_with_meta(value, meta)
 
     @staticmethod
-    def _convert_with_meta(value, meta: Optional[Meta] = None):
+    def _convert_with_meta(value, meta: Meta | None = None):
         if value is None or isinstance(value, PRIMITIVES):
             assert meta
             return Value(value, meta=meta)
@@ -232,7 +232,7 @@ class Container(Node, ABC):  # noqa: PLW1641
 class CtxList(Container, MutableSequence):
     _key_transform = staticmethod(int)
 
-    def __init__(self, values: Sequence, meta: Optional[Meta] = None):
+    def __init__(self, values: Sequence, meta: Meta | None = None):
         super().__init__(meta=meta)
         self.data: list = []
         self.extend(values)
@@ -257,8 +257,8 @@ class CtxList(Container, MutableSequence):
 class CtxDict(Container, MutableMapping):
     def __init__(
         self,
-        mapping: Optional[Mapping] = None,
-        meta: Optional[Meta] = None,
+        mapping: Mapping | None = None,
+        meta: Meta | None = None,
         **kwargs,
     ):
         super().__init__(meta=meta)
@@ -349,7 +349,7 @@ class Context(CtxDict):
 
     @classmethod
     def load_from(
-        cls, fs, path: str, select_keys: Optional[list[str]] = None
+        cls, fs, path: str, select_keys: list[str] | None = None
     ) -> "Context":
         from dvx.utils.serialize import load_path
 
@@ -426,8 +426,8 @@ class Context(CtxDict):
         fs,
         vars_: list,
         wdir: str,
-        stage_name: Optional[str] = None,
-        default: Optional[str] = None,
+        stage_name: str | None = None,
+        default: str | None = None,
     ):
         if default:
             to_import = fs.join(wdir, default)

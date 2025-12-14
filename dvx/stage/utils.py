@@ -1,6 +1,6 @@
 import os
 import pathlib
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Union
 
 from funcy import concat, first, lsplit, rpartial
 
@@ -262,7 +262,7 @@ def check_stage_exists(repo: "Repo", stage: Union["Stage", "PipelineStage"], pat
 
 
 def validate_kwargs(
-    single_stage: bool = False, fname: Optional[str] = None, **kwargs
+    single_stage: bool = False, fname: str | None = None, **kwargs
 ) -> dict[str, Any]:
     """Prepare, validate and process kwargs passed from cli"""
     cmd = kwargs.get("cmd")

@@ -1,7 +1,7 @@
 from collections import OrderedDict
 from collections.abc import Iterable
 from operator import attrgetter
-from typing import TYPE_CHECKING, Any, Optional, Union, no_type_check
+from typing import TYPE_CHECKING, Any, no_type_check
 
 from funcy import post_processing
 
@@ -80,7 +80,7 @@ def _serialize_params_keys(params: Iterable["ParamsDependency"]):
     at the first, and then followed by entry of other files in lexicographic
     order. The keys of those custom files are also sorted in the same order.
     """
-    keys: list[Union[str, dict[str, Optional[list[str]]]]] = []
+    keys: list[str | dict[str, list[str] | None]] = []
     for param_dep in sorted(params, key=attrgetter("def_path")):
         # when on no_exec, params are not filled and are saved as list
         k: list[str] = sorted(param_dep.params)

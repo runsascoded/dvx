@@ -1,10 +1,10 @@
 import logging
 import time
 from collections import defaultdict
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from functools import partial
 from itertools import chain
-from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Optional, Union
+from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Union
 
 from funcy.debug import format_time
 
@@ -45,7 +45,7 @@ def log_walk(seq):
 
 
 def collect_files(
-    repo: "Repo", onerror: Optional[Callable[[str, Exception], None]] = None
+    repo: "Repo", onerror: Callable[[str, Exception], None] | None = None
 ):
     """Collects all of the stages present in the DVC repo.
 
@@ -287,13 +287,13 @@ class Index:
     def __init__(
         self,
         repo: "Repo",
-        stages: Optional[list["Stage"]] = None,
-        metrics: Optional[dict[str, list[str]]] = None,
-        plots: Optional[dict[str, list[str]]] = None,
-        params: Optional[dict[str, Any]] = None,
-        artifacts: Optional[dict[str, Any]] = None,
-        datasets: Optional[dict[str, list[dict[str, Any]]]] = None,
-        datasets_lock: Optional[dict[str, list[dict[str, Any]]]] = None,
+        stages: list["Stage"] | None = None,
+        metrics: dict[str, list[str]] | None = None,
+        plots: dict[str, list[str]] | None = None,
+        params: dict[str, Any] | None = None,
+        artifacts: dict[str, Any] | None = None,
+        datasets: dict[str, list[dict[str, Any]]] | None = None,
+        datasets_lock: dict[str, list[dict[str, Any]]] | None = None,
     ) -> None:
         self.repo = repo
         self.stages = stages or []
@@ -306,7 +306,7 @@ class Index:
         self._collected_targets: dict[int, list[StageInfo]] = {}
 
     @cached_property
-    def rev(self) -> Optional[str]:
+    def rev(self) -> str | None:
         if not isinstance(self.repo.fs, LocalFileSystem):
             return self.repo.get_rev()[:7]
         return None
@@ -319,7 +319,7 @@ class Index:
     def from_repo(
         cls,
         repo: "Repo",
-        onerror: Optional[Callable[[str, Exception], None]] = None,
+        onerror: Callable[[str, Exception], None] | None = None,
     ) -> "Index":
         onerror = onerror or repo.stage_collection_error_handler
         return cls.from_indexes(
@@ -581,7 +581,7 @@ class Index:
         return by_workspace
 
     @staticmethod
-    def _hash_targets(targets: Iterable[Optional[str]], **kwargs: Any) -> int:
+    def _hash_targets(targets: Iterable[str | None], **kwargs: Any) -> int:
         return hash(
             (
                 frozenset(targets),
@@ -621,10 +621,10 @@ class Index:
         self,
         targets: Optional["TargetType"] = None,
         with_deps: bool = False,
-        remote: Optional[str] = None,
+        remote: str | None = None,
         force: bool = False,
         recursive: bool = False,
-        jobs: Optional[int] = None,
+        jobs: int | None = None,
         push: bool = False,
     ) -> "ObjectContainer":
         used: ObjectContainer = defaultdict(set)
@@ -663,10 +663,10 @@ class Index:
     def targets_view(
         self,
         targets: Optional["TargetType"],
-        stage_filter: Optional[Callable[["Stage"], bool]] = None,
-        outs_filter: Optional[Callable[["Output"], bool]] = None,
-        max_size: Optional[int] = None,
-        types: Optional[list[str]] = None,
+        stage_filter: Callable[["Stage"], bool] | None = None,
+        outs_filter: Callable[["Output"], bool] | None = None,
+        max_size: int | None = None,
+        types: list[str] | None = None,
         **kwargs: Any,
     ) -> "IndexView":
         """Return read-only view of index for the specified targets.
@@ -717,7 +717,7 @@ class IndexView:
         self,
         index: Index,
         stage_infos: Iterable["StageInfo"],
-        outs_filter: Optional[Callable[["Output"], bool]],
+        outs_filter: Callable[["Output"], bool] | None,
     ):
         self._index = index
         self._stage_infos = stage_infos
@@ -740,7 +740,7 @@ class IndexView:
         return self._index
 
     @property
-    def _filtered_outs(self) -> Iterator[tuple["Output", Optional[str]]]:
+    def _filtered_outs(self) -> Iterator[tuple["Output", str | None]]:
         for stage, filter_info in self._stage_infos:
             for out in stage.filter_outs(filter_info):
                 if not self._outs_filter or self._outs_filter(out):
@@ -815,7 +815,7 @@ class IndexView:
             except KeyError:
                 return False
 
-        data: dict[str, Union[DataIndex, DataIndexView]] = {}
+        data: dict[str, DataIndex | DataIndexView] = {}
         for workspace, data_index in self._index.data.items():
             if self.stages:
                 data[workspace] = view(data_index, partial(key_filter, workspace))
@@ -829,7 +829,7 @@ def build_data_index(
     path: str,
     fs: "FileSystem",
     workspace: str = "repo",
-    compute_hash: Optional[bool] = False,
+    compute_hash: bool | None = False,
     callback: "Callback" = DEFAULT_CALLBACK,
 ) -> "DataIndex":
     from dvc_data.index import DataIndex, DataIndexEntry, Meta
@@ -936,10 +936,10 @@ def _get_entry_hash_name(
 def index_from_targets(
     repo: "Repo",
     targets: Optional["TargetType"] = None,
-    stage_filter: Optional[Callable[["Stage"], bool]] = None,
-    outs_filter: Optional[Callable[["Output"], bool]] = None,
-    max_size: Optional[int] = None,
-    types: Optional[list[str]] = None,
+    stage_filter: Callable[["Stage"], bool] | None = None,
+    outs_filter: Callable[["Output"], bool] | None = None,
+    max_size: int | None = None,
+    types: list[str] | None = None,
     with_deps: bool = False,
     recursive: bool = False,
     **kwargs: Any,
@@ -947,7 +947,7 @@ def index_from_targets(
     from dvx.stage.exceptions import StageFileDoesNotExistError, StageNotFound
     from dvx.utils import parse_target
 
-    index: Optional[Index] = None
+    index: Index | None = None
     if targets and all(targets) and not with_deps and not recursive:
         indexes: list[Index] = []
         try:

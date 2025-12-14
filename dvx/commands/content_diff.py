@@ -6,7 +6,6 @@ optionally passing content through preprocessing commands before diffing.
 
 import os
 import subprocess
-from typing import Optional
 
 import click
 
@@ -29,7 +28,7 @@ def _normalize_path(path: str) -> tuple[str, str]:
     return data_path, dvc_path
 
 
-def _get_cache_path_for_ref(repo, dvc_path: str, ref: Optional[str]) -> Optional[str]:
+def _get_cache_path_for_ref(repo, dvc_path: str, ref: str | None) -> str | None:
     """Get cache path for a .dvc file at a specific git ref."""
     import subprocess
 
@@ -76,10 +75,10 @@ def _get_cache_path_for_ref(repo, dvc_path: str, ref: Optional[str]) -> Optional
 
 
 def _run_diff(
-    path1: Optional[str],
-    path2: Optional[str],
-    color: Optional[bool] = None,
-    unified: Optional[int] = None,
+    path1: str | None,
+    path2: str | None,
+    color: bool | None = None,
+    unified: int | None = None,
     ignore_whitespace: bool = False,
 ) -> int:
     """Run diff on two paths."""
@@ -102,15 +101,15 @@ def _run_diff(
 
 
 def _run_pipeline_diff(
-    path1: Optional[str],
-    path2: Optional[str],
+    path1: str | None,
+    path2: str | None,
     cmds: list[str],
-    color: Optional[bool] = None,
-    unified: Optional[int] = None,
+    color: bool | None = None,
+    unified: int | None = None,
     ignore_whitespace: bool = False,
     verbose: bool = False,
     shell: bool = True,
-    shell_executable: Optional[str] = None,
+    shell_executable: str | None = None,
     both: bool = False,
 ) -> int:
     """Run diff with preprocessing pipeline using dffs."""
@@ -246,13 +245,13 @@ def _show_summary(ctx, refspec, ref, targets):
 def diff(
     ctx,
     both: bool,
-    color: Optional[bool],
-    refspec: Optional[str],
-    ref: Optional[str],
-    shell_executable: Optional[str],
+    color: bool | None,
+    refspec: str | None,
+    ref: str | None,
+    shell_executable: str | None,
     no_shell: bool,
     summary: bool,
-    unified: Optional[int],
+    unified: int | None,
     verbose: bool,
     ignore_whitespace: bool,
     exec_cmds: tuple[str, ...],

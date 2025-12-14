@@ -1,7 +1,7 @@
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, NamedTuple, Optional, Union
+from typing import TYPE_CHECKING, NamedTuple, Union
 
 from dvx.exceptions import (
     CacheLinkError,
@@ -46,7 +46,7 @@ PIPELINE_TRACKED_UPDATE_FMT = (
 def get_or_create_stage(
     repo: "Repo",
     target: str,
-    out: Optional[str] = None,
+    out: str | None = None,
     to_remote: bool = False,
     force: bool = False,
 ) -> StageInfo:
@@ -159,9 +159,9 @@ def warn_link_failures() -> Iterator[list[str]]:
 def _add_transfer(
     stage: "Stage",
     source: str,
-    remote: Optional[str] = None,
+    remote: str | None = None,
     to_remote: bool = False,
-    jobs: Optional[int] = None,
+    jobs: int | None = None,
     force: bool = False,
 ) -> None:
     odb = None
@@ -173,7 +173,7 @@ def _add_transfer(
 
 def _add(
     stage: "Stage",
-    source: Optional[str] = None,
+    source: str | None = None,
     no_commit: bool = False,
     relink: bool = True,
 ) -> None:
@@ -194,10 +194,10 @@ def add(
     targets: Union["StrOrBytesPath", Iterator["StrOrBytesPath"]],
     no_commit: bool = False,
     glob: bool = False,
-    out: Optional[str] = None,
-    remote: Optional[str] = None,
+    out: str | None = None,
+    remote: str | None = None,
     to_remote: bool = False,
-    remote_jobs: Optional[int] = None,
+    remote_jobs: int | None = None,
     force: bool = False,
     relink: bool = True,
 ) -> list["Stage"]:

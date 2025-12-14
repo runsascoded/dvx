@@ -247,7 +247,7 @@ def env2bool(var, undefined=False):
     return bool(re.search("1|y|yes|true", var, flags=re.IGNORECASE))
 
 
-def resolve_output(inp: str, out: Optional[str], force=False) -> str:
+def resolve_output(inp: str, out: str | None, force=False) -> str:
     from urllib.parse import urlparse
 
     from dvx.exceptions import FileExistsLocallyError
@@ -321,8 +321,8 @@ def error_link(name):
 
 
 def parse_target(
-    target: str, default: Optional[str] = None, isa_glob: bool = False
-) -> tuple[Optional[str], Optional[str]]:
+    target: str, default: str | None = None, isa_glob: bool = False
+) -> tuple[str | None, str | None]:
     from dvx.dvcfile import LOCK_FILE, PROJECT_FILE, is_valid_filename
     from dvx.exceptions import DvcException
     from dvx.parsing import JOIN
@@ -408,7 +408,7 @@ def errored_revisions(rev_data: dict) -> list:
     return result
 
 
-def isatty(stream: "Optional[TextIO]") -> bool:
+def isatty(stream: "TextIO | None") -> bool:
     if stream is None:
         return False
     return stream.isatty()

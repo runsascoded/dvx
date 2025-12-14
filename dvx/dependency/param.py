@@ -1,7 +1,7 @@
 import os
 import typing
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import dpath
 
@@ -37,7 +37,7 @@ class BadParamFileError(DvcException):
 def read_param_file(
     fs: "FileSystem",
     path: str,
-    key_paths: Optional[list[str]] = None,
+    key_paths: list[str] | None = None,
     flatten: bool = False,
     **load_kwargs,
 ) -> Any:

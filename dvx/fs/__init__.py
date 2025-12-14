@@ -47,8 +47,8 @@ known_implementations.update(
 
 
 def download(
-    fs: "FileSystem", fs_path: str, to: str, jobs: Optional[int] = None
-) -> list[tuple[str, str, Optional[dict]]]:
+    fs: "FileSystem", fs_path: str, to: str, jobs: int | None = None
+) -> list[tuple[str, str, dict | None]]:
     from dvx.scm import lfs_prefetch
 
     from .callbacks import TqdmCallback

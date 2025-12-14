@@ -1,6 +1,6 @@
 from contextlib import _GeneratorContextManager as GCM
 from contextlib import contextmanager
-from typing import Any, Optional
+from typing import Any
 
 from funcy import reraise
 
@@ -27,11 +27,11 @@ def _wrap_exceptions(repo, url):
 
 def get_url(
     path: str,
-    repo: Optional[str] = None,
-    rev: Optional[str] = None,
-    remote: Optional[str] = None,
-    config: Optional[dict[str, Any]] = None,
-    remote_config: Optional[dict[str, Any]] = None,
+    repo: str | None = None,
+    rev: str | None = None,
+    remote: str | None = None,
+    config: dict[str, Any] | None = None,
+    remote_config: dict[str, Any] | None = None,
 ):
     """
     Returns the URL to the storage location of a data file or directory tracked
@@ -101,13 +101,13 @@ class _OpenContextManager(GCM):
 
 def open(  # noqa: A001
     path: str,
-    repo: Optional[str] = None,
-    rev: Optional[str] = None,
-    remote: Optional[str] = None,
+    repo: str | None = None,
+    rev: str | None = None,
+    remote: str | None = None,
     mode: str = "r",
-    encoding: Optional[str] = None,
-    config: Optional[dict[str, Any]] = None,
-    remote_config: Optional[dict[str, Any]] = None,
+    encoding: str | None = None,
+    config: dict[str, Any] | None = None,
+    remote_config: dict[str, Any] | None = None,
 ):
     """
     Opens a file tracked in a DVC project.
@@ -276,7 +276,7 @@ def _open(
     with Repo.open(repo, rev=rev, **repo_kwargs) as _repo:
         with _wrap_exceptions(_repo, path):
             import os
-            from typing import TYPE_CHECKING, Union
+            from typing import TYPE_CHECKING
 
             from dvx.exceptions import IsADirectoryError as DvcIsADirectoryError
             from dvx.fs.data import DataFileSystem
@@ -285,7 +285,7 @@ def _open(
             if TYPE_CHECKING:
                 from dvx.fs import FileSystem
 
-            fs: Union[FileSystem, DataFileSystem, DVCFileSystem]
+            fs: FileSystem | DataFileSystem | DVCFileSystem
             if os.path.isabs(path):
                 fs = DataFileSystem(index=_repo.index.data["local"])
                 fs_path = path

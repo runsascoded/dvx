@@ -1,5 +1,5 @@
 from collections.abc import Iterable, Mapping
-from typing import Union, no_type_check
+from typing import no_type_check
 
 
 @no_type_check
@@ -90,7 +90,7 @@ def merge_dicts(src: dict, to_update: dict) -> dict:
     return src
 
 
-def ensure_list(item: Union[Iterable[str], str, None]) -> list[str]:
+def ensure_list(item: Iterable[str] | str | None) -> list[str]:
     if item is None:
         return []
     if isinstance(item, str):

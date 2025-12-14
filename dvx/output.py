@@ -231,7 +231,7 @@ def _serialize_tree_obj_to_files(obj: Tree) -> list[dict[str, Any]]:
     )
 
 
-def _serialize_hi_to_dict(hash_info: Optional[HashInfo]) -> dict[str, Any]:
+def _serialize_hi_to_dict(hash_info: HashInfo | None) -> dict[str, Any]:
     if hash_info:
         if hash_info.name == "md5-dos2unix":
             return {"md5": hash_info.value}
@@ -322,14 +322,14 @@ class Output:
         remote=None,
         repo=None,
         fs_config=None,
-        files: Optional[list[dict[str, Any]]] = None,
+        files: list[dict[str, Any]] | None = None,
         push: bool = True,
-        hash_name: Optional[str] = DEFAULT_ALGORITHM,
+        hash_name: str | None = DEFAULT_ALGORITHM,
     ):
         self.annot = Annotation(
             desc=desc, type=type, labels=labels or [], meta=meta or {}
         )
-        self.repo: Optional[Repo] = stage.repo if not repo and stage else repo
+        self.repo: Repo | None = stage.repo if not repo and stage else repo
         meta_d = merge_file_meta_from_cloud(info or {})
         meta = Meta.from_dict(meta_d)
         # NOTE: when version_aware is not passed into get_cloud_fs, it will be
@@ -390,7 +390,7 @@ class Output:
         self.can_push = push
 
         self.fs_path = self._parse_path(self.fs, fs_path)
-        self.obj: Optional[HashFile] = None
+        self.obj: HashFile | None = None
 
         self.remote = remote
 
@@ -404,7 +404,7 @@ class Output:
         self._compute_meta_hash_info_from_files()
 
     def _compute_hash_info_from_meta(
-        self, hash_name: Optional[str]
+        self, hash_name: str | None
     ) -> tuple[str, HashInfo]:
         if self.is_in_repo:
             if hash_name is None:
@@ -730,7 +730,7 @@ class Output:
         if self.isfile() and self.meta.isexec:
             self.cache.set_exec(self.fs_path)
 
-    def _checkout(self, *args, **kwargs) -> Optional[bool]:
+    def _checkout(self, *args, **kwargs) -> bool | None:
         from dvc_data.hashfile.checkout import CheckoutError as _CheckoutError
         from dvc_data.hashfile.checkout import LinkError, PromptError
 
@@ -906,9 +906,9 @@ class Output:
             )
 
     def get_obj(
-        self, filter_info: Optional[str] = None, **kwargs
+        self, filter_info: str | None = None, **kwargs
     ) -> Optional["HashFile"]:
-        obj: Optional[HashFile] = None
+        obj: HashFile | None = None
         if self.obj:
             obj = self.obj
         elif self.files:
@@ -937,10 +937,10 @@ class Output:
         force: bool = False,
         progress_callback: "Callback" = DEFAULT_CALLBACK,
         relink: bool = False,
-        filter_info: Optional[str] = None,
+        filter_info: str | None = None,
         allow_missing: bool = False,
         **kwargs,
-    ) -> Optional[tuple[bool, Optional[bool]]]:
+    ) -> tuple[bool, bool | None] | None:
         # callback passed act as a aggregate callback.
         # do not let checkout to call set_size and change progressbar.
         class CallbackProxy(Callback):
@@ -1172,7 +1172,7 @@ class Output:
             logger.warning(msg)
             return {}
 
-        obj: Optional[HashFile]
+        obj: HashFile | None
         if self.is_dir_checksum:
             obj = self._collect_used_dir_cache(**kwargs)
         else:
@@ -1356,7 +1356,7 @@ class Output:
         return meta, new
 
     def add(
-        self, path: Optional[str] = None, no_commit: bool = False, relink: bool = True
+        self, path: str | None = None, no_commit: bool = False, relink: bool = True
     ) -> Optional["HashFile"]:
         path = path or self.fs_path
         if self.hash_info and not self.is_dir_checksum and self.fs_path != path:
@@ -1468,9 +1468,7 @@ class Output:
 
     def _get_versioned_meta(
         self,
-    ) -> Optional[
-        tuple["HashInfo", Optional["Meta"], Optional[Union["HashFile", "Tree"]]]
-    ]:
+    ) -> tuple["HashInfo", Optional["Meta"], Union["HashFile", "Tree"] | None] | None:
         if self.files is not None or (
             self.meta is not None and self.meta.version_id is not None
         ):
@@ -1482,7 +1480,7 @@ class Output:
         self,
         old_hi: "HashInfo",
         old_meta: Optional["Meta"],
-        old_obj: Optional[Union["HashFile", "Tree"]],
+        old_obj: Union["HashFile", "Tree"] | None,
     ):
         """Merge version meta for files which are unchanged from other."""
         if not self.hash_info:
@@ -1495,7 +1493,7 @@ class Output:
         return None
 
     def _merge_dir_version_meta(
-        self, old_hi: "HashInfo", old_obj: Optional[Union["HashFile", "Tree"]]
+        self, old_hi: "HashInfo", old_obj: Union["HashFile", "Tree"] | None
     ):
         from dvc_data.hashfile.tree import update_meta
 

@@ -45,7 +45,7 @@ logger = logger.getChild(__name__)
 # Disallow all punctuation characters except hyphen and underscore
 INVALID_STAGENAME_CHARS = set(string.punctuation) - {"_", "-"}
 Env = dict[str, str]
-ChangedEntries = tuple[list[str], list[str], Optional[str]]
+ChangedEntries = tuple[list[str], list[str], str | None]
 
 _T = TypeVar("_T")
 
@@ -77,7 +77,7 @@ def loads_from(
 @dataclass
 class RawData:
     parametrized: bool = False
-    generated_from: Optional[str] = None
+    generated_from: str | None = None
 
 
 def create_stage(cls: type[_T], repo, path, **kwargs) -> _T:
@@ -141,7 +141,7 @@ class Stage(params.StageParams):
         always_changed=False,
         stage_text=None,
         dvcfile=None,
-        desc: Optional[str] = None,
+        desc: str | None = None,
         meta=None,
     ):
         if deps is None:
@@ -160,7 +160,7 @@ class Stage(params.StageParams):
         self.always_changed = always_changed
         self._stage_text = stage_text
         self._dvcfile = dvcfile
-        self.desc: Optional[str] = desc
+        self.desc: str | None = desc
         self.meta = meta
         self.raw_data = RawData()
 
@@ -290,7 +290,7 @@ class Stage(params.StageParams):
         )
 
     def short_description(self) -> Optional["str"]:
-        desc: Optional[str] = None
+        desc: str | None = None
         if self.desc:
             with suppress(ValueError):
                 # try to use first non-empty line as a description
@@ -299,7 +299,7 @@ class Stage(params.StageParams):
         return desc
 
     def changed_deps(
-        self, allow_missing: bool = False, upstream: Optional[list] = None
+        self, allow_missing: bool = False, upstream: list | None = None
     ) -> bool:
         if self.frozen:
             return False
@@ -311,7 +311,7 @@ class Stage(params.StageParams):
 
     @rwlocked(read=["deps"])
     def _changed_deps(
-        self, allow_missing: bool = False, upstream: Optional[list] = None
+        self, allow_missing: bool = False, upstream: list | None = None
     ) -> bool:
         for dep in self.deps:
             status = dep.status()
@@ -359,7 +359,7 @@ class Stage(params.StageParams):
 
     @rwlocked(read=["deps", "outs"])
     def changed(
-        self, allow_missing: bool = False, upstream: Optional[list] = None
+        self, allow_missing: bool = False, upstream: list | None = None
     ) -> bool:
         is_changed = (
             # Short-circuit order: stage md5 is fast,
@@ -406,7 +406,7 @@ class Stage(params.StageParams):
         source: str,
         odb: Optional["ObjectDB"] = None,
         to_remote: bool = False,
-        jobs: Optional[int] = None,
+        jobs: int | None = None,
         force: bool = False,
     ) -> None:
         assert len(self.outs) == 1
@@ -480,7 +480,7 @@ class Stage(params.StageParams):
     def dumpd(self, **kwargs) -> dict[str, Any]:
         return get_dump(self, **kwargs)
 
-    def compute_md5(self) -> Optional[str]:
+    def compute_md5(self) -> str | None:
         # `dvc add`ed files don't need stage md5
         if self.is_data_source and not (self.is_import or self.is_repo_import):
             m = None
@@ -656,7 +656,7 @@ class Stage(params.StageParams):
         return stats
 
     @staticmethod
-    def _checkout(out, **kwargs) -> tuple[Optional[str], list[str]]:
+    def _checkout(out, **kwargs) -> tuple[str | None, list[str]]:
         try:
             result = out.checkout(**kwargs)
             added, modified = result or (None, None)
@@ -668,9 +668,9 @@ class Stage(params.StageParams):
 
     @rwlocked(read=["deps", "outs"])
     def status(
-        self, check_updates: bool = False, filter_info: Optional[bool] = None
-    ) -> dict[str, list[Union[str, dict[str, str]]]]:
-        ret: list[Union[str, dict[str, str]]] = []
+        self, check_updates: bool = False, filter_info: bool | None = None
+    ) -> dict[str, list[str | dict[str, str]]]:
+        ret: list[str | dict[str, str]] = []
         show_import = (
             self.is_repo_import or self.is_versioned_import
         ) and check_updates
@@ -775,7 +775,7 @@ class Stage(params.StageParams):
 
 
 class PipelineStage(Stage):
-    def __init__(self, *args, name: Optional[str] = None, **kwargs):
+    def __init__(self, *args, name: str | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = name
         self.cmd_changed = False

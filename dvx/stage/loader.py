@@ -1,7 +1,7 @@
 from collections.abc import Mapping
 from copy import deepcopy
 from itertools import chain
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from funcy import get_in, lcat, once, project
 
@@ -176,7 +176,7 @@ class SingleStageLoader(Mapping):
         self,
         dvcfile: "SingleStageFile",
         stage_data: dict[Any, str],
-        stage_text: Optional[str] = None,
+        stage_text: str | None = None,
     ):
         self.dvcfile = dvcfile
         self.stage_data = stage_data or {}
@@ -196,7 +196,7 @@ class SingleStageLoader(Mapping):
         cls,
         dvcfile: "SingleStageFile",
         d: dict[str, Any],
-        stage_text: Optional[str],
+        stage_text: str | None,
     ) -> Stage:
         path, wdir = resolve_paths(
             dvcfile.repo.fs, dvcfile.path, d.get(Stage.PARAM_WDIR)

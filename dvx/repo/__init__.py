@@ -1,9 +1,9 @@
 import os
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from contextlib import AbstractContextManager, contextmanager
 from functools import wraps
-from typing import TYPE_CHECKING, Callable, Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 from dvx.exceptions import (
     DvcException,
@@ -97,15 +97,15 @@ class Repo:
 
     def _get_repo_dirs(
         self,
-        root_dir: Optional[str] = None,
+        root_dir: str | None = None,
         fs: Optional["FileSystem"] = None,
         uninitialized: bool = False,
-        scm: Optional[Union["Git", "NoSCM"]] = None,
-    ) -> tuple[str, Optional[str]]:
+        scm: Union["Git", "NoSCM"] | None = None,
+    ) -> tuple[str, str | None]:
         from dvx.fs import localfs
         from dvx.scm import SCM, SCMError
 
-        dvc_dir: Optional[str] = None
+        dvc_dir: str | None = None
         try:
             root_dir = self.find_root(root_dir, fs)
             fs = fs or localfs
@@ -130,16 +130,16 @@ class Repo:
 
     def __init__(  # noqa: PLR0915
         self,
-        root_dir: Optional[str] = None,
+        root_dir: str | None = None,
         fs: Optional["FileSystem"] = None,
-        rev: Optional[str] = None,
+        rev: str | None = None,
         subrepos: bool = False,
         uninitialized: bool = False,
         config: Optional["DictStrAny"] = None,
-        url: Optional[str] = None,
-        repo_factory: Optional[Callable] = None,
-        scm: Optional[Union["Git", "NoSCM"]] = None,
-        remote: Optional[str] = None,
+        url: str | None = None,
+        repo_factory: Callable | None = None,
+        scm: Union["Git", "NoSCM"] | None = None,
+        remote: str | None = None,
         remote_config: Optional["DictStrAny"] = None,
         _wait_for_lock: bool = False,
     ):
@@ -159,7 +159,7 @@ class Repo:
         self._config = config
         self._remote = remote
         self._remote_config = remote_config
-        self._data_index: Optional[DataIndex] = None
+        self._data_index: DataIndex | None = None
         self._wait_for_lock = _wait_for_lock
 
         if rev and not fs:
@@ -168,7 +168,7 @@ class Repo:
             self._fs = GitFileSystem(scm=self._scm, rev=rev)
 
         self.root_dir: str
-        self.dvc_dir: Optional[str]
+        self.dvc_dir: str | None
         (self.root_dir, self.dvc_dir) = self._get_repo_dirs(
             root_dir=root_dir, fs=self.fs, uninitialized=uninitialized, scm=scm
         )
@@ -217,9 +217,7 @@ class Repo:
 
             self._ignore()
 
-        self.stage_collection_error_handler: Optional[
-            Callable[[str, Exception], None]
-        ] = None
+        self.stage_collection_error_handler: Callable[[str, Exception], None] | None = None
         self._lock_depth: int = 0
 
     def __str__(self):
@@ -239,7 +237,7 @@ class Repo:
         )
 
     @cached_property
-    def local_dvc_dir(self) -> Optional[str]:
+    def local_dvc_dir(self) -> str | None:
         from dvx.fs import GitFileSystem, LocalFileSystem
 
         if not self.dvc_dir:
@@ -276,7 +274,7 @@ class Repo:
         return Index.from_repo(self)
 
     def check_graph(
-        self, stages: Iterable["Stage"], callback: Optional[Callable] = None
+        self, stages: Iterable["Stage"], callback: Callable | None = None
     ) -> None:
         if not getattr(self, "_skip_graph_checks", False):
             new = self.index.update(stages)
@@ -285,7 +283,7 @@ class Repo:
             new.check_graph()
 
     @staticmethod
-    def open(url: Optional[str], *args, **kwargs) -> "Repo":
+    def open(url: str | None, *args, **kwargs) -> "Repo":
         from .open_repo import open_repo
 
         return open_repo(url, *args, **kwargs)
@@ -461,7 +459,7 @@ class Repo:
         with_deps=False,
         all_tags=False,
         all_commits=False,
-        commit_date: Optional[str] = None,
+        commit_date: str | None = None,
         remote=None,
         force=False,
         jobs=None,

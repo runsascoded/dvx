@@ -36,10 +36,10 @@ def worktree_view_by_remotes(
     targets: Optional["TargetType"] = None,
     push: bool = False,
     **kwargs: Any,
-) -> Iterable[tuple[Optional[str], "IndexView"]]:
+) -> Iterable[tuple[str | None, "IndexView"]]:
     from dvx.repo.index import IndexView
 
-    def outs_filter(view: "IndexView", remote: Optional[str]):
+    def outs_filter(view: "IndexView", remote: str | None):
         def _filter(out: "Output") -> bool:
             if out.remote != remote:
                 return False
@@ -90,7 +90,7 @@ def worktree_view(
 
 
 def _get_remote(
-    repo: "Repo", name: Optional[str], default: "Remote", command: str
+    repo: "Repo", name: str | None, default: "Remote", command: str
 ) -> "Remote":
     if name in (None, default.name):
         return default
@@ -100,7 +100,7 @@ def _get_remote(
 def _merge_push_meta(
     out: "Output",
     index: Union["DataIndex", "DataIndexView"],
-    remote: Optional[str] = None,
+    remote: str | None = None,
 ):
     """Merge existing output meta with newly pushed meta.
 

@@ -53,20 +53,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        pyv: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        pyv: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         include:
-        - os: windows-latest
-          pyv: "3.9"
-          pytestargs: "--splitting-algorithm=least_duration --splits 4 --group 1"
-        - os: windows-latest
-          pyv: "3.9"
-          pytestargs: "--splitting-algorithm=least_duration --splits 4 --group 2"
-        - os: windows-latest
-          pyv: "3.9"
-          pytestargs: "--splitting-algorithm=least_duration --splits 4 --group 3"
-        - os: windows-latest
-          pyv: "3.9"
-          pytestargs: "--splitting-algorithm=least_duration --splits 4 --group 4"
         - os: windows-latest
           pyv: "3.10"
           pytestargs: "--splitting-algorithm=least_duration --splits 4 --group 1"

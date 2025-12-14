@@ -1,6 +1,6 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from scmrepo.git import Git
 
@@ -21,7 +21,7 @@ def brancher(
     all_tags=False,
     all_commits=False,
     workspace=True,
-    commit_date: Optional[str] = None,
+    commit_date: str | None = None,
     sha_only=False,
     num=1,
 ):

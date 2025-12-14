@@ -1,6 +1,6 @@
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Optional
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from funcy import compact, log_durations
 
@@ -70,7 +70,7 @@ class DbDependency(AbstractDependency):
         self.connection = self.db_info.get(self.PARAM_CONNECTION)
 
     @property
-    def sql(self) -> Optional[str]:
+    def sql(self) -> str | None:
         return self.db_info.get(self.PARAM_QUERY) or self.db_info.get(self.PARAM_TABLE)
 
     def __repr__(self):
@@ -102,8 +102,8 @@ class DbDependency(AbstractDependency):
     def download(
         self,
         to: "Output",
-        jobs: Optional[int] = None,  # noqa: ARG002
-        file_format: Optional[str] = None,
+        jobs: int | None = None,  # noqa: ARG002
+        file_format: str | None = None,
         **kwargs: Any,
     ) -> None:
         from dvx.database import client

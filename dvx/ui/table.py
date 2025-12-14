@@ -2,7 +2,7 @@ from collections import abc
 from collections.abc import Iterator, Sequence
 from contextlib import ExitStack, contextmanager
 from itertools import zip_longest
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Union
 
 from dvx.types import DictStrAny
 
@@ -25,11 +25,11 @@ Styles = DictStrAny
 def plain_table(
     ui: "Console",
     data: TableData,
-    headers: Optional[Headers] = None,
+    headers: Headers | None = None,
     markdown: bool = False,
     pager: bool = False,
     force: bool = True,
-    colalign: Optional[tuple[str, ...]] = None,
+    colalign: tuple[str, ...] | None = None,
 ) -> None:
     from funcy import nullcontext
     from tabulate import tabulate
@@ -76,11 +76,11 @@ def console_width(table: "Table", console: "RichConsole", val: int) -> Iterator[
 def rich_table(
     ui: "Console",
     data: TableData,
-    headers: Optional[Headers] = None,
+    headers: Headers | None = None,
     pager: bool = False,
-    header_styles: Optional[Union[dict[str, Styles], Sequence[Styles]]] = None,
-    row_styles: Optional[Sequence[Styles]] = None,
-    borders: Union[bool, str] = False,
+    header_styles: dict[str, Styles] | Sequence[Styles] | None = None,
+    row_styles: Sequence[Styles] | None = None,
+    borders: bool | str = False,
 ) -> None:
     from rich import box
 

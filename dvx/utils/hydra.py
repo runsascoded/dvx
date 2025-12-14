@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from dvx.exceptions import InvalidArgumentError
 from dvx.log import logger
@@ -27,8 +27,8 @@ def load_hydra_plugins(plugins_path: str):
 
 def compose_and_dump(
     output_file: "StrPath",
-    config_dir: Optional[str],
-    config_module: Optional[str],
+    config_dir: str | None,
+    config_module: str | None,
     config_name: str,
     plugins_path: str,
     overrides: list[str],

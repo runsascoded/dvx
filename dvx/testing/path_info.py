@@ -2,7 +2,8 @@ import os
 import pathlib
 import posixpath
 import sys
-from typing import Callable, ClassVar
+from collections.abc import Callable
+from typing import ClassVar
 from urllib.parse import urlparse
 
 from dvx.utils import relpath

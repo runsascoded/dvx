@@ -80,7 +80,7 @@ class DataCloud:
 
     def get_remote(
         self,
-        name: Optional[str] = None,
+        name: str | None = None,
         command: str = "<command>",
     ) -> "Remote":
         if not name:
@@ -125,7 +125,7 @@ class DataCloud:
 
     def get_remote_odb(
         self,
-        name: Optional[str] = None,
+        name: str | None = None,
         command: str = "<command>",
         hash_name: str = "md5",
     ) -> "HashFileDB":
@@ -168,8 +168,8 @@ class DataCloud:
     def push(
         self,
         objs: Iterable["HashInfo"],
-        jobs: Optional[int] = None,
-        remote: Optional[str] = None,
+        jobs: int | None = None,
+        remote: str | None = None,
         odb: Optional["HashFileDB"] = None,
     ) -> "TransferResult":
         """Push data items in a cloud-agnostic way.
@@ -201,7 +201,7 @@ class DataCloud:
         self,
         objs: Iterable["HashInfo"],
         *,
-        jobs: Optional[int] = None,
+        jobs: int | None = None,
         odb: "HashFileDB",
     ) -> "TransferResult":
         from dvx.fs.callbacks import TqdmCallback
@@ -228,8 +228,8 @@ class DataCloud:
     def pull(
         self,
         objs: Iterable["HashInfo"],
-        jobs: Optional[int] = None,
-        remote: Optional[str] = None,
+        jobs: int | None = None,
+        remote: str | None = None,
         odb: Optional["HashFileDB"] = None,
     ) -> "TransferResult":
         """Pull data items in a cloud-agnostic way.
@@ -262,7 +262,7 @@ class DataCloud:
         self,
         objs: Iterable["HashInfo"],
         *,
-        jobs: Optional[int] = None,
+        jobs: int | None = None,
         odb: "HashFileDB",
     ) -> "TransferResult":
         from dvx.fs.callbacks import TqdmCallback
@@ -290,8 +290,8 @@ class DataCloud:
     def status(
         self,
         objs: Iterable["HashInfo"],
-        jobs: Optional[int] = None,
-        remote: Optional[str] = None,
+        jobs: int | None = None,
+        remote: str | None = None,
         odb: Optional["HashFileDB"] = None,
     ):
         """Check status of data items in a cloud-agnostic way.
@@ -331,7 +331,7 @@ class DataCloud:
         self,
         objs: Iterable["HashInfo"],
         *,
-        jobs: Optional[int] = None,
+        jobs: int | None = None,
         odb: "HashFileDB",
     ):
         from dvc_data.hashfile.status import compare_status

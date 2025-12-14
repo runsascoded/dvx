@@ -4,7 +4,6 @@ import shutil
 import sys
 from pathlib import Path
 from subprocess import check_call, check_output
-from typing import Optional
 
 import pytest
 from dulwich.porcelain import clone
@@ -30,7 +29,7 @@ class VirtualEnv:
     def install(self, *packages: str) -> None:
         check_call([sys.executable, "-m", "uv", "pip", "install", *packages])  # noqa: S603
 
-    def run(self, cmd: str, *args: str, env: Optional[dict[str, str]] = None) -> None:
+    def run(self, cmd: str, *args: str, env: dict[str, str] | None = None) -> None:
         exe = self.which(cmd)
         check_call([exe, *args], env=env)  # noqa: S603
 

@@ -51,7 +51,7 @@ def _adapt_path_from_entry(entry: "DataIndexEntry") -> str:
 
 def _get_missing_paths(
     to_check: Mapping["FileSystem", Mapping[str, Iterable["DataIndexEntry"]]],
-    batch_size: Optional[int] = None,
+    batch_size: int | None = None,
     callback: "Callback" = DEFAULT_CALLBACK,
 ) -> Iterator[str]:
     for fs, paths_map in to_check.items():
@@ -105,10 +105,10 @@ def _diff(
     old: "BaseDataIndex",
     new: "BaseDataIndex",
     *,
-    filter_keys: Optional[Iterable["DataIndexKey"]] = None,
+    filter_keys: Iterable["DataIndexKey"] | None = None,
     granular: bool = False,
     not_in_cache: bool = False,
-    batch_size: Optional[int] = None,
+    batch_size: int | None = None,
     callback: "Callback" = DEFAULT_CALLBACK,
     with_renames: bool = False,
 ) -> DiffResult:
@@ -247,7 +247,7 @@ def _git_info(scm: Union["Git", "NoSCM"], untracked_files: str = "all") -> GitIn
 
 def filter_index(
     index: Union["DataIndex", "DataIndexView"],
-    filter_keys: Optional[Iterable["DataIndexKey"]] = None,
+    filter_keys: Iterable["DataIndexKey"] | None = None,
 ) -> "BaseDataIndex":
     from dvc_data.index.view import DataIndexView
 
@@ -283,9 +283,9 @@ def filter_index(
 
 def _diff_index_to_wtree(
     repo: "Repo",
-    filter_keys: Optional[Iterable["DataIndexKey"]] = None,
+    filter_keys: Iterable["DataIndexKey"] | None = None,
     granular: bool = False,
-    batch_size: Optional[int] = None,
+    batch_size: int | None = None,
     with_renames: bool = False,
 ) -> DiffResult:
     from .index import build_data_index
@@ -321,7 +321,7 @@ def _diff_index_to_wtree(
 def _diff_head_to_index(
     repo: "Repo",
     head: str = "HEAD",
-    filter_keys: Optional[Iterable["DataIndexKey"]] = None,
+    filter_keys: Iterable["DataIndexKey"] | None = None,
     granular: bool = False,
     with_renames: bool = False,
 ) -> DiffResult:
@@ -407,7 +407,7 @@ def iter_index(
 
 def _get_entries_not_in_remote(
     repo: "Repo",
-    filter_keys: Optional[Iterable["DataIndexKey"]] = None,
+    filter_keys: Iterable["DataIndexKey"] | None = None,
     granular: bool = False,
     remote_refresh: bool = False,
 ) -> list[str]:
@@ -486,15 +486,15 @@ def _prune_keys(filter_keys: Iterable["DataIndexKey"]) -> list["DataIndexKey"]:
 
 def status(
     repo: "Repo",
-    targets: Optional[Iterable[Union[os.PathLike[str], str]]] = None,
+    targets: Iterable[os.PathLike[str] | str] | None = None,
     *,
     granular: bool = False,
     untracked_files: str = "no",
-    remote: Optional[str] = None,
+    remote: str | None = None,
     not_in_remote: bool = False,
     remote_refresh: bool = False,
-    config: Optional[dict] = None,
-    batch_size: Optional[int] = None,
+    config: dict | None = None,
+    batch_size: int | None = None,
     head: str = "HEAD",
     with_renames: bool = True,
 ) -> Status:

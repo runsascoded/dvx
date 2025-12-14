@@ -1,7 +1,6 @@
 import errno
 import os
 from collections import defaultdict
-from typing import Optional
 
 from dvx.log import logger
 from dvx.repo import locked
@@ -95,8 +94,8 @@ def _diff(old, new, data_keys, with_missing=False):
 def diff(
     self,
     a_rev: str = "HEAD",
-    b_rev: Optional[str] = None,
-    targets: Optional[list[str]] = None,
+    b_rev: str | None = None,
+    targets: list[str] | None = None,
     recursive: bool = False,
 ):
     """

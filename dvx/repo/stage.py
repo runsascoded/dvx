@@ -29,7 +29,7 @@ PROJECT_FILE = "dvc.yaml"
 
 class StageInfo(NamedTuple):
     stage: "Stage"
-    filter_info: Optional[str] = None
+    filter_info: str | None = None
 
 
 StageList = list["Stage"]
@@ -73,7 +73,7 @@ def _collect_specific_target(
     target: str,
     with_deps: bool,
     recursive: bool,
-) -> tuple[StageIter, Optional[str], Optional[str]]:
+) -> tuple[StageIter, str | None, str | None]:
     from dvx.dvcfile import is_valid_filename
 
     # Optimization: do not collect the graph for a specific target
@@ -118,7 +118,7 @@ class StageLoad:
     def add(
         self,
         single_stage: bool = False,
-        fname: Optional[str] = None,
+        fname: str | None = None,
         validate: bool = True,
         force: bool = False,
         update_lock: bool = False,
@@ -147,7 +147,7 @@ class StageLoad:
         self,
         single_stage: bool = False,
         validate: bool = True,
-        fname: Optional[str] = None,
+        fname: str | None = None,
         force: bool = False,
         **stage_data,
     ) -> Union["Stage", "PipelineStage"]:
@@ -217,7 +217,7 @@ class StageLoad:
         return self.load_one(path=path, name=name)
 
     def _get_filepath(
-        self, path: Optional[str] = None, name: Optional[str] = None
+        self, path: str | None = None, name: str | None = None
     ) -> str:
         if path:
             return self.repo.fs.abspath(path)
@@ -238,7 +238,7 @@ class StageLoad:
     def _get_keys(
         self,
         stages: "StageLoader",
-        name: Optional[str] = None,
+        name: str | None = None,
         accept_group: bool = True,
         glob: bool = False,
     ) -> Iterable[str]:
@@ -252,8 +252,8 @@ class StageLoad:
 
     def load_all(
         self,
-        path: Optional[str] = None,
-        name: Optional[str] = None,
+        path: str | None = None,
+        name: str | None = None,
         accept_group: bool = True,
         glob: bool = False,
     ) -> StageList:
@@ -284,7 +284,7 @@ class StageLoad:
         return [stages[key] for key in keys]
 
     def load_one(
-        self, path: Optional[str] = None, name: Optional[str] = None
+        self, path: str | None = None, name: str | None = None
     ) -> "Stage":
         """Load a single stage from a file.
 
@@ -300,17 +300,17 @@ class StageLoad:
 
         return stages[name]
 
-    def load_file(self, path: Optional[str] = None) -> StageList:
+    def load_file(self, path: str | None = None) -> StageList:
         """Load all of the stages from a file."""
         return self.load_all(path)
 
-    def load_glob(self, path: str, expr: Optional[str] = None):
+    def load_glob(self, path: str, expr: str | None = None):
         """Load stages from `path`, filtered with `expr` provided."""
         return self.load_all(path, expr, glob=True)
 
     def collect(
         self,
-        target: Optional[str] = None,
+        target: str | None = None,
         with_deps: bool = False,
         recursive: bool = False,
         graph: Optional["DiGraph"] = None,
@@ -360,7 +360,7 @@ class StageLoad:
 
     def collect_granular(
         self,
-        target: Optional[str] = None,
+        target: str | None = None,
         with_deps: bool = False,
         recursive: bool = False,
         graph: Optional["DiGraph"] = None,
