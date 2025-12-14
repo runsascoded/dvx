@@ -78,6 +78,38 @@ ssh_gssapi = ["dvc-ssh[gssapi]>=4,<5"]
 webdav = ["dvc-webdav>=3.0.1,<4"]
 webhdfs = ["dvc-webhdfs>=3.1,<4"]
 webhdfs_kerberos = ["dvc-webhdfs[kerberos]>=3.1,<4"]
+tests = [
+    "beautifulsoup4>=4.4",
+    "dvc-ssh",
+    "filelock",
+    "pytest>=7,<9",
+    "pytest-benchmark[histogram]>=5,<6",
+    "pytest-cov>=4.1.0",
+    "pytest-docker>=1,<4",
+    "pytest-mock",
+    "pytest-rerunfailures<17.0",
+    "pytest-test-utils",
+    "pytest-timeout>=2",
+    "pytest-xdist>=3.2",
+    'pywin32>=225; sys_platform == "win32"',
+    'tzdata; sys_platform == "win32"',
+    "sqlalchemy>=1,<3",
+    "pandas>=1",
+    "uv",
+]
+dev = [
+    "dvx[all,tests]",
+    "mypy==1.19.0",
+    "pandas-stubs",
+    "types-colorama",
+    "types-psutil",
+    "types-pyinstaller",
+    "types-requests",
+    "types-tabulate",
+    "types-toml",
+    "types-tqdm",
+    "typing-extensions",
+]
 
 [dependency-groups]
 dev = ["dvx[all]", {include-group = "lint"}, {include-group = "test"}]
@@ -249,7 +281,7 @@ skip = "CODE_OF_CONDUCT.md"
 output-format = "full"
 show-fixes = true
 line-length = 100
-exclude = ["dvc/_version.py"]
+exclude = ["dvx/_version.py"]
 
 [tool.ruff.lint]
 ignore = [
