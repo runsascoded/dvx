@@ -178,7 +178,9 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
         return None
 
     with open(dvc_path) as f:
-        data = yaml.safe_load(f)
+        # Use CSafeLoader for ~5x faster parsing (falls back to SafeLoader if unavailable)
+        Loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+        data = yaml.load(f, Loader=Loader)
 
     if not data or "outs" not in data or not data["outs"]:
         return None
