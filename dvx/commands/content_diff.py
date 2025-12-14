@@ -31,31 +31,44 @@ def _normalize_path(path: str) -> tuple[str, str]:
 
 def _get_cache_path_for_ref(repo, dvc_path: str, ref: Optional[str]) -> Optional[str]:
     """Get cache path for a .dvc file at a specific git ref."""
-    from dvx.dvcfile import SingleStageFile
-    from dvx.repo.brancher import switch
+    import subprocess
 
-    abs_path = os.path.abspath(dvc_path)
+    import yaml
 
     try:
         if ref:
-            with switch(repo, ref):
-                dvcfile = SingleStageFile(repo, abs_path, verify=False)
-                stage = dvcfile.stage
-                if not stage.outs:
-                    return None
-                out = stage.outs[0]
-                if not out.hash_info or not out.hash_info.value:
-                    return None
-                return out.cache_path
-        else:
-            dvcfile = SingleStageFile(repo, abs_path, verify=False)
-            stage = dvcfile.stage
-            if not stage.outs:
+            # Read .dvc file content directly from git
+            result = subprocess.run(
+                ["git", "show", f"{ref}:{dvc_path}"],
+                check=False, capture_output=True, text=True, cwd=repo.root_dir
+            )
+            if result.returncode != 0:
+                logger.debug("Failed to read %s at %s: %s", dvc_path, ref, result.stderr)
                 return None
-            out = stage.outs[0]
-            if not out.hash_info or not out.hash_info.value:
+
+            dvc_content = yaml.safe_load(result.stdout)
+            outs = dvc_content.get("outs", [])
+            if not outs:
                 return None
-            return out.cache_path
+
+            md5 = outs[0].get("md5", "")
+            if not md5:
+                return None
+
+            # Strip .dir suffix if present
+            md5 = md5.replace(".dir", "")
+            return os.path.join(repo.root_dir, ".dvc", "cache", "files", "md5", md5[:2], md5[2:])
+        # Read from current working tree
+        from dvx.dvcfile import SingleStageFile
+        abs_path = os.path.abspath(dvc_path)
+        dvcfile = SingleStageFile(repo, abs_path, verify=False)
+        stage = dvcfile.stage
+        if not stage.outs:
+            return None
+        out = stage.outs[0]
+        if not out.hash_info or not out.hash_info.value:
+            return None
+        return out.cache_path
     except Exception as e:
         logger.debug("Failed to get cache path for %s at %s: %s", dvc_path, ref, e)
         return None
@@ -386,8 +399,8 @@ class CmdContentDiff:
             argv.extend(self.args.args)
 
         try:
-            diff(argv, standalone_mode=False)
-            return 0
+            result = diff(argv, standalone_mode=False)
+            return result if result is not None else 0
         except click.ClickException as e:
             e.show()
             return 1
