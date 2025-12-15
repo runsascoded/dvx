@@ -40,7 +40,7 @@ dependencies = [
     "dvc-http>=2.29.0",
     "dvc-objects",
     "flatten_dict<1,>=0.4.1",
-    "flufl.lock>=8.1.0,<9",
+    "flufl.lock>=8.1.0,<10",
     "fsspec>=2024.2.0",
     "funcy>=1.14",
     "networkx>=2.5",
