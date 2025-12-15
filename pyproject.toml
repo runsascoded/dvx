@@ -98,7 +98,7 @@ tests = [
 ]
 dev = [
     "dvx[all,tests]",
-    "mypy==1.19.0",
+    "mypy==1.19.1",
     "pandas-stubs",
     "types-colorama",
     "types-psutil",
@@ -113,7 +113,7 @@ dev = [
 [dependency-groups]
 dev = ["dvx[all]", {include-group = "lint"}, {include-group = "test"}]
 lint = [
-    "mypy==1.19.0",
+    "mypy==1.19.1",
     "pandas-stubs",
     "types-colorama",
     "types-psutil",
