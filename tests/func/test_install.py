@@ -12,9 +12,7 @@ from tests.func.parsing.test_errors import escape_ansi
 git = pytest.importorskip("git")
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32", reason="Git hooks aren't supported on Windows"
-)
+@pytest.mark.skipif(sys.platform == "win32", reason="Git hooks aren't supported on Windows")
 class TestInstall:
     def _hook(self, name):
         return pathlib.Path(".git") / "hooks" / name
@@ -94,9 +92,7 @@ class TestInstall:
         assert expected_storage_path.read_text() == "file_content"
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32", reason="Git hooks aren't supported on Windows"
-)
+@pytest.mark.skipif(sys.platform == "win32", reason="Git hooks aren't supported on Windows")
 def test_merge_driver_no_ancestor(tmp_dir, scm, dvc):
     with tmp_dir.branch("one", new=True):
         tmp_dir.dvc_gen({"data": {"foo": "foo"}}, commit="one: add data")
@@ -128,9 +124,7 @@ def test_merge_driver_no_ancestor(tmp_dir, scm, dvc):
     assert (tmp_dir / "data").read_text() == {"foo": "foo", "bar": "bar"}
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32", reason="Git hooks aren't supported on Windows"
-)
+@pytest.mark.skipif(sys.platform == "win32", reason="Git hooks aren't supported on Windows")
 def test_merge_driver(tmp_dir, scm, dvc):
     tmp_dir.dvc_gen({"data": {"master": "master"}}, commit="master: add data")
 

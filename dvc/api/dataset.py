@@ -1,4 +1,4 @@
-from typing import Literal, TypedDict, Union
+from typing import Literal, TypedDict
 
 
 class DatachainDataset(TypedDict):
@@ -20,7 +20,7 @@ class URLDataset(TypedDict):
     path: str
 
 
-def get(name: str) -> Union[DatachainDataset, DVCDataset, URLDataset]:
+def get(name: str) -> DatachainDataset | DVCDataset | URLDataset:
     from difflib import get_close_matches
 
     from dvc.fs import get_cloud_fs
@@ -58,9 +58,7 @@ def get(name: str) -> Union[DatachainDataset, DVCDataset, URLDataset]:
         versioned_path = join_version(path, dataset.lock.meta.version_id)
         versioned_path = f"{protocol}://{versioned_path}"
         files = [
-            join_version(
-                fs_cls.join(versioned_path, file.relpath), file.meta.version_id
-            )
+            join_version(fs_cls.join(versioned_path, file.relpath), file.meta.version_id)
             for file in dataset.lock.files
         ]
         return URLDataset(type="url", files=files, path=versioned_path)

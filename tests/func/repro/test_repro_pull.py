@@ -37,9 +37,7 @@ def test_repro_pulls_continue_without_run_cache(tmp_dir, dvc, mocker, local_remo
     (foo,) = tmp_dir.dvc_gen("foo", "foo")
 
     dvc.push()
-    mocker.patch.object(
-        dvc.stage_cache, "pull", side_effect=RunCacheNotSupported("foo")
-    )
+    mocker.patch.object(dvc.stage_cache, "pull", side_effect=RunCacheNotSupported("foo"))
     dvc.stage.add(name="copy-foo", cmd="cp foo bar", deps=["foo"], outs=["bar"])
     remove("foo")
     remove(foo.outs[0].cache_path)
@@ -107,9 +105,7 @@ def test_repro_pulls_allow_missing(tmp_dir, dvc, mocker, local_remote, allow_mis
 def test_repro_pull_fails(tmp_dir, dvc, mocker, local_remote):
     tmp_dir.dvc_gen("foo", "foo")
 
-    dvc.stage.add(
-        name="concat-foo", cmd="cat foo foo > bar", deps=["foo"], outs=["bar"]
-    )
+    dvc.stage.add(name="concat-foo", cmd="cat foo foo > bar", deps=["foo"], outs=["bar"])
     stages = dvc.reproduce()
     remove("bar")
     remove(stages[0].outs[0].cache_path)

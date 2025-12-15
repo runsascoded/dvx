@@ -356,9 +356,7 @@ def test_run_dump(tmp_dir, dvc, run_head):
     assert load_file(dvc, PROJECT_FILE)._load()[0] == {
         "stages": {
             "head-files": {
-                "cmd": "python {} foo bar foobar".format(
-                    (tmp_dir / "head.py").resolve()
-                ),
+                "cmd": "python {} foo bar foobar".format((tmp_dir / "head.py").resolve()),
                 "wdir": "dir",
                 "deps": ["bar", "foo", "foobar"],
                 "outs": ["bar-1", {"foo-1": {"persist": True}}],
@@ -667,9 +665,7 @@ def test_should_raise_on_overlapping_output_paths(tmp_dir, dvc, append_foo_scrip
     )
 
 
-def test_should_not_checkout_upon_corrupted_local_hardlink_cache(
-    mocker, tmp_dir, dvc, copy_script
-):
+def test_should_not_checkout_upon_corrupted_local_hardlink_cache(mocker, tmp_dir, dvc, copy_script):
     tmp_dir.gen("foo", "foo")
     dvc.cache.local.cache_types = ["hardlink"]
 

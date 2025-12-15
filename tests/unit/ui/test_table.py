@@ -118,7 +118,8 @@ def test_rich_border(capsys):
 @pytest.mark.parametrize(
     "extra_opts",
     [
-        {"header_styles": [{"style": Style(bold=True)}]},
+        # Two header styles for two headers
+        {"header_styles": [{"style": Style(bold=True)}, {"style": Style(bold=True)}]},
         {"header_styles": {"first": {"style": Style(bold=True)}}},
         {"row_styles": [{"style": Style(bold=True)}]},
     ],

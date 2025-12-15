@@ -34,9 +34,7 @@ def test_post_to_studio(
         monkeypatch.setenv(DVC_EXP_GIT_REMOTE, dvc_exp_git_remote)
 
     baseline_sha = scm.get_rev()
-    exp_rev = first(
-        dvc.experiments.run(exp_stage.addressing, params=["foo=1"], tmp_dir=tmp)
-    )
+    exp_rev = first(dvc.experiments.run(exp_stage.addressing, params=["foo=1"], tmp_dir=tmp))
     name = dvc.experiments.get_exact_name([exp_rev])[exp_rev]
 
     assert live_metrics.call_count == 2
@@ -125,9 +123,7 @@ def test_post_to_studio_subdir(tmp_dir, scm, mocker, monkeypatch, tmp):
     with monkeypatch.context() as m:
         m.chdir(project_a_dvc.root_dir)
         exp_rev = first(
-            project_a_dvc.experiments.run(
-                exp_stage.addressing, params=["foo=24"], tmp_dir=tmp
-            )
+            project_a_dvc.experiments.run(exp_stage.addressing, params=["foo=24"], tmp_dir=tmp)
         )
 
     name = project_a_dvc.experiments.get_exact_name([exp_rev])[exp_rev]

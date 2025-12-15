@@ -135,9 +135,7 @@ def pytest_configure(config):
     config.dvc_config = DVCTestConfig()
 
     for remote_name in REMOTES:
-        config.addinivalue_line(
-            "markers", f"{remote_name}: mark test as requiring {remote_name}"
-        )
+        config.addinivalue_line("markers", f"{remote_name}: mark test as requiring {remote_name}")
 
     enabled_remotes = config.dvc_config.enabled_remotes
     if config.getoption("--all"):

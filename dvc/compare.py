@@ -9,7 +9,7 @@ from collections.abc import (
 )
 from itertools import chain, repeat, zip_longest
 from operator import itemgetter
-from typing import TYPE_CHECKING, Any, Optional, Union, overload
+from typing import TYPE_CHECKING, Any, overload
 
 from funcy import reraise
 
@@ -26,7 +26,7 @@ def with_value(value, default):
 
 
 class TabularData(MutableSequence[Sequence["CellT"]]):
-    def __init__(self, columns: Sequence[str], fill_value: Optional[str] = ""):
+    def __init__(self, columns: Sequence[str], fill_value: str | None = ""):
         self._columns: dict[str, Column] = {name: Column() for name in columns}
         self._keys: list[str] = list(columns)
         self._fill_value = fill_value
@@ -80,7 +80,7 @@ class TabularData(MutableSequence[Sequence["CellT"]]):
         with reraise(KeyError, AttributeError):
             return self.column(item)
 
-    def __getitem__(self, item: Union[int, slice]):
+    def __getitem__(self, item: int | slice):
         func = itemgetter(item)
         it = map(func, self.columns)
         if isinstance(item, slice):
@@ -97,9 +97,7 @@ class TabularData(MutableSequence[Sequence["CellT"]]):
         it = value
         if isinstance(item, slice):
             n = len(self.columns)
-            normalized_rows = (
-                chain(val, repeat(self._fill_value, n - len(val))) for val in value
-            )
+            normalized_rows = (chain(val, repeat(self._fill_value, n - len(val))) for val in value)
             # we need to transpose those rows into columnar format
             # as we work in terms of column-based arrays
             it = zip(*normalized_rows)
@@ -107,7 +105,7 @@ class TabularData(MutableSequence[Sequence["CellT"]]):
         for i, col in self._iter_col_row(it):
             col[item] = i
 
-    def __delitem__(self, item: Union[int, slice]) -> None:
+    def __delitem__(self, item: int | slice) -> None:
         for col in self.columns:
             del col[item]
 
@@ -160,9 +158,7 @@ class TabularData(MutableSequence[Sequence["CellT"]]):
             if key not in keys:
                 self.add_column(key)
 
-        row: list[CellT] = [
-            with_value(d.get(key), self._fill_value) for key in self.keys()
-        ]
+        row: list[CellT] = [with_value(d.get(key), self._fill_value) for key in self.keys()]
         self.append(row)
 
     def render(self, **kwargs: Any):
@@ -173,9 +169,7 @@ class TabularData(MutableSequence[Sequence["CellT"]]):
         else:
             ui.table(self, headers=self.keys(), **kwargs)
 
-    def as_dict(
-        self, cols: Optional[Iterable[str]] = None
-    ) -> Iterable[dict[str, "CellT"]]:
+    def as_dict(self, cols: Iterable[str] | None = None) -> Iterable[dict[str, "CellT"]]:
         keys = self.keys() if cols is None else set(cols)
         return [{k: self._columns[k][i] for k in keys} for i in range(len(self))]
 
@@ -183,12 +177,10 @@ class TabularData(MutableSequence[Sequence["CellT"]]):
         self,
         axis: str = "rows",
         how="any",
-        subset: Optional[Iterable[str]] = None,
+        subset: Iterable[str] | None = None,
     ):
         if axis not in ["rows", "cols"]:
-            raise ValueError(
-                f"Invalid 'axis' value {axis}.Choose one of ['rows', 'cols']"
-            )
+            raise ValueError(f"Invalid 'axis' value {axis}.Choose one of ['rows', 'cols']")
         if how not in ["any", "all"]:
             raise ValueError(f"Invalid 'how' value {how}. Choose one of ['any', 'all']")
 
@@ -226,13 +218,11 @@ class TabularData(MutableSequence[Sequence["CellT"]]):
     def drop_duplicates(
         self,
         axis: str = "rows",
-        subset: Optional[Iterable[str]] = None,
+        subset: Iterable[str] | None = None,
         ignore_empty: bool = True,
     ):
         if axis not in ["rows", "cols"]:
-            raise ValueError(
-                f"Invalid 'axis' value {axis}.Choose one of ['rows', 'cols']"
-            )
+            raise ValueError(f"Invalid 'axis' value {axis}.Choose one of ['rows', 'cols']")
 
         if axis == "cols":
             cols_to_drop: list[str] = []
@@ -252,11 +242,7 @@ class TabularData(MutableSequence[Sequence["CellT"]]):
             rows_to_drop: list[int] = []
             for n_row, row in enumerate(self):
                 if subset:
-                    row = [
-                        col
-                        for n_col, col in enumerate(row)
-                        if self.keys()[n_col] in subset
-                    ]
+                    row = [col for n_col, col in enumerate(row) if self.keys()[n_col] in subset]
 
                 tuple_row = tuple(row)
                 if tuple_row in unique_rows:
@@ -266,11 +252,7 @@ class TabularData(MutableSequence[Sequence["CellT"]]):
 
             for name in self.keys():
                 self._columns[name] = Column(
-                    [
-                        x
-                        for n, x in enumerate(self._columns[name])
-                        if n not in rows_to_drop
-                    ]
+                    [x for n, x in enumerate(self._columns[name]) if n not in rows_to_drop]
                 )
 
 
@@ -278,9 +260,7 @@ def _normalize_float(val: float, precision: int):
     return f"{val:.{precision}g}"
 
 
-def _format_field(
-    val: Any, precision: Optional[int] = None, round_digits: bool = False
-) -> str:
+def _format_field(val: Any, precision: int | None = None, round_digits: bool = False) -> str:
     def _format(_val):
         if isinstance(_val, float) and precision:
             if round_digits:
@@ -301,11 +281,11 @@ def diff_table(
     old: bool = True,
     no_path: bool = False,
     show_changes: bool = True,
-    precision: Optional[int] = None,
+    precision: int | None = None,
     round_digits: bool = False,
-    on_empty_diff: Optional[str] = None,
-    a_rev: Optional[str] = None,
-    b_rev: Optional[str] = None,
+    on_empty_diff: str | None = None,
+    a_rev: str | None = None,
+    b_rev: str | None = None,
 ) -> TabularData:
     a_rev = a_rev or "HEAD"
     b_rev = b_rev or "workspace"
@@ -347,12 +327,12 @@ def show_diff(
     old: bool = True,
     no_path: bool = False,
     show_changes: bool = True,
-    precision: Optional[int] = None,
+    precision: int | None = None,
     round_digits: bool = False,
-    on_empty_diff: Optional[str] = None,
+    on_empty_diff: str | None = None,
     markdown: bool = False,
-    a_rev: Optional[str] = None,
-    b_rev: Optional[str] = None,
+    a_rev: str | None = None,
+    b_rev: str | None = None,
 ) -> None:
     td = diff_table(
         diff,
@@ -374,7 +354,7 @@ def metrics_table(
     all_branches: bool = False,
     all_tags: bool = False,
     all_commits: bool = False,
-    precision: Optional[int] = None,
+    precision: int | None = None,
     round_digits: bool = False,
 ):
     from dvc.utils.diff import format_dict
@@ -386,16 +366,9 @@ def metrics_table(
         for fname, metric in val.get("data", {}).items():
             row_data: dict[str, str] = {"Revision": branch, "Path": fname}
             metric = metric.get("data", {})
-            flattened = (
-                flatten(format_dict(metric))
-                if isinstance(metric, dict)
-                else {"": metric}
-            )
+            flattened = flatten(format_dict(metric)) if isinstance(metric, dict) else {"": metric}
             row_data.update(
-                {
-                    k: _format_field(v, precision, round_digits)
-                    for k, v in flattened.items()
-                }
+                {k: _format_field(v, precision, round_digits) for k, v in flattened.items()}
             )
             td.row_from_dict(row_data)
 
@@ -414,7 +387,7 @@ def show_metrics(
     all_branches: bool = False,
     all_tags: bool = False,
     all_commits: bool = False,
-    precision: Optional[int] = None,
+    precision: int | None = None,
     round_digits: bool = False,
 ) -> None:
     td = metrics_table(

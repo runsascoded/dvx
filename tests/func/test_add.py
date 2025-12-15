@@ -201,9 +201,7 @@ def test_add_file_in_dir(tmp_dir, dvc):
         ),
     ],
 )
-def test_add_filtered_files_in_dir(
-    tmp_dir, dvc, target, expected_def_paths, expected_rel_paths
-):
+def test_add_filtered_files_in_dir(tmp_dir, dvc, target, expected_def_paths, expected_rel_paths):
     tmp_dir.gen(
         {
             "dir": {
@@ -350,16 +348,12 @@ def test_should_collect_dir_cache_only_once(mocker, tmp_dir, dvc):
     assert counter.mock.call_count == 3
 
 
-def test_should_place_stage_in_data_dir_if_repository_below_symlink(
-    mocker, tmp_dir, dvc
-):
+def test_should_place_stage_in_data_dir_if_repository_below_symlink(mocker, tmp_dir, dvc):
     def is_symlink_true_below_dvc_root(path):
         return path == os.path.dirname(dvc.root_dir)
 
     tmp_dir.gen({"data": {"foo": "foo"}})
-    mocker.patch.object(
-        system, "is_symlink", side_effect=is_symlink_true_below_dvc_root
-    )
+    mocker.patch.object(system, "is_symlink", side_effect=is_symlink_true_below_dvc_root)
     ret = main(["add", os.path.join("data", "foo")])
     assert ret == 0
 
@@ -450,22 +444,14 @@ def temporary_windows_drive(tmp_path_factory):
     except ImportError:
         pytest.skip("pywin32 not installed")
 
-    drives = [
-        s[0].upper()
-        for s in win32api.GetLogicalDriveStrings().split("\000")
-        if len(s) > 0
-    ]
+    drives = [s[0].upper() for s in win32api.GetLogicalDriveStrings().split("\000") if len(s) > 0]
 
-    new_drive_name = next(
-        letter for letter in string.ascii_uppercase if letter not in drives
-    )
+    new_drive_name = next(letter for letter in string.ascii_uppercase if letter not in drives)
     new_drive = f"{new_drive_name}:"
 
     target_path = tmp_path_factory.mktemp("tmp_windows_drive")
 
-    set_up_result = windll.kernel32.DefineDosDeviceW(
-        0, new_drive, os.fspath(target_path)
-    )
+    set_up_result = windll.kernel32.DefineDosDeviceW(0, new_drive, os.fspath(target_path))
     if set_up_result == 0:
         raise RuntimeError("Failed to mount windows drive!")
 
@@ -481,9 +467,7 @@ def temporary_windows_drive(tmp_path_factory):
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows specific")
-def test_windows_should_add_when_cache_on_different_drive(
-    tmp_dir, dvc, temporary_windows_drive
-):
+def test_windows_should_add_when_cache_on_different_drive(tmp_dir, dvc, temporary_windows_drive):
     dvc.config["cache"]["dir"] = temporary_windows_drive
     dvc.cache = CacheManager(dvc)
 
@@ -539,9 +523,7 @@ def test_should_relink_on_repeated_add(link, new_link, link_test_func, tmp_dir, 
     tmp_dir.dvc_gen({"foo": "foo", "bar": "bar"})
 
     os.remove("foo")
-    getattr(dvc.cache.local.fs, link)(
-        (tmp_dir / "bar").fs_path, (tmp_dir / "foo").fs_path
-    )
+    getattr(dvc.cache.local.fs, link)((tmp_dir / "bar").fs_path, (tmp_dir / "foo").fs_path)
 
     dvc.cache.local.cache_types = [new_link]
 
@@ -672,8 +654,7 @@ def test_try_adding_multiple_overlaps(tmp_dir, dvc):
     }
     dump_yaml("dvc.yaml", dvcyaml_content)
     msg = (
-        "\nUse `dvc remove` with any of the above targets to stop tracking the "
-        "overlapping output."
+        "\nUse `dvc remove` with any of the above targets to stop tracking the overlapping output."
     )
     with pytest.raises(OutputDuplicationError, match=msg):
         dvc.add("foo")
@@ -704,22 +685,10 @@ def test_add_symlink_file(tmp_dir, dvc):
     assert (tmp_dir / "dir" / "bar").read_text() == "bar"
 
     assert (
-        tmp_dir
-        / ".dvc"
-        / "cache"
-        / "files"
-        / "md5"
-        / "37"
-        / "b51d194a7513e45b56f6524f2d51f2"
+        tmp_dir / ".dvc" / "cache" / "files" / "md5" / "37" / "b51d194a7513e45b56f6524f2d51f2"
     ).read_text() == "bar"
     assert not (
-        tmp_dir
-        / ".dvc"
-        / "cache"
-        / "files"
-        / "md5"
-        / "37"
-        / "b51d194a7513e45b56f6524f2d51f2"
+        tmp_dir / ".dvc" / "cache" / "files" / "md5" / "37" / "b51d194a7513e45b56f6524f2d51f2"
     ).is_symlink()
 
     # Test that subsequent add succeeds
@@ -763,13 +732,7 @@ def test_add_with_cache_link_error(tmp_dir, dvc, mocker, capsys):
     assert (tmp_dir / "foo").exists()
     assert (tmp_dir / "foo.dvc").exists()
     assert (
-        tmp_dir
-        / ".dvc"
-        / "cache"
-        / "files"
-        / "md5"
-        / "ac"
-        / "bd18db4cc2f85cedef654fccc4a4d8"
+        tmp_dir / ".dvc" / "cache" / "files" / "md5" / "ac" / "bd18db4cc2f85cedef654fccc4a4d8"
     ).read_text() == "foo"
 
 

@@ -67,10 +67,7 @@ def test_downstream(M, tmp_dir, dvc):
     #     A
     #
     assert main(["stage", "add", "--run", "-n", "A-gen", "-o", "A", "echo A>A"]) == 0
-    assert (
-        main(["stage", "add", "--run", "-n", "B-gen", "-d", "A", "-o", "B", "echo B>B"])
-        == 0
-    )
+    assert main(["stage", "add", "--run", "-n", "B-gen", "-d", "A", "-o", "B", "echo B>B"]) == 0
     assert (
         main(
             [
@@ -108,10 +105,7 @@ def test_downstream(M, tmp_dir, dvc):
         == 0
     )
     assert main(["stage", "add", "--run", "-n", "G-gen", "-o", "G", "echo G>G"]) == 0
-    assert (
-        main(["stage", "add", "--run", "-n", "F-gen", "-d", "G", "-o", "F", "echo F>F"])
-        == 0
-    )
+    assert main(["stage", "add", "--run", "-n", "F-gen", "-d", "G", "-o", "F", "echo F>F"]) == 0
     assert (
         main(
             [
@@ -502,9 +496,7 @@ def test_repro_pulls_continue_without_run_cache(tmp_dir, dvc, mocker, local_remo
     (foo,) = tmp_dir.dvc_gen("foo", "foo")
 
     dvc.push()
-    mocker.patch.object(
-        dvc.stage_cache, "pull", side_effect=RunCacheNotSupported("foo")
-    )
+    mocker.patch.object(dvc.stage_cache, "pull", side_effect=RunCacheNotSupported("foo"))
     dvc.stage.add(name="copy-foo", cmd="cp foo bar", deps=["foo"], outs=["bar"])
     remove("foo")
     remove(foo.outs[0].cache_path)
@@ -681,9 +673,7 @@ def test_repro_dep_dir_with_outputs_under_it(
     copy_script,
 ):
     tmp_dir.gen("foo", "foo")
-    file_stage, _ = tmp_dir.dvc_gen(
-        {"data/file": "file", "data/sub": {"foo": "foo", "bar": "bar"}}
-    )
+    file_stage, _ = tmp_dir.dvc_gen({"data/file": "file", "data/sub": {"foo": "foo", "bar": "bar"}})
     dvc.run(
         cmd="ls data/file data/sub",
         deps=["data/file", "data/sub"],
@@ -1231,9 +1221,7 @@ def test_repro_keep_going(mocker, tmp_dir, dvc, copy_script):
         dvc.reproduce(on_error="keep-going", repro_fn=spy)
 
     bar_call = mocker.call(bar_stage, upstream=[], force=False, interactive=False)
-    stage1_call = mocker.call(
-        stage1, upstream=[bar_stage], force=False, interactive=False
-    )
+    stage1_call = mocker.call(stage1, upstream=[bar_stage], force=False, interactive=False)
     foo_call = mocker.call(foo_stage, upstream=[], force=False, interactive=False)
     assert len(spy.call_args_list) == 3
     assert foo_call in spy.call_args_list
@@ -1257,9 +1245,7 @@ def test_repro_ignore_errors(mocker, tmp_dir, dvc, copy_script):
 
     bar_call = mocker.call(bar_stage, upstream=[], force=False, interactive=False)
     foo_call = mocker.call(foo_stage, upstream=[], force=False, interactive=False)
-    stage1_call = mocker.call(
-        stage1, upstream=[bar_stage], force=False, interactive=False
-    )
+    stage1_call = mocker.call(stage1, upstream=[bar_stage], force=False, interactive=False)
     stage2_call = mocker.call(
         stage2,
         upstream=[foo_stage, stage1],

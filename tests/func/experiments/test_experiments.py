@@ -37,9 +37,7 @@ def test_new_simple(tmp_dir, scm, dvc, exp_stage, mocker, name, workspace):
     tmp_dir.gen("params.yaml", "foo: 2")
 
     new_mock = mocker.spy(dvc.experiments, "new")
-    results = dvc.experiments.run(
-        exp_stage.addressing, name=name, tmp_dir=not workspace
-    )
+    results = dvc.experiments.run(exp_stage.addressing, name=name, tmp_dir=not workspace)
     exp = first(results)
     ref_info = first(exp_refs_by_rev(scm, exp))
     assert ref_info
@@ -106,9 +104,7 @@ def test_failed_exp_workspace(tmp_dir, scm, dvc, failed_exp_stage, mocker, capsy
     tmp_dir.gen("params.yaml", "foo: 2")
     with pytest.raises(ReproductionError):
         dvc.experiments.run(failed_exp_stage.addressing)
-    assert not dvc.fs.exists(
-        os.path.join(dvc.experiments.workspace_queue.pid_dir, "workspace")
-    )
+    assert not dvc.fs.exists(os.path.join(dvc.experiments.workspace_queue.pid_dir, "workspace"))
 
 
 def test_get_baseline(tmp_dir, scm, dvc, exp_stage):
@@ -147,9 +143,7 @@ def test_update_py_params(tmp_dir, scm, dvc, session_queue, copy_script):
     scm.add(["dvc.yaml", "dvc.lock", "copy.py", "params.py", "metrics.py"])
     scm.commit("init")
 
-    results = dvc.experiments.run(
-        stage.addressing, params=["params.py:INT=2"], tmp_dir=True
-    )
+    results = dvc.experiments.run(stage.addressing, params=["params.py:INT=2"], tmp_dir=True)
     exp_a = first(results)
 
     fs = scm.get_fs(exp_a)
@@ -315,9 +309,7 @@ def test_untracked(tmp_dir, scm, dvc, caplog, workspace, copy_script):
 
     # dvc.yaml, copy.py are staged as new file but not committed
     scm.add(["dvc.yaml", "copy.py"])
-    results = dvc.experiments.run(
-        stage.addressing, params=["foo=2"], tmp_dir=not workspace
-    )
+    results = dvc.experiments.run(stage.addressing, params=["foo=2"], tmp_dir=not workspace)
     exp = first(results)
     fs = scm.get_fs(exp)
     assert fs.exists("dvc.yaml")
@@ -404,9 +396,7 @@ def test_subdir(tmp_dir, scm, dvc, workspace):
         scm.add([subdir / "dvc.yaml", subdir / "copy.py", subdir / "params.yaml"])
         scm.commit("init")
 
-        results = dvc.experiments.run(
-            PROJECT_FILE, params=["foo=2"], tmp_dir=not workspace
-        )
+        results = dvc.experiments.run(PROJECT_FILE, params=["foo=2"], tmp_dir=not workspace)
         assert results
 
     exp = first(results)
@@ -443,9 +433,7 @@ def test_subrepo(tmp_dir, request, scm, workspace):
         scm.add([subrepo / "dvc.yaml", subrepo / "copy.py", subrepo / "params.yaml"])
         scm.commit("init")
 
-        results = subrepo.dvc.experiments.run(
-            PROJECT_FILE, params=["foo=2"], tmp_dir=not workspace
-        )
+        results = subrepo.dvc.experiments.run(PROJECT_FILE, params=["foo=2"], tmp_dir=not workspace)
         assert results
 
     exp = first(results)
@@ -546,9 +534,7 @@ def test_modified_data_dep(tmp_dir, scm, dvc, workspace, params, target, copy_sc
     tmp_dir.gen("params.yaml", params)
     tmp_dir.gen("data", "modified")
 
-    results = dvc.experiments.run(
-        exp_stage.addressing if target else None, tmp_dir=not workspace
-    )
+    results = dvc.experiments.run(exp_stage.addressing if target else None, tmp_dir=not workspace)
     exp = first(results)
 
     for rev in dvc.brancher(revs=[exp]):
@@ -693,9 +679,7 @@ def test_local_config_is_propagated_to_tmp(tmp_dir, scm, dvc):
     with dvc.config.edit("local") as conf:
         conf["cache"]["type"] = "hardlink"
 
-    stage = dvc.stage.add(
-        cmd="cat .dvc/config.local > file", name="foo", outs_no_cache=["file"]
-    )
+    stage = dvc.stage.add(cmd="cat .dvc/config.local > file", name="foo", outs_no_cache=["file"])
     scm.add_commit(["dvc.yaml"], message="add dvc.yaml")
 
     results = dvc.experiments.run(stage.addressing, tmp_dir=True)
@@ -735,9 +719,7 @@ def test_copy_paths(tmp_dir, scm, dvc, tmp):
     (tmp_dir / "file").write_text("file")
     scm.ignore(tmp_dir / "file")
 
-    results = dvc.experiments.run(
-        stage.addressing, tmp_dir=tmp, copy_paths=["dir", "file"]
-    )
+    results = dvc.experiments.run(stage.addressing, tmp_dir=tmp, copy_paths=["dir", "file"])
     exp = first(results)
     fs = scm.get_fs(exp)
     assert not fs.exists("dir")
@@ -789,11 +771,7 @@ def test_custom_commit_message(tmp_dir, scm, dvc, tmp):
     stage = dvc.stage.add(cmd="echo foo", name="foo")
     scm.add_commit(["dvc.yaml"], message="add dvc.yaml")
 
-    exp = first(
-        dvc.experiments.run(
-            stage.addressing, tmp_dir=tmp, message="custom commit message"
-        )
-    )
+    exp = first(dvc.experiments.run(stage.addressing, tmp_dir=tmp, message="custom commit message"))
     assert scm.resolve_commit(exp).message == "custom commit message"
 
 

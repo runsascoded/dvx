@@ -34,8 +34,7 @@ def find_supported_remotes(string):
         remotes[remote_name] = {
             dependency: version
             for dependency, _, version in [
-                dependency.partition(" = ")
-                for dependency in raw_dependencies[1:-1].split(", ")
+                dependency.partition(" = ") for dependency in raw_dependencies[1:-1].split(", ")
             ]
         }
     return remotes

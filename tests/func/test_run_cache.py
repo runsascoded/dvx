@@ -240,9 +240,7 @@ def test_restore_pull(tmp_dir, dvc, run_copy, mocker, local_remote):
 def test_push_pull_unsupported(tmp_dir, dvc, mocker, run_copy, local_remote, caplog):
     tmp_dir.gen("foo", "foo")
     run_copy("foo", "bar", name="copy-foo-bar")
-    mocker.patch.object(
-        dvc.cloud, "get_remote_odb", side_effect=RunCacheNotSupported("foo")
-    )
+    mocker.patch.object(dvc.cloud, "get_remote_odb", side_effect=RunCacheNotSupported("foo"))
     with caplog.at_level(logging.DEBUG, logger="dvc"):
         dvc.push(run_cache=True)
         assert "failed to push run cache" in caplog.text

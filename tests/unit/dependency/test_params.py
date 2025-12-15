@@ -271,6 +271,4 @@ def test_params_status_without_targets(tmp_dir, dvc):
 
     dep.fill_values({"foo": "foobar", "lorem": "ipsum"})
     assert dep.hash_info.value == {"foo": "foobar", "lorem": "ipsum"}
-    assert dep.status() == {
-        "params.yaml": {"bar": "new", "foo": "modified", "lorem": "deleted"}
-    }
+    assert dep.status() == {"params.yaml": {"bar": "new", "foo": "modified", "lorem": "deleted"}}

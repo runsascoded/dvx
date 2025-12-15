@@ -42,7 +42,5 @@ def test_boxify():
 
 
 def test_glob_no_match():
-    with pytest.raises(
-        DvcException, match=re.escape("Glob ['invalid*'] has no matches.")
-    ):
+    with pytest.raises(DvcException, match=re.escape("Glob ['invalid*'] has no matches.")):
         utils.glob_targets(["invalid*"], glob=True)

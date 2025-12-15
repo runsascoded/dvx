@@ -194,8 +194,6 @@ def test_git_remote_hash(mocker, git_remote):
 def test_git_remote_hash_local(mocker, git_remote):
     m = mocker.patch("dvc.analytics._git_remote_url", return_value=git_remote)
 
-    expected = hashlib.md5(
-        git_remote.encode("utf-8"), usedforsecurity=False
-    ).hexdigest()
+    expected = hashlib.md5(git_remote.encode("utf-8"), usedforsecurity=False).hexdigest()
     assert analytics._git_remote_path_hash(None) == expected
     m.assert_called_once_with(None)

@@ -1,5 +1,5 @@
 import os
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
 
 import requests
@@ -30,7 +30,7 @@ def post(
     url: str,
     token: str,
     data: dict[str, Any],
-    base_url: Optional[str] = STUDIO_URL,
+    base_url: str | None = STUDIO_URL,
     max_retries: int = 3,
     timeout: int = 5,
 ) -> "Response":
@@ -41,9 +41,7 @@ def post(
     logger.trace("Sending %s to %s", data, url)
 
     headers = {"Authorization": f"token {token}"}
-    r = session.post(
-        url, json=data, headers=headers, timeout=timeout, allow_redirects=False
-    )
+    r = session.post(url, json=data, headers=headers, timeout=timeout, allow_redirects=False)
     r.raise_for_status()
     return r
 
@@ -52,7 +50,7 @@ def notify_refs(
     repo_url: str,
     token: str,
     *,
-    base_url: Optional[str] = STUDIO_URL,
+    base_url: str | None = STUDIO_URL,
     **refs: list[str],
 ) -> dict[str, Any]:
     extra_keys = refs.keys() - {"pushed", "removed"}
@@ -133,9 +131,7 @@ def get_repo_url(repo: "Repo") -> str:
 
     from dvc.env import DVC_EXP_GIT_REMOTE
 
-    repo_url = os.getenv(
-        DVC_EXP_GIT_REMOTE, repo.config.get("exp", {}).get("git_remote")
-    )
+    repo_url = os.getenv(DVC_EXP_GIT_REMOTE, repo.config.get("exp", {}).get("git_remote"))
     if repo_url:
         try:
             _, repo_url = get_remote_repo(repo.scm.dulwich.repo, repo_url)

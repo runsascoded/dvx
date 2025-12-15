@@ -54,9 +54,7 @@ def test_show(tmp_dir, dvc, run_copy_metrics):
     run_copy_metrics(
         "metrics_t.yaml", "metrics.yaml", name="copy-metrics", metrics=["metrics.yaml"]
     )
-    assert dvc.metrics.show() == {
-        "": {"data": {"metrics.yaml": {"data": {"foo": 1.1}}}}
-    }
+    assert dvc.metrics.show() == {"": {"data": {"metrics.yaml": {"data": {"foo": 1.1}}}}}
 
 
 def test_show_toml(tmp_dir, dvc, run_copy_metrics):
@@ -64,9 +62,7 @@ def test_show_toml(tmp_dir, dvc, run_copy_metrics):
     run_copy_metrics(
         "metrics_t.toml", "metrics.toml", name="copy-metrics", metrics=["metrics.toml"]
     )
-    assert dvc.metrics.show() == {
-        "": {"data": {"metrics.toml": {"data": {"foo": {"bar": 1.2}}}}}
-    }
+    assert dvc.metrics.show() == {"": {"data": {"metrics.toml": {"data": {"foo": {"bar": 1.2}}}}}}
 
 
 def test_show_targets(tmp_dir, dvc, run_copy_metrics):
@@ -298,9 +294,7 @@ def test_metrics_show_overlap(tmp_dir, dvc, run_copy_metrics, clear_before_run):
         ),
     ],
 )
-def test_log_errors(
-    tmp_dir, scm, dvc, capsys, run_copy_metrics, file, error_path, err_type
-):
+def test_log_errors(tmp_dir, scm, dvc, capsys, run_copy_metrics, file, error_path, err_type):
     tmp_dir.gen("metrics_t.yaml", "m: 1.1")
     run_copy_metrics(
         "metrics_t.yaml",
@@ -320,9 +314,7 @@ def test_log_errors(
     result = json.loads(out)
 
     assert get_in(result, error_path) == err_type
-    assert (
-        "DVC failed to load some metrics for following revisions: 'workspace'." in error
-    )
+    assert "DVC failed to load some metrics for following revisions: 'workspace'." in error
 
 
 def test_cached_metrics(tmp_dir, dvc, scm, remote):
@@ -351,9 +343,7 @@ def test_top_level_parametrized(tmp_dir, dvc):
     tmp_dir.dvc_gen("metrics.yaml", "foo: 3\nbar: 10")
     (tmp_dir / "params.yaml").dump({"metric_file": "metrics.yaml"})
     (tmp_dir / "dvc.yaml").dump({"metrics": ["${metric_file}"]})
-    assert dvc.metrics.show() == {
-        "": {"data": {"metrics.yaml": {"data": {"foo": 3, "bar": 10}}}}
-    }
+    assert dvc.metrics.show() == {"": {"data": {"metrics.yaml": {"data": {"foo": 3, "bar": 10}}}}}
 
 
 def test_metric_in_a_tracked_directory_with_missing_dir_file(M, tmp_dir, dvc):

@@ -94,8 +94,7 @@ def test_check_updates(mocker, capsys, updater, current, latest, notify):
     updater.check()
     out, err = capsys.readouterr()
     expected_message = (
-        f"You are using dvc version {current}; "
-        f"however, version {latest} is available.\n"
+        f"You are using dvc version {current}; however, version {latest} is available.\n"
         if notify
         else ""
     )
@@ -156,24 +155,16 @@ def test_check(mocker, updater):
         ("binary", "To upgrade, uninstall dvc and reinstall from https://dvc.org."),
         (
             None,
-            (
-                "Find the latest release at "
-                "https://github.com/treeverse/dvc/releases/latest."
-            ),
+            ("Find the latest release at https://github.com/treeverse/dvc/releases/latest."),
         ),
         (
             "unknown",
-            (
-                "Find the latest release at "
-                "https://github.com/treeverse/dvc/releases/latest."
-            ),
+            ("Find the latest release at https://github.com/treeverse/dvc/releases/latest."),
         ),
     ],
 )
 def test_notify_message(updater, pkg, instruction):
-    update_message = (
-        "You are using dvc version 0.0.2; however, version 0.0.3 is available."
-    )
+    update_message = "You are using dvc version 0.0.2; however, version 0.0.3 is available."
 
     message = updater._get_message("0.0.3", current="0.0.2", pkg=pkg)
     assert message.plain.splitlines() == ["", update_message, instruction]

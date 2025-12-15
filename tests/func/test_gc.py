@@ -265,9 +265,7 @@ def test_gc_all_experiments(tmp_dir, scm, dvc):
 
     dvc.gc(all_experiments=True, force=True)
 
-    assert not (
-        tmp_dir / ".dvc" / "cache" / "files" / "md5" / foo_hash[:2] / foo_hash[2:]
-    ).exists()
+    assert not (tmp_dir / ".dvc" / "cache" / "files" / "md5" / foo_hash[:2] / foo_hash[2:]).exists()
     assert (
         tmp_dir / ".dvc" / "cache" / "files" / "md5" / baz_hash[:2] / baz_hash[2:]
     ).read_text() == "baz"
@@ -285,9 +283,7 @@ def test_gc_rev_num(tmp_dir, scm, dvc):
     dvc.gc(rev="HEAD", num=num, force=True)
 
     for n, i in enumerate(reversed(range(4))):
-        cache = (
-            tmp_dir / ".dvc" / "cache" / "files" / "md5" / hashes[i][:2] / hashes[i][2:]
-        )
+        cache = tmp_dir / ".dvc" / "cache" / "files" / "md5" / hashes[i][:2] / hashes[i][2:]
         if n >= num:
             assert not cache.exists()
         else:
@@ -313,9 +309,7 @@ def test_date(tmp_dir, scm, dvc):
     dvc.gc(commit_date=datestamp)
     assert _count_files(dvc.cache.local.path) == 2
     assert dvc.cache.local.exists("9ae73c65f418e6f79ceb4f0e4a4b98d5")
-    assert dvc.cache.local.exists(
-        "3bcf3b1be3e794a97a5a6b93a005784c"
-    )  # "modified, again"
+    assert dvc.cache.local.exists("3bcf3b1be3e794a97a5a6b93a005784c")  # "modified, again"
 
 
 def test_gc_not_in_remote(tmp_dir, scm, dvc, mocker, local_remote):

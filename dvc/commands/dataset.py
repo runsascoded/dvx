@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from dvc.cli import formatter
 from dvc.cli.command import CmdBase
@@ -42,7 +42,7 @@ class CmdDatasetAdd(CmdBase):
             if rev := dataset.lock.rev:
                 ver = rev
 
-        ver_part: Optional[Text] = None
+        ver_part: Text | None = None
         if ver:
             ver_part = ui.rich_text.assemble(" @ ", (ver, "repr.number"))
         text = ui.rich_text.assemble("(", (url, "repr.url"), ver_part or "", ")")
@@ -65,8 +65,7 @@ class CmdDatasetAdd(CmdBase):
             if not self.args.force and existing:
                 path = self.repo.fs.relpath(existing.manifest_path)
                 raise DvcException(
-                    f"{self.args.name} already exists in {path}, "
-                    "use the --force to overwrite"
+                    f"{self.args.name} already exists in {path}, use the --force to overwrite"
                 )
             dataset = self.repo.datasets.add(**d)
             self.display(self.args.name, dataset)
@@ -87,7 +86,7 @@ class CmdDatasetUpdate(CmdBase):
 
         assert new.lock
 
-        v: Optional[tuple[str, str]] = None
+        v: tuple[str, str] | None = None
         if dataset.type == "dc":
             assert new.type == "dc"
             if new.lock.version < dataset.lock.version:
@@ -195,8 +194,7 @@ remote://remote_name/path/to/file/or/dir (see `dvc remote`)
     )
     ds_add_parser.add_argument(
         "--path",
-        help="Path to a file or a directory within a git repository "
-        "(only applicable with --dvc)",
+        help="Path to a file or a directory within a git repository (only applicable with --dvc)",
     )
     ds_add_parser.add_argument(
         "-f",

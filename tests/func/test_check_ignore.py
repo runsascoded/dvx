@@ -6,9 +6,7 @@ from dvc.cli import main
 from dvc.ignore import DvcIgnore
 
 
-@pytest.mark.parametrize(
-    "file,ret,output", [("ignored", 0, True), ("not_ignored", 1, False)]
-)
+@pytest.mark.parametrize("file,ret,output", [("ignored", 0, True), ("not_ignored", 1, False)])
 def test_check_ignore(tmp_dir, dvc, file, ret, output, caplog, capsys):
     tmp_dir.gen(DvcIgnore.DVCIGNORE_FILE, "ignored")
 
@@ -128,9 +126,7 @@ def test_check_ignore_details_all(tmp_dir, dvc, capsys):
     assert f"{DvcIgnore.DVCIGNORE_FILE}:2:!foo\tfoo\n" in out
 
 
-@pytest.mark.parametrize(
-    "file,ret,output", [("ignored", 0, True), ("not_ignored", 1, False)]
-)
+@pytest.mark.parametrize("file,ret,output", [("ignored", 0, True), ("not_ignored", 1, False)])
 def test_check_ignore_stdin_mode(tmp_dir, dvc, file, ret, output, capsys, mocker):
     tmp_dir.gen(DvcIgnore.DVCIGNORE_FILE, "ignored")
     mocker.patch("builtins.input", side_effect=[file, ""])

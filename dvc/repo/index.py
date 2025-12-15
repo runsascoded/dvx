@@ -19,10 +19,6 @@ if TYPE_CHECKING:
     from pygtrie import Trie
     from typing_extensions import Self
 
-    from dvc_data.hashfile.db import HashFileDB
-    from dvc_data.hashfile.hash_info import HashInfo
-    from dvc_data.index import DataIndex, DataIndexKey, DataIndexView
-    from dvc_objects.fs.base import FileSystem
     from dvc.dependency import Dependency
     from dvc.fs.callbacks import Callback
     from dvc.output import Output
@@ -30,6 +26,10 @@ if TYPE_CHECKING:
     from dvc.repo.stage import StageInfo
     from dvc.stage import Stage
     from dvc.types import TargetType
+    from dvc_data.hashfile.db import HashFileDB
+    from dvc_data.hashfile.hash_info import HashInfo
+    from dvc_data.index import DataIndex, DataIndexKey, DataIndexView
+    from dvc_objects.fs.base import FileSystem
 
 
 logger = logger.getChild(__name__)
@@ -212,9 +212,9 @@ def _load_storage_from_import(storage_map, key, out):
 
 
 def _load_storage_from_out(storage_map, key, out):
-    from dvc_data.index import FileStorage, ObjectStorage
     from dvc.cachemgr import LEGACY_HASH_NAMES
     from dvc.config import NoRemoteError
+    from dvc_data.index import FileStorage, ObjectStorage
 
     if out.cache:
         storage_map.add_cache(ObjectStorage(key, out.cache))

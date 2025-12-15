@@ -1,14 +1,14 @@
 import os
-from typing import Any, Optional
+from typing import Any
 
 from dvc.repo import Repo
 
 
 def artifacts_show(
     name: str,
-    version: Optional[str] = None,
-    stage: Optional[str] = None,
-    repo: Optional[str] = None,
+    version: str | None = None,
+    stage: str | None = None,
+    repo: str | None = None,
 ) -> dict[str, str]:
     """
     Return path and Git revision for an artifact in a DVC project.

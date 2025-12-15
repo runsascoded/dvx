@@ -69,8 +69,8 @@ def get_url(
     Returns:
         str: URL to the file or directory.
     """
-    from dvc_data.index import StorageKeyError
     from dvc.config import NoRemoteError
+    from dvc_data.index import StorageKeyError
 
     with Repo.open(
         repo,

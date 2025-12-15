@@ -353,9 +353,7 @@ def test_partial_missing_cache(M, tmp_dir, dvc, scm):
     assert dvc.data_status(granular=True) == {
         **EMPTY_STATUS,
         "committed": {
-            "added": M.unordered(
-                join("dir", ""), join("dir", "foo"), join("dir", "bar")
-            )
+            "added": M.unordered(join("dir", ""), join("dir", "foo"), join("dir", "bar"))
         },
         "not_in_cache": [join("dir", "foo")],
         "git": M.dict(),
@@ -460,9 +458,7 @@ def test_missing_remote_cache(M, tmp_dir, dvc, scm, local_remote):
         "git": M.dict(),
     }
 
-    assert dvc.data_status(
-        granular=True, untracked_files="all", not_in_remote=True
-    ) == {
+    assert dvc.data_status(granular=True, untracked_files="all", not_in_remote=True) == {
         **EMPTY_STATUS,
         "untracked": M.unordered("foobar.dvc", "dir.dvc", ".gitignore"),
         "committed": {
@@ -492,12 +488,8 @@ def test_not_in_remote_respects_not_pushable(
     stages[0].outs[0].can_push = False
     stages[0].dump()
 
-    def assert_not_in_remote_is(
-        granular: bool, not_in_remote: list[str], committed: list[str]
-    ):
-        assert dvc.data_status(
-            granular=granular, remote_refresh=True, not_in_remote=True
-        ) == {
+    def assert_not_in_remote_is(granular: bool, not_in_remote: list[str], committed: list[str]):
+        assert dvc.data_status(granular=granular, remote_refresh=True, not_in_remote=True) == {
             **EMPTY_STATUS,
             "git": M.dict(),
             "not_in_remote": M.unordered(*not_in_remote),
@@ -543,9 +535,7 @@ def test_root_from_dir_to_file(M, tmp_dir, dvc, scm):
     assert dvc.data_status(granular=True) == {
         **EMPTY_STATUS,
         "committed": {
-            "added": M.unordered(
-                join("data", ""), join("data", "foo"), join("data", "bar")
-            )
+            "added": M.unordered(join("data", ""), join("data", "foo"), join("data", "bar"))
         },
         "uncommitted": {
             "deleted": M.unordered(join("data", "foo"), join("data", "bar")),
@@ -593,37 +583,27 @@ def test_empty_dir(tmp_dir, scm, dvc, M):
 
 
 def test_untracked_files_filter_targets(M, tmp_dir, scm, dvc):
-    tmp_dir.gen(
-        {"spam": "spam", "ham": "ham", "dir": {"eggs": "eggs", "bacon": "bacon"}}
-    )
+    tmp_dir.gen({"spam": "spam", "ham": "ham", "dir": {"eggs": "eggs", "bacon": "bacon"}})
     _default = EMPTY_STATUS | {"git": M.dict()}
     status = partial(dvc.data_status, untracked_files="all")
 
     assert status(["not-existing"]) == _default
 
     assert status(["spam"]) == _default | {"untracked": ["spam"]}
-    assert status(["spam", "ham"]) == _default | {
-        "untracked": M.unordered("spam", "ham")
-    }
+    assert status(["spam", "ham"]) == _default | {"untracked": M.unordered("spam", "ham")}
     assert status(["dir"]) == _default | {
         "untracked": M.unordered(join("dir", "eggs"), join("dir", "bacon")),
     }
     assert status([join("dir", "")]) == _default | {
         "untracked": M.unordered(join("dir", "eggs"), join("dir", "bacon")),
     }
-    assert status([join("dir", "bacon")]) == _default | {
-        "untracked": [join("dir", "bacon")]
-    }
+    assert status([join("dir", "bacon")]) == _default | {"untracked": [join("dir", "bacon")]}
 
 
 def param(*values):
     """Uses test id from the first value."""
     first = values[0]
-    _id = (
-        ",".join(first)
-        if isinstance(first, Iterable) and not isinstance(first, str)
-        else first
-    )
+    _id = ",".join(first) if isinstance(first, Iterable) and not isinstance(first, str) else first
     return pytest.param(*values, id=_id)
 
 
@@ -655,9 +635,9 @@ def test_filter_targets_files_after_dvc_commit(M, tmp_dir, dvc, scm, targets, ex
     (tmp_dir / "foo").unlink()  # deleted
     tmp_dir.gen({"bar": "bar modified", "baz": "baz new"})
 
-    assert dvc.data_status(
-        targets=targets, untracked_files="all"
-    ) == EMPTY_STATUS | expected | {"git": M.dict()}
+    assert dvc.data_status(targets=targets, untracked_files="all") == EMPTY_STATUS | expected | {
+        "git": M.dict()
+    }
     assert dvc.data_status(
         targets=targets, granular=True, untracked_files="all"
     ) == EMPTY_STATUS | expected | {"git": M.dict()}
@@ -684,9 +664,9 @@ def test_filter_targets_after_git_commit(M, tmp_dir, dvc, scm, targets, expected
     )
     (tmp_dir / "foo").unlink()  # deleted
 
-    assert dvc.data_status(
-        targets=targets, untracked_files="all"
-    ) == EMPTY_STATUS | expected | {"git": M.dict()}
+    assert dvc.data_status(targets=targets, untracked_files="all") == EMPTY_STATUS | expected | {
+        "git": M.dict()
+    }
     assert dvc.data_status(
         targets=targets, granular=True, untracked_files="all"
     ) == EMPTY_STATUS | expected | {"git": M.dict()}
@@ -778,9 +758,7 @@ def with_aliases(values, aliases):
                 (join("dir", "foo"), join("dir", "foobar")),
                 {},
                 {
-                    "committed": {
-                        "added": m.unordered(join("dir", "foo"), join("dir", "foobar"))
-                    },
+                    "committed": {"added": m.unordered(join("dir", "foo"), join("dir", "foobar"))},
                     "uncommitted": {"deleted": [join("dir", "foo")]},
                 },
             ),
@@ -801,9 +779,9 @@ def test_filter_targets_inside_directory_after_dvc_commit(
     (tmp_dir / "dir" / "sub" / "bar").write_text("bar modified")
     (tmp_dir / "dir" / "baz").write_text("baz new")
 
-    assert dvc.data_status(
-        targets=targets, untracked_files="all"
-    ) == EMPTY_STATUS | expected_ng | {"git": M.dict()}
+    assert dvc.data_status(targets=targets, untracked_files="all") == EMPTY_STATUS | expected_ng | {
+        "git": M.dict()
+    }
     assert dvc.data_status(
         targets=targets, granular=True, untracked_files="all"
     ) == EMPTY_STATUS | expected_g | {"git": M.dict()}
@@ -827,9 +805,7 @@ def test_filter_targets_inside_directory_after_dvc_commit(
                     "unchanged": [join("dir", "foobar")],
                     "committed": {
                         "added": [join("dir", "baz")],
-                        "modified": m.unordered(
-                            join("dir", ""), join("dir", "sub", "bar")
-                        ),
+                        "modified": m.unordered(join("dir", ""), join("dir", "sub", "bar")),
                         "deleted": [join("dir", "foo")],
                     },
                 },
@@ -872,9 +848,9 @@ def test_filter_targets_inside_directory_after_git_commit(
     (tmp_dir / "dir" / "baz").write_text("baz new")
     dvc.add(["dir"])
 
-    assert dvc.data_status(
-        targets=targets, untracked_files="all"
-    ) == EMPTY_STATUS | expected_ng | {"git": M.dict()}
+    assert dvc.data_status(targets=targets, untracked_files="all") == EMPTY_STATUS | expected_ng | {
+        "git": M.dict()
+    }
     assert dvc.data_status(
         targets=targets, granular=True, untracked_files="all"
     ) == EMPTY_STATUS | expected_g | {"git": M.dict()}
@@ -886,9 +862,7 @@ def test_filter_targets_inside_directory_after_git_commit(
     [
         param(("foo",), ["foo"], ["foo"]),
         param(("dir",), [join("dir", "")], [join("dir", ""), join("dir", "bar")]),
-        param(
-            (join("dir", ""),), [join("dir", "")], [join("dir", ""), join("dir", "bar")]
-        ),
+        param((join("dir", ""),), [join("dir", "")], [join("dir", ""), join("dir", "bar")]),
         param((join("dir", "bar"),), [], [join("dir", "bar")]),
         param(
             (join("dir", "bar"), "foo"),
@@ -919,9 +893,7 @@ def test_filter_targets_not_in_cache(
     not_in_remote = to_check == "remote"
     key = "not_in_" + to_check
     d = EMPTY_STATUS | {"git": M.dict(), "committed": M.dict()}
-    assert dvc.data_status(targets, not_in_remote=not_in_remote) == d | {
-        key: non_granular
-    }
+    assert dvc.data_status(targets, not_in_remote=not_in_remote) == d | {key: non_granular}
     assert dvc.data_status(targets, granular=True, not_in_remote=not_in_remote) == d | {
         key: granular
     }
@@ -978,9 +950,7 @@ def test_missing_cache_remote_check(M, tmp_dir, dvc, scm, local_remote):
         "not_in_remote": M.unordered("foobar", join("dir", "")),
     }
 
-    assert dvc.data_status(
-        granular=True, untracked_files="all", not_in_remote=True
-    ) == {
+    assert dvc.data_status(granular=True, untracked_files="all", not_in_remote=True) == {
         **EMPTY_STATUS,
         "untracked": M.unordered("foobar.dvc", "dir.dvc", ".gitignore"),
         "committed": {"added": M.unordered("foobar", join("dir", ""))},
@@ -998,9 +968,7 @@ def test_missing_cache_remote_check(M, tmp_dir, dvc, scm, local_remote):
         "not_in_remote": [join("dir", "")],
     }
 
-    assert dvc.data_status(
-        ["dir"], untracked_files="all", not_in_remote=True, granular=True
-    ) == {
+    assert dvc.data_status(["dir"], untracked_files="all", not_in_remote=True, granular=True) == {
         **EMPTY_STATUS,
         "committed": {"added": [join("dir", "")]},
         "uncommitted": {"unknown": M.unordered(join("dir", "foo"), join("dir", "bar"))},
@@ -1035,9 +1003,7 @@ def test_missing_cache_remote_check(M, tmp_dir, dvc, scm, local_remote):
                 },
                 "uncommitted": {
                     "modified": [join("dir2", "")],
-                    "renamed": [
-                        {"old": join("dir2", "foo"), "new": join("dir2", "foobar")}
-                    ],
+                    "renamed": [{"old": join("dir2", "foo"), "new": join("dir2", "foobar")}],
                 },
             },
         ),
@@ -1046,9 +1012,7 @@ def test_missing_cache_remote_check(M, tmp_dir, dvc, scm, local_remote):
             {"committed": {"deleted": [join("dir", "")]}},
             {
                 "committed": {
-                    "deleted": m.unordered(
-                        join("dir", ""), join("dir", "bar"), join("dir", "foo")
-                    )
+                    "deleted": m.unordered(join("dir", ""), join("dir", "bar"), join("dir", "foo"))
                 }
             },
         ),
@@ -1068,21 +1032,13 @@ def test_missing_cache_remote_check(M, tmp_dir, dvc, scm, local_remote):
                 },
                 "uncommitted": {
                     "modified": [join("dir2", "")],
-                    "renamed": [
-                        {"old": join("dir2", "foo"), "new": join("dir2", "foobar")}
-                    ],
+                    "renamed": [{"old": join("dir2", "foo"), "new": join("dir2", "foobar")}],
                 },
             },
         ),
-        param(
-            [join("dir", "bar")], {}, {"committed": {"deleted": [join("dir", "bar")]}}
-        ),
-        param(
-            [join("dir", "foo")], {}, {"committed": {"deleted": [join("dir", "foo")]}}
-        ),
-        param(
-            [join("dir2", "bar")], {}, {"committed": {"added": [join("dir2", "bar")]}}
-        ),
+        param([join("dir", "bar")], {}, {"committed": {"deleted": [join("dir", "bar")]}}),
+        param([join("dir", "foo")], {}, {"committed": {"deleted": [join("dir", "foo")]}}),
+        param([join("dir2", "bar")], {}, {"committed": {"added": [join("dir2", "bar")]}}),
         param(
             [join("dir2", "foobar")],
             {},
@@ -1116,9 +1072,7 @@ def test_missing_cache_remote_check(M, tmp_dir, dvc, scm, local_remote):
                 },
                 "uncommitted": {
                     "modified": [join("dir2", "")],
-                    "renamed": [
-                        {"old": join("dir2", "foo"), "new": join("dir2", "foobar")}
-                    ],
+                    "renamed": [{"old": join("dir2", "foo"), "new": join("dir2", "foobar")}],
                 },
             },
         ),
@@ -1141,9 +1095,7 @@ def test_missing_cache_remote_check(M, tmp_dir, dvc, scm, local_remote):
             {
                 "committed": {"added": [join("dir2", "foo")]},
                 "uncommitted": {
-                    "renamed": [
-                        {"old": join("dir2", "foo"), "new": join("dir2", "foobar")}
-                    ],
+                    "renamed": [{"old": join("dir2", "foo"), "new": join("dir2", "foobar")}],
                 },
             },
         ),
@@ -1164,9 +1116,7 @@ def test_missing_cache_remote_check(M, tmp_dir, dvc, scm, local_remote):
                 },
                 "uncommitted": {
                     "modified": [join("dir2", "")],
-                    "renamed": [
-                        {"old": join("dir2", "foo"), "new": join("dir2", "foobar")}
-                    ],
+                    "renamed": [{"old": join("dir2", "foo"), "new": join("dir2", "foobar")}],
                 },
             },
         ),
@@ -1185,17 +1135,13 @@ def test_missing_cache_remote_check(M, tmp_dir, dvc, scm, local_remote):
                 },
                 "uncommitted": {
                     "modified": [join("dir2", "")],
-                    "renamed": [
-                        {"old": join("dir2", "foo"), "new": join("dir2", "foobar")}
-                    ],
+                    "renamed": [{"old": join("dir2", "foo"), "new": join("dir2", "foobar")}],
                 },
             },
         ),
     ],
 )
-def test_renames(
-    M, tmp_dir, scm, dvc, targets, expected_non_granular, expected_granular
-):
+def test_renames(M, tmp_dir, scm, dvc, targets, expected_non_granular, expected_granular):
     tmp_dir.dvc_gen(
         {"dir": {"foo": "foo", "bar": "bar"}, "file": "file"}, commit="add dir and file"
     )
@@ -1213,9 +1159,7 @@ def test_renames(
     )
 
 
-def test_shallow_should_iterate_upto_tracked_directory(
-    M, tmp_dir, dvc, scm, local_remote
-):
+def test_shallow_should_iterate_upto_tracked_directory(M, tmp_dir, dvc, scm, local_remote):
     """Testing regression for https://github.com/treeverse/dvc/issues/10899."""
 
     tmp_dir.scm_gen({"dir": {".gitkeep": ""}}, commit="mk dir")

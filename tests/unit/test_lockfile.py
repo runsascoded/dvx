@@ -85,9 +85,7 @@ def test_load_when_lockfile_is_corrupted(tmp_dir, dvc, corrupt_data):
 
 @pytest.mark.parametrize("dvcignored", [True, False])
 @pytest.mark.parametrize("file_exists", [True, False])
-def test_try_loading_lockfile_that_is_gitignored(
-    tmp_dir, dvc, scm, dvcignored, file_exists
-):
+def test_try_loading_lockfile_that_is_gitignored(tmp_dir, dvc, scm, dvcignored, file_exists):
     # it should raise error if the file is git-ignored, even if:
     #   1. The file does not exist at all.
     #   2. Or, is dvc-ignored.

@@ -51,9 +51,7 @@ def test_dvc(tmp_dir, scm, dvc: "Repo"):
     dataset = datasets.add("mydataset", tmp_dir.fs_path, "dvc", path="file")
     expected = DVCDataset(
         manifest_path=(tmp_dir / "dvc.yaml").fs_path,
-        spec=DVCDatasetSpec(
-            name="mydataset", url=tmp_dir.fs_path, type="dvc", path="file"
-        ),
+        spec=DVCDatasetSpec(name="mydataset", url=tmp_dir.fs_path, type="dvc", path="file"),
         lock=DVCDatasetLock(
             name="mydataset",
             url=tmp_dir.fs_path,
@@ -371,9 +369,7 @@ def test_pipeline_when_not_in_sync(tmp_dir, dvc):
     dvc.datasets._dump_lock(manifest_path, lock)
 
     dvc.stage.add(name="train", cmd="echo", deps=["ds://mydataset"])
-    assert dvc.status() == {
-        "train": [{"changed deps": {"ds://mydataset": "not in sync"}}]
-    }
+    assert dvc.status() == {"train": [{"changed deps": {"ds://mydataset": "not in sync"}}]}
     with pytest.raises(ReproductionError) as exc:
         dvc.reproduce()
     assert "not in sync" in str(exc.value.__cause__)
@@ -389,9 +385,7 @@ def test_collect(tmp_dir, dvc):
 
     (tmp_dir / "sub").mkdir()
     manifest_path2 = os.path.join(tmp_dir, "sub", "dvc.yaml")
-    spec = DVCDatasetSpec(
-        name="mydataset2", url=tmp_dir.fs_path, type="dvc", path="path"
-    )
+    spec = DVCDatasetSpec(name="mydataset2", url=tmp_dir.fs_path, type="dvc", path="path")
     lock = DVCDatasetLock(rev_lock="0" * 40, **spec.to_dict())
     mydataset2 = DVCDataset(manifest_path=manifest_path2, spec=spec, lock=lock)
     dvc.datasets.dump(mydataset2)

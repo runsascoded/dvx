@@ -2,9 +2,9 @@ import os
 
 import pytest
 
+from dvc.fs import localfs
 from dvc_objects.fs import generic
 from dvc_objects.fs.utils import tmp_fname
-from dvc.fs import localfs
 
 
 def _skip_unsupported_link(src, dest, link_type):

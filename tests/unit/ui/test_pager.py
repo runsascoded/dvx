@@ -18,9 +18,7 @@ def test_find_pager_when_not_isatty(mocker):
     assert find_pager() is None
 
 
-def test_find_pager_uses_custom_pager_when_dvc_pager_env_var_is_defined(
-    mocker, monkeypatch
-):
+def test_find_pager_uses_custom_pager_when_dvc_pager_env_var_is_defined(mocker, monkeypatch):
     monkeypatch.setenv(DVC_PAGER, "my-pager")
     mocker.patch("sys.stdout.isatty", return_value=True)
 
@@ -56,8 +54,7 @@ def test_dvc_sets_default_options_on_less_without_less_env(mocker, monkeypatch, 
     mocker.patch("os.system", return_value=0)
 
     assert (
-        find_pager()
-        == "less --quit-if-one-screen --RAW-CONTROL-CHARS --chop-long-lines --no-init"
+        find_pager() == "less --quit-if-one-screen --RAW-CONTROL-CHARS --chop-long-lines --no-init"
     )
 
 

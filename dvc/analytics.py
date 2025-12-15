@@ -53,9 +53,7 @@ def is_enabled():
 
     enabled = not os.getenv(DVC_NO_ANALYTICS)
     if enabled:
-        enabled = to_bool(
-            Config.from_cwd(validate=False).get("core", {}).get("analytics", "true")
-        )
+        enabled = to_bool(Config.from_cwd(validate=False).get("core", {}).get("analytics", "true"))
 
     logger.debug("Analytics is %sabled.", "en" if enabled else "dis")
 
@@ -94,7 +92,7 @@ def send(path):
     os.remove(path)
 
 
-def _git_remote_url(scm: Optional["Base"]) -> Optional[str]:
+def _git_remote_url(scm: Optional["Base"]) -> str | None:
     from dvc.scm import Git
 
     if not isinstance(scm, Git):
@@ -114,7 +112,7 @@ def _git_remote_url(scm: Optional["Base"]) -> Optional[str]:
     return url
 
 
-def _scm_in_use(scm: Optional["Base"]) -> Optional[str]:
+def _scm_in_use(scm: Optional["Base"]) -> str | None:
     return type(scm).__name__ if scm else None
 
 
@@ -138,7 +136,7 @@ def _parse_git_remote_path(remote_url: str) -> str:
     return remote_url
 
 
-def _git_remote_path_hash(scm: Optional["Base"]) -> Optional[str]:
+def _git_remote_path_hash(scm: Optional["Base"]) -> str | None:
     """Return a hash of the git remote path."""
     import hashlib
 

@@ -54,9 +54,7 @@ While parsing a block collection, in line 5, column 7
 
 {}, in line 7, column 7
   7 │     metrics:""".format(
-    "Did not find expected '-' indicator"
-    if ruamel_clib
-    else "Expected <block end>, but found '?'"
+    "Did not find expected '-' indicator" if ruamel_clib else "Expected <block end>, but found '?'"
 )
 
 
@@ -335,9 +333,7 @@ def fixed_width_term(mocker):
 
 
 @pytest.mark.parametrize("text, expected", examples.values(), ids=examples.keys())
-def test_exceptions(
-    tmp_dir, dvc, capsys, force_posixpath, fixed_width_term, text, expected
-):
+def test_exceptions(tmp_dir, dvc, capsys, force_posixpath, fixed_width_term, text, expected):
     tmp_dir.gen("dvc.yaml", text)
 
     capsys.readouterr()  # clear outputs
@@ -359,9 +355,7 @@ def test_exceptions(
         (MISSING_CMD, "'./dvc.yaml' validation failed in revision '{short_rev}'."),
     ],
 )
-def test_on_revision(
-    tmp_dir, scm, dvc, force_posixpath, fixed_width_term, capsys, text, expected
-):
+def test_on_revision(tmp_dir, scm, dvc, force_posixpath, fixed_width_term, capsys, text, expected):
     tmp_dir.scm_gen("dvc.yaml", text, commit="add dvc.yaml")
     capsys.readouterr()  # clear outputs
 
@@ -393,9 +387,7 @@ def test_make_relpath(tmp_dir, dvc, scm, monkeypatch):
 def test_fallback_exception_message(tmp_dir, dvc, mocker, caplog):
     # When trying to pretty print exception messages, we fallback to old way
     # of printing things.
-    mocker.patch(
-        "dvc.utils.strictyaml.YAMLSyntaxError.__pretty_exc__", side_effect=ValueError
-    )
+    mocker.patch("dvc.utils.strictyaml.YAMLSyntaxError.__pretty_exc__", side_effect=ValueError)
     mocker.patch(
         "dvc.utils.strictyaml.YAMLValidationError.__pretty_exc__",
         side_effect=ValueError,

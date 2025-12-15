@@ -32,14 +32,14 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from dvc_data.hashfile.db import HashFileDB
-    from dvc_data.hashfile.hash_info import HashInfo
-    from dvc_objects.db import ObjectDB
     from dvc.dependency import Dependency, ParamsDependency
     from dvc.dvcfile import ProjectFile, SingleStageFile
     from dvc.output import Output
     from dvc.repo import Repo
     from dvc.types import StrPath
+    from dvc_data.hashfile.db import HashFileDB
+    from dvc_data.hashfile.hash_info import HashInfo
+    from dvc_objects.db import ObjectDB
 
 logger = logger.getChild(__name__)
 # Disallow all punctuation characters except hyphen and underscore

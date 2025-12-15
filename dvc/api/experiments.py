@@ -1,5 +1,3 @@
-from typing import Optional, Union
-
 from rich.text import Text
 
 from dvc.repo import Repo
@@ -7,9 +5,9 @@ from dvc.repo.experiments.show import tabulate
 
 
 def exp_save(
-    name: Optional[str] = None,
+    name: str | None = None,
     force: bool = False,
-    include_untracked: Optional[list[str]] = None,
+    include_untracked: list[str] | None = None,
 ):
     """
     Create a new DVC experiment using `exp save`.
@@ -38,9 +36,7 @@ def exp_save(
         https://git-scm.com/docs/revisions
     """
     with Repo() as repo:
-        return repo.experiments.save(
-            name=name, force=force, include_untracked=include_untracked
-        )
+        return repo.experiments.save(name=name, force=force, include_untracked=include_untracked)
 
 
 def _postprocess(exp_rows):
@@ -60,12 +56,12 @@ def _postprocess(exp_rows):
 
 
 def exp_show(
-    repo: Optional[str] = None,
-    revs: Optional[Union[str, list[str]]] = None,
+    repo: str | None = None,
+    revs: str | list[str] | None = None,
     num: int = 1,
     param_deps: bool = False,
     force: bool = False,
-    config: Optional[dict] = None,
+    config: dict | None = None,
 ) -> list[dict]:
     """Get DVC experiments tracked in `repo`.
 

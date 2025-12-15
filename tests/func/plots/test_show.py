@@ -134,9 +134,7 @@ def test_plots_show_non_existing(tmp_dir, dvc, capsys):
     )
 
     cap = capsys.readouterr()
-    assert (
-        "DVC failed to load some plots for following revisions: 'workspace'" in cap.err
-    )
+    assert "DVC failed to load some plots for following revisions: 'workspace'" in cap.err
 
 
 @pytest.mark.parametrize("clear_before_run", [True, False])
@@ -176,9 +174,7 @@ def test_plots_show_nested_x_dict(tmp_dir, dvc, scm):
     rel_pipeline_dir = "pipelines/data-increment"
 
     pipeline_rel_dvclive_metrics_dir = "dvclive/plots/metrics"
-    dvc_rel_dvclive_metrics_dir = (
-        f"{rel_pipeline_dir}/{pipeline_rel_dvclive_metrics_dir}"
-    )
+    dvc_rel_dvclive_metrics_dir = f"{rel_pipeline_dir}/{pipeline_rel_dvclive_metrics_dir}"
 
     pipeline_dir = tmp_dir / rel_pipeline_dir
     dvclive_metrics_dir = pipeline_dir / pipeline_rel_dvclive_metrics_dir
@@ -194,11 +190,7 @@ def test_plots_show_nested_x_dict(tmp_dir, dvc, scm):
     (pipeline_dir / "dvc.yaml").dump(
         {
             "plots": [
-                {
-                    "Error vs max_leaf_nodes": _get_plot_defn(
-                        pipeline_rel_dvclive_metrics_dir
-                    )
-                },
+                {"Error vs max_leaf_nodes": _get_plot_defn(pipeline_rel_dvclive_metrics_dir)},
             ]
         },
     )
@@ -219,9 +211,7 @@ def test_plots_show_nested_x_dict(tmp_dir, dvc, scm):
                 "data": {
                     f"{rel_pipeline_dir}/dvc.yaml": {
                         "data": {
-                            "Error vs max_leaf_nodes": _get_plot_defn(
-                                dvc_rel_dvclive_metrics_dir
-                            )
+                            "Error vs max_leaf_nodes": _get_plot_defn(dvc_rel_dvclive_metrics_dir)
                         },
                     }
                 }
@@ -262,10 +252,7 @@ def test_dir_plots(tmp_dir, dvc, run_copy_metrics):
     p1 = "subdir/p1.json"
     p2 = "subdir/p2.json"
     tmp_dir.dvc.run(
-        cmd=(
-            f"mkdir subdir && python copy.py {fname} {p1} && "
-            f"python copy.py {fname} {p2}"
-        ),
+        cmd=(f"mkdir subdir && python copy.py {fname} {p1} && python copy.py {fname} {p2}"),
         deps=[fname],
         single_stage=False,
         plots=["subdir"],
@@ -287,9 +274,7 @@ def test_ignore_parsing_error(tmp_dir, dvc, run_copy_metrics):
     with open("file", "wb", encoding=None) as fobj:
         fobj.write(b"\xc1")
 
-    run_copy_metrics(
-        "file", "plot_file.json", plots=["plot_file.json"], name="copy-metric"
-    )
+    run_copy_metrics("file", "plot_file.json", plots=["plot_file.json"], name="copy-metric")
     result = dvc.plots.show(onerror=onerror_collect)
 
     assert isinstance(
@@ -327,9 +312,7 @@ def test_log_errors(tmp_dir, scm, dvc, run_copy_metrics, file, path_kwargs, caps
     _, error = capsys.readouterr()
 
     assert isinstance(get_plot(result, **path_kwargs), YAMLFileCorruptedError)
-    assert (
-        "DVC failed to load some plots for following revisions: 'workspace'." in error
-    )
+    assert "DVC failed to load some plots for following revisions: 'workspace'." in error
 
 
 @pytest.mark.parametrize("ext", ["jpg", "svg"])
@@ -378,10 +361,7 @@ def test_collect_non_existing_dir(tmp_dir, dvc, run_copy_metrics):
     p1 = os.path.join("subdir", "p1.json")
     p2 = os.path.join("subdir", "p2.json")
     subdir_stage = tmp_dir.dvc.run(
-        cmd=(
-            f"mkdir subdir && python copy.py {sname} {p1} && "
-            f"python copy.py {sname} {p2}"
-        ),
+        cmd=(f"mkdir subdir && python copy.py {sname} {p1} && python copy.py {sname} {p2}"),
         deps=[sname],
         plots=["subdir"],
         name="copy_double",
@@ -455,9 +435,7 @@ def test_top_level_plots(tmp_dir, dvc, plot_config, expected_datafiles):
 
     result = dvc.plots.show()
 
-    assert plot_config == get_plot(
-        result, "workspace", typ="definitions", file=config_file
-    )
+    assert plot_config == get_plot(result, "workspace", typ="definitions", file=config_file)
 
     for filename, content in data.items():
         if filename in expected_datafiles:
@@ -529,12 +507,8 @@ def test_show_plots_defined_with_native_os_path(tmp_dir, dvc, scm, capsys):
         ),
     ],
 )
-def test_top_level_parametrized(
-    tmp_dir, dvc, plot_config, expanded_config, expected_datafiles
-):
-    (tmp_dir / "params.yaml").dump(
-        {"data1": "data1.json", "a": "a", "b": "b", "c": "c"}
-    )
+def test_top_level_parametrized(tmp_dir, dvc, plot_config, expanded_config, expected_datafiles):
+    (tmp_dir / "params.yaml").dump({"data1": "data1.json", "a": "a", "b": "b", "c": "c"})
     data = {
         "data1.json": [
             {"a": 1, "b": 0.1, "c": 0.01},
@@ -558,9 +532,7 @@ def test_top_level_parametrized(
 
     result = dvc.plots.show()
 
-    assert expanded_config == get_plot(
-        result, "workspace", typ="definitions", file=config_file
-    )
+    assert expanded_config == get_plot(result, "workspace", typ="definitions", file=config_file)
 
     for filename, content in data.items():
         if filename in expected_datafiles:

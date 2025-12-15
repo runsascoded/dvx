@@ -40,18 +40,13 @@ def test_get_url_from_remote(tmp_dir, erepo_dir, cloud, local_cloud):
 
     # Using file url to force clone to tmp repo
     repo_url = f"file://{erepo_dir.as_posix()}"
-    expected_rel_path = os.path.join(
-        "files", "md5", "ac/bd18db4cc2f85cedef654fccc4a4d8"
-    )
+    expected_rel_path = os.path.join("files", "md5", "ac/bd18db4cc2f85cedef654fccc4a4d8")
 
     # Test default remote
     assert api.get_url("foo", repo=repo_url) == (local_cloud / expected_rel_path).url
 
     # Test remote arg
-    assert (
-        api.get_url("foo", repo=repo_url, remote="other")
-        == (cloud / expected_rel_path).url
-    )
+    assert api.get_url("foo", repo=repo_url, remote="other") == (cloud / expected_rel_path).url
 
     # Test config arg
     assert (
@@ -80,10 +75,7 @@ def test_get_url_ignore_scm(tmp_dir, dvc, cloud, scm):
     (tmp_dir / ".git").rename(tmp_dir / "gitless_environment")
 
     assert api.get_url("foo", repo=repo_posix) == expected_url
-    assert (
-        api.get_url("foo", repo=repo_posix, config={"core": {"no_scm": True}})
-        == expected_url
-    )
+    assert api.get_url("foo", repo=repo_posix, config={"core": {"no_scm": True}}) == expected_url
 
     # Addressing repos with `file://` triggers git, so it fails in a gitless environment
     repo_url = f"file://{repo_posix}"
@@ -216,37 +208,24 @@ def test_read_with_subrepos(tmp_dir, scm, local_cloud, local_repo):
 
     assert api.read("foo.txt", repo=repo_path) == "foo.txt"
     assert api.read(os.path.join(subrepo_path, "lorem"), repo=repo_path) == "lorem"
-    assert (
-        api.read(os.path.join(subrepo_path, "dvc-file"), repo=repo_path) == "dvc-file"
-    )
-    assert (
-        api.read(os.path.join(subrepo_path, "dir", "file.txt"), repo=repo_path)
-        == "file.txt"
-    )
+    assert api.read(os.path.join(subrepo_path, "dvc-file"), repo=repo_path) == "dvc-file"
+    assert api.read(os.path.join(subrepo_path, "dir", "file.txt"), repo=repo_path) == "file.txt"
 
 
 def test_get_url_granular(tmp_dir, dvc, cloud):
     tmp_dir.add_remote(config=cloud.config)
     tmp_dir.dvc_gen({"dir": {"foo": "foo", "bar": "bar", "nested": {"file": "file"}}})
 
-    expected_url = (
-        cloud / "files" / "md5" / "5f" / "c28ea78987408341668eba6525ebd1.dir"
-    ).url
+    expected_url = (cloud / "files" / "md5" / "5f" / "c28ea78987408341668eba6525ebd1.dir").url
     assert api.get_url("dir") == expected_url
 
-    expected_url = (
-        cloud / "files" / "md5" / "ac" / "bd18db4cc2f85cedef654fccc4a4d8"
-    ).url
+    expected_url = (cloud / "files" / "md5" / "ac" / "bd18db4cc2f85cedef654fccc4a4d8").url
     assert api.get_url("dir/foo") == expected_url
 
-    expected_url = (
-        cloud / "files" / "md5" / "37" / "b51d194a7513e45b56f6524f2d51f2"
-    ).url
+    expected_url = (cloud / "files" / "md5" / "37" / "b51d194a7513e45b56f6524f2d51f2").url
     assert api.get_url("dir/bar") == expected_url
 
-    expected_url = (
-        cloud / "files" / "md5" / "8c" / "7dd922ad47494fc02c388e12c00eac"
-    ).url
+    expected_url = (cloud / "files" / "md5" / "8c" / "7dd922ad47494fc02c388e12c00eac").url
     assert api.get_url(os.path.join("dir", "nested", "file")) == expected_url
 
 

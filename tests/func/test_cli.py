@@ -48,9 +48,7 @@ def test_repro(dvc):
     target1 = "1"
     target2 = "2"
 
-    args = parse_args(
-        ["repro", target1, target2, "-f", "--force", "-s", "--single-item"]
-    )
+    args = parse_args(["repro", target1, target2, "-f", "--force", "-s", "--single-item"])
 
     cmd = args.func(args)
     assert isinstance(cmd, CmdRepro)

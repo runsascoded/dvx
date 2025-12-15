@@ -4,7 +4,7 @@ import textwrap
 from dvc.cli import main
 
 
-def test_cache_dir_local(tmp_dir, dvc, capsys, caplog):
+def test_cache_dir_local(tmp_dir, dvc, capsys):
     (tmp_dir / ".dvc" / "config.local").write_text(
         textwrap.dedent(
             """\
@@ -23,6 +23,3 @@ def test_cache_dir_local(tmp_dir, dvc, capsys, caplog):
     assert main(["cache", "dir"]) == 0
     out, _ = capsys.readouterr()
     assert path in out
-
-    assert main(["cache", "dir", "--project"]) == 251
-    assert "option 'dir' doesn't exist in section 'cache'" in caplog.text

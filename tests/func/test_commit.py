@@ -358,9 +358,7 @@ def test_commit_multiple_files(tmp_dir, dvc, mocker):
     )
     projectfile_spy.assert_has_calls(
         [
-            mocker.call(
-                test1_stage.dvcfile, [test1_stage, test2_stage], update_pipeline=False
-            ),
+            mocker.call(test1_stage.dvcfile, [test1_stage, test2_stage], update_pipeline=False),
             mocker.call(test3_stage.dvcfile, [test3_stage], update_pipeline=False),
         ],
         any_order=True,

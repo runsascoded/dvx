@@ -1,9 +1,9 @@
 import os
 from typing import TYPE_CHECKING
 
+from dvc.fs import GitFileSystem, Schemes
 from dvc_data.hashfile.db import get_odb
 from dvc_data.hashfile.hash import DEFAULT_ALGORITHM
-from dvc.fs import GitFileSystem, Schemes
 
 if TYPE_CHECKING:
     from dvc.repo import Repo
@@ -130,9 +130,9 @@ def migrate_2_to_3(repo: "Repo", dry: bool = False):
     Legacy 'md5-dos2unix' objects will be re-hashed with 'md5', added to 3.x cache,
     and then a link from the legacy 2.x location to the 3.x location will be created.
     """
-    from dvc_data.hashfile.db.migrate import migrate, prepare
     from dvc.fs.callbacks import TqdmCallback
     from dvc.ui import ui
+    from dvc_data.hashfile.db.migrate import migrate, prepare
 
     src = repo.cache.legacy
     dest = repo.cache.local

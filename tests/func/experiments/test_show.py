@@ -119,9 +119,7 @@ def test_show_experiment(tmp_dir, scm, dvc, exp_stage, workspace):
     )
 
     exp_rev = first(
-        dvc.experiments.run(
-            exp_stage.addressing, params=["foo=2"], tmp_dir=not workspace
-        )
+        dvc.experiments.run(exp_stage.addressing, params=["foo=2"], tmp_dir=not workspace)
     )
     results = dvc.experiments.show()
     assert results[1].dumpd() == {
@@ -151,9 +149,7 @@ def test_show_experiment(tmp_dir, scm, dvc, exp_stage, workspace):
 def test_show_queued(tmp_dir, scm, dvc, exp_stage):
     baseline_rev = scm.get_rev()
 
-    dvc.experiments.run(
-        exp_stage.addressing, params=["foo=2"], queue=True, name="test_name"
-    )
+    dvc.experiments.run(exp_stage.addressing, params=["foo=2"], queue=True, name="test_name")
     exp_rev = dvc.experiments.scm.resolve_rev(f"{CELERY_STASH}@{{0}}")
 
     results = dvc.experiments.show()
@@ -354,9 +350,7 @@ def test_show_sort_metric_sep(tmp_dir, scm, dvc, caplog):
     dvcyaml_path = tmp_dir / "dvc.yaml"
     dvcyaml_path.write_text("metrics: ['metrics:1.json', 'metrics:2.json']")
     dvc.experiments.save()
-    assert (
-        main(["exp", "show", "--no-pager", "--sort-by=metrics:1.json:my::metric"]) == 0
-    )
+    assert main(["exp", "show", "--no-pager", "--sort-by=metrics:1.json:my::metric"]) == 0
     assert main(["exp", "show", "--no-pager", "--sort-by=:other_metric"]) == 0
 
 
@@ -369,9 +363,7 @@ def test_show_sort_metric_sep(tmp_dir, scm, dvc, caplog):
         (TaskStatus.FAILED, False),
     ],
 )
-def test_show_running(
-    tmp_dir, scm, dvc, exp_stage, capsys, caplog, status, pid_exists, mocker
-):
+def test_show_running(tmp_dir, scm, dvc, exp_stage, capsys, caplog, status, pid_exists, mocker):
     from dvc.rwlock import RWLOCK_FILE
     from dvc_task.proc.process import ProcessInfo
 
@@ -694,9 +686,7 @@ def test_show_sorted_deps(tmp_dir, dvc, scm, capsys):
 
 @pytest.mark.vscode
 def test_show_queued_error(tmp_dir, scm, dvc, exp_stage, mocker):
-    dvc.experiments.run(
-        exp_stage.addressing, params=["foo=2"], queue=True, name="test_name"
-    )
+    dvc.experiments.run(exp_stage.addressing, params=["foo=2"], queue=True, name="test_name")
     exp_rev_2 = dvc.experiments.scm.resolve_rev(f"{CELERY_STASH}@{{0}}")
     commit_2 = scm.resolve_commit(exp_rev_2)
 

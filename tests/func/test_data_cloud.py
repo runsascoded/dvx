@@ -51,9 +51,7 @@ def test_cloud_cli(tmp_dir, dvc, capsys, remote, mocker):  # noqa: PLR0915
     assert os.path.isfile(cache)
     assert os.path.isfile(cache_dir)
     assert oids_exist.called
-    assert all(
-        _kwargs["jobs"] == jobs for (_args, _kwargs) in oids_exist.call_args_list
-    )
+    assert all(_kwargs["jobs"] == jobs for (_args, _kwargs) in oids_exist.call_args_list)
 
     dvc.cache.local.clear()
     oids_exist.reset_mock()
@@ -64,9 +62,7 @@ def test_cloud_cli(tmp_dir, dvc, capsys, remote, mocker):  # noqa: PLR0915
     assert os.path.isfile(cache)
     assert os.path.isfile(cache_dir)
     assert oids_exist.called
-    assert all(
-        _kwargs["jobs"] == jobs for (_args, _kwargs) in oids_exist.call_args_list
-    )
+    assert all(_kwargs["jobs"] == jobs for (_args, _kwargs) in oids_exist.call_args_list)
 
     oids_exist.reset_mock()
 
@@ -78,9 +74,7 @@ def test_cloud_cli(tmp_dir, dvc, capsys, remote, mocker):  # noqa: PLR0915
     assert os.path.isfile("foo")
     assert os.path.isdir("data_dir")
     assert oids_exist.called
-    assert all(
-        _kwargs["jobs"] == jobs for (_args, _kwargs) in oids_exist.call_args_list
-    )
+    assert all(_kwargs["jobs"] == jobs for (_args, _kwargs) in oids_exist.call_args_list)
 
     with open(cache, encoding="utf-8") as fd:
         assert fd.read() == "foo"
@@ -103,9 +97,7 @@ def test_cloud_cli(tmp_dir, dvc, capsys, remote, mocker):  # noqa: PLR0915
     assert capsys.readouterr().out == "5 files fetched\n"
 
     assert oids_exist.called
-    assert all(
-        _kwargs["jobs"] == jobs for (_args, _kwargs) in oids_exist.call_args_list
-    )
+    assert all(_kwargs["jobs"] == jobs for (_args, _kwargs) in oids_exist.call_args_list)
 
     oids_exist.reset_mock()
     assert main(["pull", "-f", *args]) == 0
@@ -116,9 +108,7 @@ def test_cloud_cli(tmp_dir, dvc, capsys, remote, mocker):  # noqa: PLR0915
     assert os.path.isfile("foo")
     assert os.path.isdir("data_dir")
     assert oids_exist.called
-    assert all(
-        _kwargs["jobs"] == jobs for (_args, _kwargs) in oids_exist.call_args_list
-    )
+    assert all(_kwargs["jobs"] == jobs for (_args, _kwargs) in oids_exist.call_args_list)
 
 
 def test_data_cloud_error_cli(dvc):
@@ -167,8 +157,7 @@ def test_missing_cache(tmp_dir, dvc, local_remote, caplog):
     dvc.cache.local.clear()
 
     header = (
-        "Some of the cache files do not exist "
-        "neither locally nor on remote. Missing cache files:\n"
+        "Some of the cache files do not exist neither locally nor on remote. Missing cache files:\n"
     )
     foo = "md5: 37b51d194a7513e45b56f6524f2d51f2\n"
     bar = "md5: acbd18db4cc2f85cedef654fccc4a4d8\n"
@@ -351,9 +340,7 @@ def clean(outs, dvc=None):
 
 
 def recurse_list_dir(d):
-    return [
-        os.path.join(root, f) for root, _, filenames in os.walk(d) for f in filenames
-    ]
+    return [os.path.join(root, f) for root, _, filenames in os.walk(d) for f in filenames]
 
 
 def test_dvc_pull_pipeline_stages(tmp_dir, dvc, run_copy, local_remote):
@@ -515,9 +502,7 @@ def test_pull_stats(tmp_dir, dvc, capsys, local_remote):
     assert out == "Everything is up to date.\n"
 
 
-@pytest.mark.parametrize(
-    "key,expected", [("all_tags", 2), ("all_branches", 3), ("all_commits", 3)]
-)
+@pytest.mark.parametrize("key,expected", [("all_tags", 2), ("all_branches", 3), ("all_commits", 3)])
 def test_push_pull_all(tmp_dir, scm, dvc, local_remote, key, expected):
     tmp_dir.dvc_gen({"foo": "foo"}, commit="first")
     scm.tag("v1")
@@ -727,9 +712,7 @@ def test_pull_allow_missing(tmp_dir, dvc, local_remote):
     }
 
 
-def test_pull_granular_excluding_import_that_cannot_be_pulled(
-    tmp_dir, dvc, local_remote, mocker
-):
+def test_pull_granular_excluding_import_that_cannot_be_pulled(tmp_dir, dvc, local_remote, mocker):
     """Regression test for https://github.com/treeverse/dvc/issues/10309."""
 
     mocker.patch("dvc.fs.dvc._DVCFileSystem", side_effect=CloneError("SCM error"))

@@ -244,9 +244,7 @@ def test_ignore_resurface_subrepo(tmp_dir, scm, dvc):
     assert dvc.dvcignore(root, dirs, files) == ([], [])
 
     assert dvc.dvcignore.is_ignored_dir(os.fspath(subrepo_dir / "bar"))
-    assert not dvc.dvcignore.is_ignored_dir(
-        os.fspath(subrepo_dir / "bar"), ignore_subrepos=False
-    )
+    assert not dvc.dvcignore.is_ignored_dir(os.fspath(subrepo_dir / "bar"), ignore_subrepos=False)
 
 
 def test_ignore_blank_line(tmp_dir, dvc):
@@ -282,9 +280,7 @@ def test_ignore_blank_line(tmp_dir, dvc):
         ),
     ],
 )
-def test_ignore_file_in_parent_path(
-    tmp_dir, dvc, data_struct, pattern_list, result_set
-):
+def test_ignore_file_in_parent_path(tmp_dir, dvc, data_struct, pattern_list, result_set):
     tmp_dir.gen(data_struct)
     tmp_dir.gen(DvcIgnore.DVCIGNORE_FILE, "\n".join(pattern_list))
     dvc._reset()
@@ -359,9 +355,7 @@ def test_pattern_trie_fs(tmp_dir, dvc):
 
     ignore_pattern_top = dvcignore._get_trie_pattern(os.fspath(tmp_dir / "top"))
     ignore_pattern_other = dvcignore._get_trie_pattern(os.fspath(tmp_dir / "other"))
-    ignore_pattern_first = dvcignore._get_trie_pattern(
-        os.fspath(tmp_dir / "top" / "first")
-    )
+    ignore_pattern_first = dvcignore._get_trie_pattern(os.fspath(tmp_dir / "top" / "first"))
     ignore_pattern_middle = dvcignore._get_trie_pattern(
         os.fspath(tmp_dir / "top" / "first" / "middle")
     )
@@ -398,14 +392,10 @@ def test_pattern_trie_fs(tmp_dir, dvc):
     assert DvcIgnorePatterns(*base_pattern, os.sep) == ignore_pattern_top
     assert DvcIgnorePatterns(*other_pattern, os.sep) == ignore_pattern_other
     assert (
-        DvcIgnorePatterns(*first_pattern, os.sep)
-        == ignore_pattern_first
-        == ignore_pattern_middle
+        DvcIgnorePatterns(*first_pattern, os.sep) == ignore_pattern_first == ignore_pattern_middle
     )
     assert (
-        DvcIgnorePatterns(*second_pattern, os.sep)
-        == ignore_pattern_second
-        == ignore_pattern_bottom
+        DvcIgnorePatterns(*second_pattern, os.sep) == ignore_pattern_second == ignore_pattern_bottom
     )
 
 

@@ -3,8 +3,8 @@ import shutil
 
 import pytest
 
-from dvc_data.hashfile.tree import Tree
 from dvc.utils.fs import remove
+from dvc_data.hashfile.tree import Tree
 
 
 def _check_status(status, **kwargs):

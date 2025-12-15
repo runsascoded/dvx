@@ -15,10 +15,10 @@ from dvc.utils import relpath
 from . import locked
 
 if TYPE_CHECKING:
+    from dvc.repo.index import IndexView
     from dvc_data.index import BaseDataIndex, DataIndexEntry, DataIndexKey
     from dvc_data.index.diff import Change
     from dvc_objects.fs.base import FileSystem
-    from dvc.repo.index import IndexView
 
 logger = logger.getChild(__name__)
 
@@ -117,9 +117,9 @@ def checkout(
     allow_missing=False,
     **kwargs,
 ):
-    from dvc_data.index.checkout import ADD, DELETE, MODIFY, apply, compare
     from dvc.repo.index import build_data_index
     from dvc.stage.exceptions import StageFileBadNameError, StageFileDoesNotExistError
+    from dvc_data.index.checkout import ADD, DELETE, MODIFY, apply, compare
 
     stats = {"modified": 0, "added": 0, "deleted": 0}
     changes: dict[str, list[str]] = {"modified": [], "added": [], "deleted": []}

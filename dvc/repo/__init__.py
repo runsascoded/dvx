@@ -16,8 +16,6 @@ from dvc.log import logger
 from dvc.utils.objects import cached_property
 
 if TYPE_CHECKING:
-    from dvc_data.hashfile.state import StateBase
-    from dvc_data.index import DataIndex, DataIndexEntry
     from dvc.fs import FileSystem
     from dvc.fs.data import DataFileSystem
     from dvc.fs.dvc import DVCFileSystem
@@ -26,6 +24,8 @@ if TYPE_CHECKING:
     from dvc.scm import Git, NoSCM
     from dvc.stage import Stage
     from dvc.types import DictStrAny
+    from dvc_data.hashfile.state import StateBase
+    from dvc_data.index import DataIndex, DataIndexEntry
 
     from .index import Index
     from .scm_context import SCMContext
@@ -143,7 +143,6 @@ class Repo:
         remote_config: Optional["DictStrAny"] = None,
         _wait_for_lock: bool = False,
     ):
-        from dvc_data.hashfile.state import State, StateNoop
         from dvc.cachemgr import CacheManager
         from dvc.data_cloud import DataCloud
         from dvc.fs import GitFileSystem, LocalFileSystem
@@ -151,6 +150,7 @@ class Repo:
         from dvc.repo.stage import StageLoad
         from dvc.scm import SCM
         from dvc.stage.cache import StageCache
+        from dvc_data.hashfile.state import State, StateNoop
 
         self.url = url
         self._fs_conf = {"repo_factory": repo_factory}

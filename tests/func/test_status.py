@@ -47,9 +47,7 @@ def test_status_non_dvc_repo_import(tmp_dir, dvc, git_dir, check_updates):
 
     status = dvc.status(["file.dvc"], check_updates=check_updates)
     if check_updates:
-        assert status == {
-            "file.dvc": [{"changed deps": {f"file ({git_dir})": "update available"}}]
-        }
+        assert status == {"file.dvc": [{"changed deps": {f"file ({git_dir})": "update available"}}]}
     else:
         assert status == {}
 
@@ -71,9 +69,7 @@ def test_status_before_and_after_dvc_init(tmp_dir, dvc, git_dir):
     assert old_rev != new_rev
 
     (status,) = dvc.status(["file.dvc"])["file.dvc"]
-    assert status == {
-        "changed deps": {f"file ({os.fspath(git_dir)})": "update available"}
-    }
+    assert status == {"changed deps": {f"file ({os.fspath(git_dir)})": "update available"}}
 
 
 def test_status_on_pipeline_stages(tmp_dir, dvc, run_copy):
@@ -133,9 +129,7 @@ def test_status_outputs(tmp_dir, dvc):
         "alice_bob": [{"changed outs": {"alice": "modified", "bob": "modified"}}]
     }
 
-    assert dvc.status(targets=["alice"]) == {
-        "alice_bob": [{"changed outs": {"alice": "modified"}}]
-    }
+    assert dvc.status(targets=["alice"]) == {"alice_bob": [{"changed outs": {"alice": "modified"}}]}
 
 
 def test_params_without_targets(tmp_dir, dvc):

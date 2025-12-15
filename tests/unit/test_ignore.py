@@ -164,25 +164,17 @@ from dvc.ignore import DvcIgnorePatterns
         ),
     ],
 )
-def test_match_ignore_from_file(
-    file_to_ignore_relpath, patterns, expected_match, mocker
-):
+def test_match_ignore_from_file(file_to_ignore_relpath, patterns, expected_match, mocker):
     from dvc.fs import localfs
 
     root = r"\\" if os.name == "nt" else "/"
-    dvcignore_path = os.path.join(
-        root, "full", "path", "to", "ignore", "file", ".dvcignore"
-    )
+    dvcignore_path = os.path.join(root, "full", "path", "to", "ignore", "file", ".dvcignore")
     dvcignore_dirname = os.path.dirname(dvcignore_path)
 
-    mocker.patch.object(
-        localfs, "open", mocker.mock_open(read_data="\n".join(patterns))
-    )
+    mocker.patch.object(localfs, "open", mocker.mock_open(read_data="\n".join(patterns)))
     ignore_file = DvcIgnorePatterns.from_file(dvcignore_path, localfs, "mocked")
 
-    assert (
-        ignore_file.matches(dvcignore_dirname, file_to_ignore_relpath) == expected_match
-    )
+    assert ignore_file.matches(dvcignore_dirname, file_to_ignore_relpath) == expected_match
 
 
 @pytest.mark.parametrize("sub_dir", ["", "dir"])

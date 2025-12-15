@@ -26,15 +26,11 @@ class CmdMetricsShow(CmdMetricsBase):
             all_tags=self.args.all_tags,
             all_commits=self.args.all_commits,
         )
-        metrics = {
-            k: to_relpath(self.repo.fs, self.repo.root_dir, v)
-            for k, v in metrics.items()
-        }
+        metrics = {k: to_relpath(self.repo.fs, self.repo.root_dir, v) for k, v in metrics.items()}
 
         if errored := errored_revisions(metrics):
             ui.error_write(
-                "DVC failed to load some metrics for following revisions:"
-                f" '{', '.join(errored)}'."
+                f"DVC failed to load some metrics for following revisions: '{', '.join(errored)}'."
             )
 
         if self.args.json:
@@ -70,8 +66,7 @@ class CmdMetricsDiff(CmdMetricsBase):
         errored = [rev for rev, err in diff_result.get("errors", {}).items() if err]
         if errored:
             ui.error_write(
-                "DVC failed to load some metrics for following revisions:"
-                f" '{', '.join(errored)}'."
+                f"DVC failed to load some metrics for following revisions: '{', '.join(errored)}'."
             )
 
         start = relpath(os.getcwd(), self.repo.root_dir)
@@ -169,10 +164,7 @@ def add_parser(subparsers, parent_parser):
         "--recursive",
         action="store_true",
         default=False,
-        help=(
-            "If any target is a directory, recursively search and process "
-            "metrics files."
-        ),
+        help=("If any target is a directory, recursively search and process metrics files."),
     )
     metrics_show_parser.add_argument(
         "--precision",
@@ -225,10 +217,7 @@ def add_parser(subparsers, parent_parser):
         "--recursive",
         action="store_true",
         default=False,
-        help=(
-            "If any target is a directory, recursively search and process "
-            "metrics files."
-        ),
+        help=("If any target is a directory, recursively search and process metrics files."),
     )
     metrics_diff_parser.add_argument(
         "--all",

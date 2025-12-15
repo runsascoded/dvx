@@ -2,6 +2,8 @@ import glob
 from itertools import repeat
 from urllib.parse import urlparse
 
+from dvc.config import ConfigError as RepoConfigError
+from dvc.config_schema import SCHEMA, Invalid
 from dvc_http import HTTPFileSystem, HTTPSFileSystem  # noqa: F401
 
 # pylint: disable=unused-import
@@ -23,8 +25,6 @@ from dvc_objects.fs.errors import (  # noqa: F401
     ConfigError,
     RemoteMissingDepsError,
 )
-from dvc.config import ConfigError as RepoConfigError
-from dvc.config_schema import SCHEMA, Invalid
 
 from .callbacks import Callback  # noqa: F401
 from .data import DataFileSystem  # noqa: F401

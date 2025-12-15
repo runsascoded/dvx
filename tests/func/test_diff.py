@@ -116,23 +116,17 @@ def test_diff_no_cache(tmp_dir, scm, dvc):
     assert dvc.diff("HEAD", "v1") == {}
     assert dvc.diff("v1", "HEAD") == {}
 
-    (stage,) = tmp_dir.dvc_gen(
-        {"dir": {"file": "modified file content"}}, commit="first"
-    )
+    (stage,) = tmp_dir.dvc_gen({"dir": {"file": "modified file content"}}, commit="first")
     scm.tag("v2")
     new_digest = stage.outs[0].hash_info.value
 
     assert dvc.diff("v2") == {}
     assert dvc.diff("v1") == default_result | {
-        "modified": [
-            {"path": dir_path, "hash": {"old": old_digest, "new": new_digest}}
-        ],
+        "modified": [{"path": dir_path, "hash": {"old": old_digest, "new": new_digest}}],
         "not in cache": [{"path": dir_path, "hash": old_digest}],
     }
     assert dvc.diff("v1", "v2") == default_result | {
-        "modified": [
-            {"path": dir_path, "hash": {"old": old_digest, "new": new_digest}}
-        ],
+        "modified": [{"path": dir_path, "hash": {"old": old_digest, "new": new_digest}}],
     }
 
     remove(dvc.cache.local.path)
@@ -144,20 +138,14 @@ def test_diff_no_cache(tmp_dir, scm, dvc):
         "not in cache": [{"path": dir_path, "hash": new_digest}],
     }
     assert dvc.diff("v1") == default_result | {
-        "modified": [
-            {"path": dir_path, "hash": {"old": old_digest, "new": new_digest}}
-        ],
+        "modified": [{"path": dir_path, "hash": {"old": old_digest, "new": new_digest}}],
         "not in cache": [{"path": dir_path, "hash": old_digest}],
     }
     assert dvc.diff("v2", "v1") == default_result | {
-        "modified": [
-            {"path": dir_path, "hash": {"old": new_digest, "new": old_digest}}
-        ],
+        "modified": [{"path": dir_path, "hash": {"old": new_digest, "new": old_digest}}],
     }
     assert dvc.diff("v1", "v2") == default_result | {
-        "modified": [
-            {"path": dir_path, "hash": {"old": old_digest, "new": new_digest}}
-        ],
+        "modified": [{"path": dir_path, "hash": {"old": old_digest, "new": new_digest}}],
     }
     assert dvc.diff() == default_result | {
         "not in cache": [{"path": dir_path, "hash": new_digest}],
@@ -513,9 +501,7 @@ def test_targets_single_dir_with_file(tmp_dir, scm, dvc):
     }
 
     assert dvc.diff(targets=["dir_with"], recursive=True) == expected_result
-    assert (
-        dvc.diff(targets=["dir_with" + os.path.sep], recursive=True) == expected_result
-    )
+    assert dvc.diff(targets=["dir_with" + os.path.sep], recursive=True) == expected_result
 
 
 def test_targets_single_file_in_dir_with_file(tmp_dir, scm, dvc):
@@ -666,14 +652,10 @@ def test_rename_multiple_files_same_hashes(tmp_dir, scm, dvc):
     DVC should be able to detect that they are renames, and should not include
     them in either of the `added` or the `deleted` section.
     """
-    tmp_dir.dvc_gen(
-        {"dir": {"foo": "foo", "subdir": {"foo": "foo"}}}, commit="commit #1"
-    )
+    tmp_dir.dvc_gen({"dir": {"foo": "foo", "subdir": {"foo": "foo"}}}, commit="commit #1")
     remove(tmp_dir / "dir")
     # changing foo and subdir/foo to bar and subdir/bar respectively
-    tmp_dir.dvc_gen(
-        {"dir": {"bar": "foo", "subdir": {"bar": "foo"}}}, commit="commit #2"
-    )
+    tmp_dir.dvc_gen({"dir": {"bar": "foo", "subdir": {"bar": "foo"}}}, commit="commit #2")
     assert dvc.diff("HEAD~") == {
         "added": [],
         "deleted": [],

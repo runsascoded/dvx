@@ -154,8 +154,7 @@ def test_show_json_and_hash(mocker, capsys, dvc):
     assert '"deleted": []' in out
     assert '"modified": []' in out
     assert (
-        '"renamed": [{"path": {"old": "file_old", '
-        '"new": "file_new"}, "hash": "11111111"}]' in out
+        '"renamed": [{"path": {"old": "file_old", "new": "file_new"}, "hash": "11111111"}]' in out
     )
     assert '"not in cache": []' in out
 

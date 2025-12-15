@@ -39,9 +39,7 @@ class DVCFixtures:
         """
         source = tmp_dir / "source"
         source.mkdir()
-        tmp_dir.scm_gen(
-            ".gitignore", "/source/file2/\nsource/subdir", commit="add .gitignore"
-        )
+        tmp_dir.scm_gen(".gitignore", "/source/file2/\nsource/subdir", commit="add .gitignore")
 
         tmp_dir.scm_gen("source/file1", "file1", commit="add file1")
         tmp_dir.dvc_gen("source/file2", "file2", commit="add file2")
@@ -67,8 +65,7 @@ class DVCFixtures:
         └── 📄 {hashed([0-9])}.txt
         """
         dir_contents = {
-            md5(str(i).encode("utf-8"), usedforsecurity=False).hexdigest()
-            + ".txt": str(i)
+            md5(str(i).encode("utf-8"), usedforsecurity=False).hexdigest() + ".txt": str(i)
             for i in range(10)
         }
         tmp_dir.dvc_gen({"source": dir_contents}, commit="add source")
@@ -98,9 +95,7 @@ class DVCFixtures:
 
         tmp_dir.scm_gen(".gitignore", "/source/subdir", commit="add .gitignore")
         tmp_dir.scm_gen("source/subdir.txt", "subdir.txt", commit="add subdir.txt")
-        tmp_dir.dvc_gen(
-            {"source/subdir": {"subfile.txt": "subfile.txt"}}, commit="add subdir"
-        )
+        tmp_dir.dvc_gen({"source/subdir": {"subfile.txt": "subfile.txt"}}, commit="add subdir")
         return "/source"
 
     @pytest.fixture
@@ -126,9 +121,7 @@ class DVCFixtures:
         source = tmp_dir / "source"
         source.mkdir()
 
-        tmp_dir.scm_gen(
-            ".gitignore", "/source/file1\n/source/subdir1", commit="add .gitignore"
-        )
+        tmp_dir.scm_gen(".gitignore", "/source/file1\n/source/subdir1", commit="add .gitignore")
         tmp_dir.scm_gen("source/file1", "file1", commit="add file1")
         tmp_dir.dvc_gen("source/file2", "file2", commit="add file2")
 
@@ -345,9 +338,7 @@ class TestDVCFileSystemGet(DVCFixtures):
                 assert local_fs.isfile(local_join(target, "subdir", "subfile1"))
                 assert local_fs.isfile(local_join(target, "subdir", "subfile2"))
                 assert local_fs.isdir(local_join(target, "subdir", "nesteddir"))
-                assert local_fs.isfile(
-                    local_join(target, "subdir", "nesteddir", "nestedfile")
-                )
+                assert local_fs.isfile(local_join(target, "subdir", "nesteddir", "nestedfile"))
 
                 local_fs.rm(local_join(target, "subdir"), recursive=True)
             assert local_fs.ls(target) == []
@@ -409,9 +400,7 @@ class TestDVCFileSystemGet(DVCFixtures):
             assert local_fs.isfile(local_join(target, "newdir", "subfile1"))
             assert local_fs.isfile(local_join(target, "newdir", "subfile2"))
             assert local_fs.isdir(local_join(target, "newdir", "nesteddir"))
-            assert local_fs.isfile(
-                local_join(target, "newdir", "nesteddir", "nestedfile")
-            )
+            assert local_fs.isfile(local_join(target, "newdir", "nesteddir", "nestedfile"))
             assert not local_fs.exists(local_join(target, "subdir"))
 
             local_fs.rm(local_join(target, "newdir"), recursive=True)
@@ -483,9 +472,7 @@ class TestDVCFileSystemGet(DVCFixtures):
                 assert local_fs.ls(target) == []
 
                 # Limit recursive by maxdepth
-                fs.get(
-                    fs_join(source, "subdir", glob), t, recursive=recursive, maxdepth=1
-                )
+                fs.get(fs_join(source, "subdir", glob), t, recursive=recursive, maxdepth=1)
                 assert local_fs.isfile(local_join(target, "subfile1"))
                 assert local_fs.isfile(local_join(target, "subfile2"))
                 assert not local_fs.exists(local_join(target, "nesteddir"))
@@ -526,9 +513,7 @@ class TestDVCFileSystemGet(DVCFixtures):
             assert local_fs.isfile(local_join(target, "newdir", "subfile1"))
             assert local_fs.isfile(local_join(target, "newdir", "subfile2"))
             assert not local_fs.exists(local_join(target, "newdir", "nesteddir"))
-            assert not local_fs.exists(
-                local_join(target, "newdir", "nesteddir", "nestedfile")
-            )
+            assert not local_fs.exists(local_join(target, "newdir", "nesteddir", "nestedfile"))
             assert not local_fs.exists(local_join(target, "subdir"))
             assert not local_fs.exists(local_join(target, "newdir", "subdir"))
 
@@ -542,9 +527,7 @@ class TestDVCFileSystemGet(DVCFixtures):
                 assert local_fs.isfile(local_join(target, "newdir", "subfile1"))
                 assert local_fs.isfile(local_join(target, "newdir", "subfile2"))
                 assert local_fs.isdir(local_join(target, "newdir", "nesteddir"))
-                assert local_fs.isfile(
-                    local_join(target, "newdir", "nesteddir", "nestedfile")
-                )
+                assert local_fs.isfile(local_join(target, "newdir", "nesteddir", "nestedfile"))
                 assert not local_fs.exists(local_join(target, "subdir"))
                 assert not local_fs.exists(local_join(target, "newdir", "subdir"))
 
@@ -552,9 +535,7 @@ class TestDVCFileSystemGet(DVCFixtures):
                 assert not local_fs.exists(local_join(target, "newdir"))
 
                 # Limit recursive by maxdepth
-                fs.get(
-                    fs_join(source, "subdir", glob), t, recursive=recursive, maxdepth=1
-                )
+                fs.get(fs_join(source, "subdir", glob), t, recursive=recursive, maxdepth=1)
                 assert local_fs.isdir(local_join(target, "newdir"))
                 assert local_fs.isfile(local_join(target, "newdir", "subfile1"))
                 assert local_fs.isfile(local_join(target, "newdir", "subfile2"))
@@ -601,9 +582,7 @@ class TestDVCFileSystemGet(DVCFixtures):
                     make_path_posix(local_join(target, "newdir", p)) for p in expected
                 ]
             else:
-                prefixed_expected = [
-                    make_path_posix(local_join(target, p)) for p in expected
-                ]
+                prefixed_expected = [make_path_posix(local_join(target, p)) for p in expected]
             assert sorted(output) == sorted(prefixed_expected)
 
             try:
@@ -755,9 +734,7 @@ class TestDVCFileSystemGet(DVCFixtures):
         for i in range(10):
             hashed_i = md5(str(i).encode("utf-8"), usedforsecurity=False).hexdigest()
             source_files.append(fs_join(source, f"{hashed_i}.txt"))
-            destination_files.append(
-                make_path_posix(local_join(target, f"{hashed_i}.txt"))
-            )
+            destination_files.append(make_path_posix(local_join(target, f"{hashed_i}.txt")))
 
         # Copy and assert order was kept
         fs.get(rpath=source_files, lpath=destination_files)

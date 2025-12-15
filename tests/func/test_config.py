@@ -205,9 +205,7 @@ def test_config_list_in_non_dvc_repo(tmp_dir, caplog, args, ret):
         assert "Not inside a DVC repo" in out
 
 
-@pytest.mark.parametrize(
-    "args", [["core.analytics"], ["core.analytics", "false"], ["--unset"]]
-)
+@pytest.mark.parametrize("args", [["core.analytics"], ["core.analytics", "false"], ["--unset"]])
 def test_list_bad_args(tmp_dir, dvc, caplog, args):
     caplog.clear()
     assert main(["config", "--list", *args]) == 1
@@ -272,9 +270,7 @@ def test_load_relative_paths(dvc, field, remote_url):
     # load config and check that it contains what we expect
     # (relative paths are evaluated correctly)
     cfg = Config(dvc_dir)
-    assert cfg["remote"]["test"][field] == os.path.abspath(
-        os.path.join(dvc_dir, "..", "file.txt")
-    )
+    assert cfg["remote"]["test"][field] == os.path.abspath(os.path.join(dvc_dir, "..", "file.txt"))
 
 
 def test_config_gdrive_fields(tmp_dir, dvc):
@@ -328,9 +324,7 @@ def test_config_show_origin_merged(tmp_dir, dvc, capsys):
         "['remote \"myremote\"']\n  url = s3://bucket/path\n  region = myregion\n"
     )
 
-    (tmp_dir / ".dvc" / "config.local").write_text(
-        "['remote \"myremote\"']\n  timeout = 100\n"
-    )
+    (tmp_dir / ".dvc" / "config.local").write_text("['remote \"myremote\"']\n  timeout = 100\n")
 
     assert main(["config", "--list", "--show-origin"]) == 0
     out, _ = capsys.readouterr()
@@ -343,8 +337,6 @@ def test_config_show_origin_merged(tmp_dir, dvc, capsys):
     )
 
     assert (
-        "{}\t{}\n".format(
-            os.path.join(".dvc", "config.local"), "remote.myremote.timeout=100"
-        )
+        "{}\t{}\n".format(os.path.join(".dvc", "config.local"), "remote.myremote.timeout=100")
         in out
     )

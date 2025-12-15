@@ -2,9 +2,9 @@ import functools
 import os
 from typing import TYPE_CHECKING
 
-from dvc_objects.fs.base import FileSystem
 from dvc.log import logger
 from dvc.utils import as_posix
+from dvc_objects.fs.base import FileSystem
 
 if TYPE_CHECKING:
     from dvc_data.fs import DataFileSystem as _DataFileSystem

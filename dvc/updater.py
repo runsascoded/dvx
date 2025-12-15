@@ -1,6 +1,6 @@
 import os
 import time
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from packaging import version
 
@@ -56,12 +56,7 @@ class Updater:
     def check(self):
         from dvc.utils import env2bool
 
-        if (
-            os.getenv("CI")
-            or env2bool("DVC_TEST")
-            or PKG == "snap"
-            or not self.is_enabled()
-        ):
+        if os.getenv("CI") or env2bool("DVC_TEST") or PKG == "snap" or not self.is_enabled():
             return
 
         self._with_lock(self._check, "checking")
@@ -116,7 +111,7 @@ class Updater:
             logger.trace("Saving latest version info to %s", self.updater_file)
             json.dump(info, fobj)
 
-    def _notify(self, latest: str, pkg: Optional[str] = PKG) -> None:
+    def _notify(self, latest: str, pkg: str | None = PKG) -> None:
         from dvc.ui import ui
 
         if not ui.isatty():
@@ -128,9 +123,9 @@ class Updater:
     def _get_message(
         self,
         latest: str,
-        current: Optional[str] = None,
+        current: str | None = None,
         color: str = "yellow",
-        pkg: Optional[str] = None,
+        pkg: str | None = None,
     ) -> "RichText":
         from dvc.ui import ui
 
@@ -140,16 +135,12 @@ class Updater:
             f"however, version [bold]{latest}[/] is available."
         )
         instruction = ui.rich_text.from_markup(self._get_update_instructions(pkg=pkg))
-        return ui.rich_text.assemble(
-            "\n", update_message, "\n", instruction, style=color
-        )
+        return ui.rich_text.assemble("\n", update_message, "\n", instruction, style=color)
 
     @staticmethod
-    def _get_update_instructions(pkg: Optional[str] = None) -> str:
+    def _get_update_instructions(pkg: str | None = None) -> str:
         if pkg in ("osxpkg", "exe", "binary"):
-            return (
-                "To upgrade, uninstall dvc and reinstall from [blue]https://dvc.org[/]."
-            )
+            return "To upgrade, uninstall dvc and reinstall from [blue]https://dvc.org[/]."
 
         instructions = {
             "pip": "pip install --upgrade dvc",

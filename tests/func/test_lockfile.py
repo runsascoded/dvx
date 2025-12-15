@@ -43,20 +43,14 @@ def test_deps_outs_are_sorted_by_path(tmp_dir, dvc, run_head):
     assert list(lock.keys()) == ["cmd", "deps", "outs"]
 
     # `path` key appear first and then the `md5`
-    assert all(
-        list(dep.keys()) == ["path", "hash", "md5", "size"] for dep in lock["deps"]
-    )
-    assert all(
-        list(out.keys()) == ["path", "hash", "md5", "size"] for out in lock["outs"]
-    )
+    assert all(list(dep.keys()) == ["path", "hash", "md5", "size"] for dep in lock["deps"])
+    assert all(list(out.keys()) == ["path", "hash", "md5", "size"] for out in lock["outs"])
 
     # deps are always sorted by the file path naming
     assert list(map(itemgetter("path"), lock["deps"])) == sorted(deps)
 
     # outs are too
-    assert list(map(itemgetter("path"), lock["outs"])) == [
-        d + "-1" for d in sorted(deps)
-    ]
+    assert list(map(itemgetter("path"), lock["outs"])) == [d + "-1" for d in sorted(deps)]
 
 
 def test_order_is_preserved_when_pipeline_order_changes(tmp_dir, dvc, run_head):

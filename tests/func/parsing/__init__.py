@@ -46,9 +46,7 @@ def make_entry_definition(wdir, name, data, context=None) -> EntryDefinition:
     )
 
 
-def make_foreach_def(
-    wdir, name, foreach_data, do_data=None, context=None
-) -> ForeachDefinition:
+def make_foreach_def(wdir, name, foreach_data, do_data=None, context=None) -> ForeachDefinition:
     return ForeachDefinition(
         DataResolver(wdir.dvc, wdir.fs_path, {}),
         context or Context(),

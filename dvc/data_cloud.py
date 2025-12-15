@@ -3,17 +3,17 @@
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Optional
 
-from dvc_data.hashfile.db import get_index
-from dvc_data.hashfile.transfer import TransferResult
 from dvc.config import NoRemoteError, RemoteConfigError
 from dvc.log import logger
 from dvc.utils.objects import cached_property
+from dvc_data.hashfile.db import get_index
+from dvc_data.hashfile.transfer import TransferResult
 
 if TYPE_CHECKING:
+    from dvc.fs import FileSystem
     from dvc_data.hashfile.db import HashFileDB
     from dvc_data.hashfile.hash_info import HashInfo
     from dvc_data.hashfile.status import CompareStatusResult
-    from dvc.fs import FileSystem
 
 logger = logger.getChild(__name__)
 
@@ -30,9 +30,9 @@ class Remote:
 
     @cached_property
     def odb(self) -> "HashFileDB":
+        from dvc.cachemgr import CacheManager
         from dvc_data.hashfile.db import get_odb
         from dvc_data.hashfile.hash import DEFAULT_ALGORITHM
-        from dvc.cachemgr import CacheManager
 
         path = self.path
         if self.worktree:

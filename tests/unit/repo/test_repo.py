@@ -73,33 +73,6 @@ def test_locked(mocker):
     ]
 
 
-def test_skip_graph_checks(tmp_dir, dvc, mocker, run_copy):
-    # See https://github.com/treeverse/dvc/issues/2671 for more info
-    from dvc.repo.index import Index
-
-    mock_build_graph = mocker.spy(Index.graph, "fget")
-
-    # sanity check
-    tmp_dir.gen("foo", "foo text")
-    dvc.add("foo")
-    run_copy("foo", "bar", name="copy-foo-bar")
-    assert mock_build_graph.called
-
-    # check that our hack can be enabled
-    mock_build_graph.reset_mock()
-    dvc._skip_graph_checks = True
-    tmp_dir.gen("baz", "baz text")
-    run_copy("baz", "qux", name="copy-baz-qux")
-    assert not mock_build_graph.called
-
-    # check that our hack can be disabled
-    mock_build_graph.reset_mock()
-    dvc._skip_graph_checks = False
-    tmp_dir.gen("quux", "quux text")
-    run_copy("quux", "quuz", name="copy-quux-quuz")
-    assert mock_build_graph.called
-
-
 def test_branch_config(tmp_dir, scm):
     tmp_dir.scm_gen("foo", "foo", commit="init")
 

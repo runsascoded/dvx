@@ -98,9 +98,7 @@ def test_hydra_compose_and_dump(
         ),
     ],
 )
-def test_hydra_sweep(
-    tmp_dir, params_repo, dvc, mocker, hydra_enabled, overrides, expected
-):
+def test_hydra_sweep(tmp_dir, params_repo, dvc, mocker, hydra_enabled, overrides, expected):
     patched = mocker.patch.object(dvc.experiments, "queue_one")
 
     if hydra_enabled:

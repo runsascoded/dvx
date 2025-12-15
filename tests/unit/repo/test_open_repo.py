@@ -46,9 +46,7 @@ def test_hook_is_called(tmp_dir, erepo_dir, mocker):
 
 
 @pytest.mark.parametrize("root_is_dvc", [False, True])
-def test_subrepo_is_constructed_properly(
-    tmp_dir, scm, mocker, make_tmp_dir, root_is_dvc
-):
+def test_subrepo_is_constructed_properly(tmp_dir, scm, mocker, make_tmp_dir, root_is_dvc):
     if root_is_dvc:
         make_subrepo(tmp_dir, scm)
 

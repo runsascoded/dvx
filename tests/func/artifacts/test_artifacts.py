@@ -35,9 +35,7 @@ def test_artifacts_read_subdir(tmp_dir, dvc):
 
     (subdir / "dvc.yaml").dump(dvcyaml)
 
-    artifacts = {
-        name: Artifact(**values) for name, values in dvcyaml["artifacts"].items()
-    }
+    artifacts = {name: Artifact(**values) for name, values in dvcyaml["artifacts"].items()}
     assert tmp_dir.dvc.artifacts.read() == {
         "dvc.yaml": artifacts,
         f"subdir{os.path.sep}dvc.yaml": artifacts,
@@ -50,10 +48,7 @@ def test_artifacts_read_bad_name(tmp_dir, dvc, caplog):
 
     (tmp_dir / "dvc.yaml").dump(bad_name_dvcyaml)
 
-    artifacts = {
-        name: Artifact(**values)
-        for name, values in bad_name_dvcyaml["artifacts"].items()
-    }
+    artifacts = {name: Artifact(**values) for name, values in bad_name_dvcyaml["artifacts"].items()}
 
     with caplog.at_level(logging.WARNING):
         assert tmp_dir.dvc.artifacts.read() == {"dvc.yaml": artifacts}
@@ -69,9 +64,7 @@ def test_artifacts_add_subdir(tmp_dir, dvc):
     new_art = Artifact(path="path")
     tmp_dir.dvc.artifacts.add("new", new_art, dvcfile="subdir/dvc.yaml")
 
-    artifacts = {
-        name: Artifact(**values) for name, values in dvcyaml["artifacts"].items()
-    }
+    artifacts = {name: Artifact(**values) for name, values in dvcyaml["artifacts"].items()}
     artifacts["new"] = new_art
     assert tmp_dir.dvc.artifacts.read() == {f"subdir{os.path.sep}dvc.yaml": artifacts}
 
@@ -81,9 +74,7 @@ def test_artifacts_add_abspath(tmp_dir, dvc):
     subdir.mkdir()
 
     new_art = Artifact(path="path")
-    tmp_dir.dvc.artifacts.add(
-        "new", new_art, dvcfile=os.path.abspath("subdir/dvc.yaml")
-    )
+    tmp_dir.dvc.artifacts.add("new", new_art, dvcfile=os.path.abspath("subdir/dvc.yaml"))
 
     assert tmp_dir.dvc.artifacts.read() == {
         f"subdir{os.path.sep}dvc.yaml": {"new": new_art},
@@ -97,9 +88,7 @@ def test_artifacts_add_fails_on_dvc_subrepo(tmp_dir, dvc):
     (subdir / ".dvc").mkdir(parents=True)
 
     with pytest.raises(InvalidArgumentError):
-        tmp_dir.dvc.artifacts.add(
-            "failing", Artifact(path="path"), dvcfile="subdir/dvc.yaml"
-        )
+        tmp_dir.dvc.artifacts.add("failing", Artifact(path="path"), dvcfile="subdir/dvc.yaml")
 
     with pytest.raises(InvalidArgumentError):
         tmp_dir.dvc.artifacts.add(
@@ -118,9 +107,7 @@ bad_dvcyaml_extra_field = {
 bad_dvcyaml_missing_path = {"artifacts": {"lol": {}}}
 
 
-@pytest.mark.parametrize(
-    "bad_dvcyaml", [bad_dvcyaml_extra_field, bad_dvcyaml_missing_path]
-)
+@pytest.mark.parametrize("bad_dvcyaml", [bad_dvcyaml_extra_field, bad_dvcyaml_missing_path])
 def test_broken_dvcyaml_extra_field(tmp_dir, dvc, bad_dvcyaml):
     (tmp_dir / "dvc.yaml").dump(bad_dvcyaml)
 
@@ -144,9 +131,7 @@ def test_artifacts_read_fails_on_id_duplication(tmp_dir, dvc):
         tmp_dir.dvc.artifacts.read()
 
 
-@pytest.mark.parametrize(
-    "name", ["1", "m", "nn", "m1", "1nn", "model-prod", "model-prod-v1"]
-)
+@pytest.mark.parametrize("name", ["1", "m", "nn", "m1", "1nn", "model-prod", "model-prod-v1"])
 def test_name_is_compatible(name):
     check_name_format(name)
 
@@ -196,16 +181,12 @@ def test_get_path(tmp_dir, dvc, scm):
 
     assert dvc.artifacts.get_path("myart") == "myart.pkl"
     assert dvc.artifacts.get_path("subdir:myart") == os.path.join("subdir", "myart.pkl")
-    assert dvc.artifacts.get_path("subdir/dvc.yaml:myart") == os.path.join(
-        "subdir", "myart.pkl"
-    )
+    assert dvc.artifacts.get_path("subdir/dvc.yaml:myart") == os.path.join("subdir", "myart.pkl")
 
 
 def test_parametrized(tmp_dir, dvc):
     (tmp_dir / "params.yaml").dump({"path": "myart.pkl"})
-    (tmp_dir / "dvc.yaml").dump(
-        {"artifacts": {"myart": {"type": "model", "path": "${path}"}}}
-    )
+    (tmp_dir / "dvc.yaml").dump({"artifacts": {"myart": {"type": "model", "path": "${path}"}}})
     assert tmp_dir.dvc.artifacts.read() == {
         "dvc.yaml": {"myart": Artifact(path="myart.pkl", type="model")}
     }
@@ -216,16 +197,10 @@ def test_get_path_subrepo(tmp_dir, scm, dvc):
     make_subrepo(subrepo, scm)
     (subrepo / "dvc.yaml").dump(dvcyaml)
 
-    assert dvc.artifacts.get_path("subrepo:myart") == os.path.join(
-        "subrepo", "myart.pkl"
-    )
-    assert dvc.artifacts.get_path("subrepo/dvc.yaml:myart") == os.path.join(
-        "subrepo", "myart.pkl"
-    )
+    assert dvc.artifacts.get_path("subrepo:myart") == os.path.join("subrepo", "myart.pkl")
+    assert dvc.artifacts.get_path("subrepo/dvc.yaml:myart") == os.path.join("subrepo", "myart.pkl")
 
-    assert subrepo.dvc.artifacts.get_path("subrepo:myart") == os.path.join(
-        "subrepo", "myart.pkl"
-    )
+    assert subrepo.dvc.artifacts.get_path("subrepo:myart") == os.path.join("subrepo", "myart.pkl")
     assert subrepo.dvc.artifacts.get_path("subrepo/dvc.yaml:myart") == os.path.join(
         "subrepo", "myart.pkl"
     )

@@ -141,7 +141,6 @@ def to_pipeline_file(stage: "PipelineStage"):
 
 
 def to_single_stage_lockfile(stage: "Stage", **kwargs) -> dict:
-    from dvc_data.hashfile.tree import Tree
     from dvc.cachemgr import LEGACY_HASH_NAMES
     from dvc.dependency import DatasetDependency
     from dvc.output import (
@@ -149,6 +148,7 @@ def to_single_stage_lockfile(stage: "Stage", **kwargs) -> dict:
         _serialize_tree_obj_to_files,
         split_file_meta_from_cloud,
     )
+    from dvc_data.hashfile.tree import Tree
 
     assert stage.cmd
 

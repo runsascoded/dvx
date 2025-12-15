@@ -1,7 +1,6 @@
 import typing
 from collections import Counter
 from collections.abc import Iterable
-from typing import Optional, Union
 
 from funcy import first
 
@@ -34,9 +33,9 @@ def _postprocess(results):
 
 def metrics_show(
     *targets: str,
-    repo: Optional[str] = None,
-    rev: Optional[str] = None,
-    config: Optional[dict] = None,
+    repo: str | None = None,
+    rev: str | None = None,
+    config: dict | None = None,
 ) -> dict:
     """Get metrics tracked in `repo`.
 
@@ -141,9 +140,7 @@ def metrics_show(
             revs=rev if rev is None else [rev],
             on_error="raise",
         )
-        metrics = {
-            k: to_relpath(_repo.fs, _repo.root_dir, v) for k, v in metrics.items()
-        }
+        metrics = {k: to_relpath(_repo.fs, _repo.root_dir, v) for k, v in metrics.items()}
 
     metrics = _postprocess(metrics)
 
@@ -155,11 +152,11 @@ def metrics_show(
 
 def params_show(
     *targets: str,
-    repo: Optional[str] = None,
-    stages: Optional[Union[str, Iterable[str]]] = None,
-    rev: Optional[str] = None,
+    repo: str | None = None,
+    stages: str | Iterable[str] | None = None,
+    rev: str | None = None,
     deps: bool = False,
-    config: Optional[dict] = None,
+    config: dict | None = None,
 ) -> dict:
     """Get parameters tracked in `repo`.
 

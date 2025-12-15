@@ -33,9 +33,7 @@ def to_posixpath(path):
 
 def dump_sv(stream, metrics, delimiter=",", header=True):
     if header:
-        writer = csv.DictWriter(
-            stream, fieldnames=list(first(metrics).keys()), delimiter=delimiter
-        )
+        writer = csv.DictWriter(stream, fieldnames=list(first(metrics).keys()), delimiter=delimiter)
         writer.writeheader()
         writer.writerows(metrics)
     else:

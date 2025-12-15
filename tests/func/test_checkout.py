@@ -344,9 +344,7 @@ def test_checkout_moved_cache_dir_with_symlinks(tmp_dir, dvc):
 
     assert relpath(old_foo_link, old_cache_dir) == relpath(new_foo_link, new_cache_dir)
 
-    assert relpath(old_data_link, old_cache_dir) == relpath(
-        new_data_link, new_cache_dir
-    )
+    assert relpath(old_data_link, old_cache_dir) == relpath(new_data_link, new_cache_dir)
 
 
 def test_checkout_no_checksum(tmp_dir, dvc):
@@ -683,9 +681,7 @@ def test_checkouts_with_different_addressing(tmp_dir, dvc, run_copy):
     (tmp_dir / "bar").unlink()
     (tmp_dir / "data").mkdir()
     with (tmp_dir / "data").chdir():
-        assert dvc.checkout(
-            relpath(tmp_dir / "dvc.yaml") + ":copy-foo-bar"
-        ) == empty_checkout | {
+        assert dvc.checkout(relpath(tmp_dir / "dvc.yaml") + ":copy-foo-bar") == empty_checkout | {
             "added": [relpath(tmp_dir / "bar")],
             "stats": empty_stats | {"added": 1},
         }

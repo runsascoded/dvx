@@ -69,6 +69,4 @@ from dvc.pathspec_math import PatternInfo, _change_dirname
     ],
 )
 def test_dvcignore_pattern_change_dir(tmp_dir, patterns, dirname, changed):
-    assert _change_dirname(dirname, [PatternInfo(patterns, "")], "/") == [
-        PatternInfo(changed, "")
-    ]
+    assert _change_dirname(dirname, [PatternInfo(patterns, "")], "/") == [PatternInfo(changed, "")]

@@ -145,9 +145,7 @@ def test_params_show_deps(params_repo):
 def test_params_show_stages(params_repo):
     assert api.params_show(stages="stage-2") == {"foo": {"bar": 4}}
 
-    assert api.params_show() == api.params_show(
-        stages=["stage-1", "stage-2", "stage-3"]
-    )
+    assert api.params_show() == api.params_show(stages=["stage-1", "stage-2", "stage-3"])
 
     assert api.params_show("params.json", stages="stage-3") == {"bar": 2, "foobar": 3}
 

@@ -93,9 +93,7 @@ def test_load_remote(dvc):
 
 @pytest.mark.parametrize("typ", [None, "", "illegal"])
 def test_load_from_pipeline_error_on_typ(dvc, typ):
-    with pytest.raises(
-        ValueError, match=f"'{typ}' key is not allowed for pipeline files."
-    ):
+    with pytest.raises(ValueError, match=f"'{typ}' key is not allowed for pipeline files."):
         output.load_from_pipeline(Stage(dvc), ["file1"], typ)
 
 

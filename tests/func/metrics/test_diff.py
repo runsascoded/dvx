@@ -11,9 +11,7 @@ from dvc.utils.serialize import JSONFileCorruptedError
 def test_metrics_diff_simple(tmp_dir, scm, dvc, run_copy_metrics):
     def _gen(val):
         tmp_dir.gen({"m_temp.yaml": str(val)})
-        run_copy_metrics(
-            "m_temp.yaml", "m.yaml", name="copy-metrics", metrics=["m.yaml"]
-        )
+        run_copy_metrics("m_temp.yaml", "m.yaml", name="copy-metrics", metrics=["m.yaml"])
         dvc.scm.commit(str(val))
 
     _gen(1)
@@ -128,9 +126,7 @@ def test_metrics_diff_no_metrics(tmp_dir, scm, dvc):
 def test_metrics_diff_new_metric(tmp_dir, scm, dvc, run_copy_metrics):
     metrics = {"a": {"b": {"c": 1, "d": 1, "e": "3"}}}
     (tmp_dir / "m_temp.json").dump(metrics)
-    run_copy_metrics(
-        "m_temp.json", "m.json", name="copy-metrics", metrics_no_cache=["m.json"]
-    )
+    run_copy_metrics("m_temp.json", "m.json", name="copy-metrics", metrics_no_cache=["m.json"])
 
     assert dvc.metrics.diff() == {
         "diff": {
@@ -204,9 +200,7 @@ def test_no_commits(tmp_dir):
 def test_metrics_diff_dirty(tmp_dir, scm, dvc, run_copy_metrics):
     def _gen(val):
         tmp_dir.gen({"m_temp.yaml": str(val)})
-        run_copy_metrics(
-            "m_temp.yaml", "m.yaml", name="copy-metrics", metrics=["m.yaml"]
-        )
+        run_copy_metrics("m_temp.yaml", "m.yaml", name="copy-metrics", metrics=["m.yaml"])
         dvc.scm.commit(str(val))
 
     _gen(1)
@@ -223,9 +217,7 @@ def test_metrics_diff_dirty(tmp_dir, scm, dvc, run_copy_metrics):
 def test_metrics_diff_cli(tmp_dir, scm, dvc, run_copy_metrics, caplog, capsys):
     def _gen(val):
         tmp_dir.gen({"m_temp.yaml": f"foo: {val}"})
-        run_copy_metrics(
-            "m_temp.yaml", "m.yaml", name="copy-metrics", metrics=["m.yaml"]
-        )
+        run_copy_metrics("m_temp.yaml", "m.yaml", name="copy-metrics", metrics=["m.yaml"])
         dvc.scm.commit(str(val))
 
     _gen(1.23456789)
@@ -253,9 +245,7 @@ def test_metrics_diff_non_metrics(tmp_dir, scm, dvc):
     _gen(3)
 
     result = dvc.metrics.diff(targets=["some_file.yaml"], a_rev="HEAD~2")
-    assert result == {
-        "diff": {"some_file.yaml": {"foo": {"old": 1, "new": 3, "diff": 2}}}
-    }
+    assert result == {"diff": {"some_file.yaml": {"foo": {"old": 1, "new": 3, "diff": 2}}}}
 
 
 @pytest.mark.parametrize(
@@ -277,9 +267,7 @@ def test_diff_top_level_metrics(tmp_dir, dvc, scm, dvcfile, metrics_file):
 
     metrics_file.dump({"foo": 5})
     assert dvc.metrics.diff() == {
-        "diff": {
-            relpath(directory / metrics_file): {"foo": {"diff": 2, "new": 5, "old": 3}}
-        }
+        "diff": {relpath(directory / metrics_file): {"foo": {"diff": 2, "new": 5, "old": 3}}}
     }
 
 

@@ -1,5 +1,5 @@
-from collections.abc import Iterable
-from typing import TYPE_CHECKING, Callable, NoReturn, Optional, TypeVar, Union, cast
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING, NoReturn, Optional, TypeVar, cast
 
 from funcy import ldistinct
 
@@ -37,7 +37,7 @@ def collect_stages(
 
 def get_subgraph(
     graph: "DiGraph",
-    nodes: Optional[list] = None,
+    nodes: list | None = None,
     pipeline: bool = False,
     downstream: bool = False,
 ) -> "DiGraph":
@@ -64,7 +64,7 @@ def get_active_graph(graph: "DiGraph") -> "DiGraph":
 
 def plan_repro(
     graph: "DiGraph",
-    stages: Optional[list["T"]] = None,
+    stages: list["T"] | None = None,
     pipeline: bool = False,
     downstream: bool = False,
 ) -> list["T"]:
@@ -120,9 +120,7 @@ def _reproduce_stage(stage: "Stage", **kwargs) -> Optional["Stage"]:
     return ret
 
 
-def _get_upstream_downstream_nodes(
-    graph: Optional["DiGraph"], node: T
-) -> tuple[list[T], list[T]]:
+def _get_upstream_downstream_nodes(graph: Optional["DiGraph"], node: T) -> tuple[list[T], list[T]]:
     succ = list(graph.successors(node)) if graph else []
     pre = list(graph.predecessors(node)) if graph else []
     return succ, pre
@@ -149,7 +147,7 @@ def handle_error(
     return dependents
 
 
-def _raise_error(exc: Optional[Exception], *stages: "Stage") -> NoReturn:
+def _raise_error(exc: Exception | None, *stages: "Stage") -> NoReturn:
     names = _repr(stages)
     segment = " stages:" if len(stages) > 1 else ""
     raise ReproductionError(f"failed to reproduce{segment} {names}") from exc
@@ -169,7 +167,7 @@ def _reproduce(
     result: list[Stage] = []
     failed: list[Stage] = []
     to_skip: dict[Stage, Stage] = {}
-    ret: Optional[Stage] = None
+    ret: Stage | None = None
 
     force_state = dict.fromkeys(stages, force)
 
@@ -209,14 +207,14 @@ def _reproduce(
 @scm_context
 def reproduce(
     self: "Repo",
-    targets: Union[Iterable[str], str, None] = None,
+    targets: Iterable[str] | str | None = None,
     recursive: bool = False,
     pipeline: bool = False,
     all_pipelines: bool = False,
     downstream: bool = False,
     single_item: bool = False,
     glob: bool = False,
-    on_error: Optional[str] = "fail",
+    on_error: str | None = "fail",
     **kwargs,
 ):
     from dvc.dvcfile import PROJECT_FILE

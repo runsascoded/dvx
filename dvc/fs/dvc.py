@@ -13,9 +13,9 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 from fsspec.spec import DEFAULT_CALLBACK, AbstractFileSystem
 from funcy import wrap_with
 
-from dvc_objects.fs.base import AnyFSPath, FileSystem
 from dvc.log import logger
 from dvc.utils.threadpool import ThreadPoolExecutor
+from dvc_objects.fs.base import AnyFSPath, FileSystem
 
 from .data import DataFileSystem
 

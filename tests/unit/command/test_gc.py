@@ -13,7 +13,6 @@ def test_(dvc, scm, mocker):
             "--all-tags",
             "--all-branches",
             "--all-commits",
-            "--all-experiments",
             "--date",
             "2022-06-30",
             "--cloud",
@@ -36,12 +35,12 @@ def test_(dvc, scm, mocker):
 
     assert cmd.run() == 0
 
+    # DVX doesn't have experiments, so all_experiments is not passed
     m.assert_called_once_with(
         workspace=True,
         all_tags=True,
         all_branches=True,
         all_commits=True,
-        all_experiments=True,
         commit_date="2022-06-30",
         cloud=True,
         remote="origin",

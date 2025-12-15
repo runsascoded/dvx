@@ -45,8 +45,7 @@ def test_relpath_windows():
     assert relpath("x:\\dir1\\dir2\\file.txt", "x:\\dir1") == "dir2\\file.txt"
 
     assert (
-        relpath("y:\\dir1\\dir2\\file.txt", "\\\\server\\share\\dir1")
-        == "y:\\dir1\\dir2\\file.txt"
+        relpath("y:\\dir1\\dir2\\file.txt", "\\\\server\\share\\dir1") == "y:\\dir1\\dir2\\file.txt"
     )
 
 
@@ -118,9 +117,7 @@ def test_parse_target(inp, out, default):
 
 
 def test_hint_on_lockfile():
-    with pytest.raises(
-        Exception, match=re.escape("Did you mean: `dvc.yaml:name`?")
-    ) as e:
+    with pytest.raises(Exception, match=re.escape("Did you mean: `dvc.yaml:name`?")) as e:
         assert parse_target("dvc.lock:name")
     assert "dvc.yaml:name" in str(e.value)
 

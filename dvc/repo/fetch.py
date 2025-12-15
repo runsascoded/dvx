@@ -1,10 +1,10 @@
 from typing import TYPE_CHECKING
 
-from dvc_data.index import DataIndex, FileStorage
 from dvc.exceptions import DownloadError
 from dvc.log import logger
 from dvc.stage.cache import RunCacheNotSupported
 from dvc.ui import ui
+from dvc_data.index import DataIndex, FileStorage
 
 from . import locked
 

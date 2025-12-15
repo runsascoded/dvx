@@ -8,10 +8,10 @@ from dvc.utils import as_posix
 from .base import Dependency
 
 if TYPE_CHECKING:
-    from dvc_data.hashfile.hash_info import HashInfo
     from dvc.fs import DVCFileSystem
     from dvc.output import Output
     from dvc.stage import Stage
+    from dvc_data.hashfile.hash_info import HashInfo
 
 
 class RepoDependency(Dependency):

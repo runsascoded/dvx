@@ -49,9 +49,7 @@ def extract_vega_specs(html_path, plots_ids):
         script = _remove_blanks(
             reader.find("div", id=Renderer.remove_special_chars(plot_id)).script.text
         )
-        result[plot_id] = json.loads(
-            script.split("; vegaEmbed")[0].replace("var spec = ", "")
-        )
+        result[plot_id] = json.loads(script.split("; vegaEmbed")[0].replace("var spec = ", ""))
 
     return result
 
@@ -96,9 +94,7 @@ def _remove_blanks(text: str):
     return " ".join(text.replace("\t", "").replace("\n", "").split())
 
 
-def verify_vega(
-    versions, html_result, json_result, split_json_result, title, x_label, y_label
-):
+def verify_vega(versions, html_result, json_result, split_json_result, title, x_label, y_label):
     if isinstance(versions, str):
         versions = [versions]
 
@@ -211,9 +207,7 @@ def test_repo_with_plots(tmp_dir, scm, dvc, capsys, run_copy_metrics, repo_with_
     json_data = json_result["data"]
     split_json_data = split_json_result["data"]
 
-    assert json_data["linear.json"][0]["content"]["data"][
-        "values"
-    ] == _update_datapoints(
+    assert json_data["linear.json"][0]["content"]["data"]["values"] == _update_datapoints(
         linear_v1,
         {
             REVISION: "workspace",
@@ -225,9 +219,7 @@ def test_repo_with_plots(tmp_dir, scm, dvc, capsys, run_copy_metrics, repo_with_
             REVISION: "workspace",
         },
     )
-    assert json_data["confusion.json"][0]["content"]["data"][
-        "values"
-    ] == _update_datapoints(
+    assert json_data["confusion.json"][0]["content"]["data"]["values"] == _update_datapoints(
         confusion_v1,
         {
             REVISION: "workspace",
@@ -299,9 +291,7 @@ def test_repo_with_plots(tmp_dir, scm, dvc, capsys, run_copy_metrics, repo_with_
 
         json_data = json_result["data"]
         split_json_data = split_json_result["data"]
-        assert json_data["../linear.json"][0]["content"]["data"][
-            "values"
-        ] == _update_datapoints(
+        assert json_data["../linear.json"][0]["content"]["data"]["values"] == _update_datapoints(
             linear_v2,
             {
                 REVISION: "workspace",
@@ -323,9 +313,7 @@ def test_repo_with_plots(tmp_dir, scm, dvc, capsys, run_copy_metrics, repo_with_
                 REVISION: "HEAD",
             },
         )
-        assert json_data["../confusion.json"][0]["content"]["data"][
-            "values"
-        ] == _update_datapoints(
+        assert json_data["../confusion.json"][0]["content"]["data"]["values"] == _update_datapoints(
             confusion_v2,
             {
                 REVISION: "workspace",
@@ -468,22 +456,10 @@ def test_repo_with_config_plots(tmp_dir, capsys, repo_with_config_plots):
         ]
         == ble
     )
-    assert (
-        html_result["subdirA/linear_subdir.json"]["layer"][1]["encoding"]["x"]["field"]
-        == "x"
-    )
-    assert (
-        html_result["subdirA/linear_subdir.json"]["layer"][1]["encoding"]["y"]["field"]
-        == "y"
-    )
-    assert (
-        html_result["subdirB/linear_subdir.json"]["layer"][1]["encoding"]["x"]["field"]
-        == "step"
-    )
-    assert (
-        html_result["subdirB/linear_subdir.json"]["layer"][1]["encoding"]["y"]["field"]
-        == "y"
-    )
+    assert html_result["subdirA/linear_subdir.json"]["layer"][1]["encoding"]["x"]["field"] == "x"
+    assert html_result["subdirA/linear_subdir.json"]["layer"][1]["encoding"]["y"]["field"] == "y"
+    assert html_result["subdirB/linear_subdir.json"]["layer"][1]["encoding"]["x"]["field"] == "step"
+    assert html_result["subdirB/linear_subdir.json"]["layer"][1]["encoding"]["y"]["field"] == "y"
 
 
 @pytest.mark.vscode
@@ -507,9 +483,7 @@ def test_nested_x_defn_collection(tmp_dir, dvc, scm, capsys):
     pipeline_rel_dvclive_metrics_dir = "dvclive/plots/metrics"
     pipeline_rel_other_logger_dir = "other/logger"
 
-    dvc_rel_dvclive_metrics_dir = (
-        f"{rel_pipeline_dir}/{pipeline_rel_dvclive_metrics_dir}"
-    )
+    dvc_rel_dvclive_metrics_dir = f"{rel_pipeline_dir}/{pipeline_rel_dvclive_metrics_dir}"
     dvc_rel_other_logger_dir = f"{rel_pipeline_dir}/{pipeline_rel_other_logger_dir}"
 
     pipeline_dir = tmp_dir / rel_pipeline_dir
@@ -578,9 +552,7 @@ def test_nested_x_defn_collection(tmp_dir, dvc, scm, capsys):
         {"Error": "0.44", "Max_Leaf_Nodes": "500", "step": "2", "rev": "workspace"},
     ]
 
-    same_x_file = split_json_result["data"][
-        f"{dvc_rel_other_logger_dir}/multiple_metrics.json"
-    ][0]
+    same_x_file = split_json_result["data"][f"{dvc_rel_other_logger_dir}/multiple_metrics.json"][0]
     assert same_x_file["anchor_definitions"]["<DVC_METRIC_DATA>"] == [
         {
             "x": 0,
@@ -616,9 +588,7 @@ def test_nested_x_defn_collection(tmp_dir, dvc, scm, capsys):
         },
     ]
 
-    inferred_x_from_str = split_json_result["data"][
-        f"{dvc_rel_dvclive_metrics_dir}/Error.tsv"
-    ][0]
+    inferred_x_from_str = split_json_result["data"][f"{dvc_rel_dvclive_metrics_dir}/Error.tsv"][0]
     assert inferred_x_from_str["anchor_definitions"]["<DVC_METRIC_DATA>"] == [
         {"step": 0, "Error": "0.11", "rev": "workspace"},
         {"step": 1, "Error": "0.22", "rev": "workspace"},

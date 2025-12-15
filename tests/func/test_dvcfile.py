@@ -160,9 +160,7 @@ def test_remove_stage(tmp_dir, dvc, run_copy):
 
     dvc_file = load_file(dvc, PROJECT_FILE)
     assert dvc_file.exists()
-    assert {"copy-bar-foobar", "copy-foo-bar"} == set(
-        dvc_file._load()[0]["stages"].keys()
-    )
+    assert {"copy-bar-foobar", "copy-foo-bar"} == set(dvc_file._load()[0]["stages"].keys())
 
     dvc_file.remove_stage(stage)
 
@@ -270,10 +268,7 @@ def test_remove_stage_preserves_comment(tmp_dir, dvc, run_copy):
     assert (tmp_dir / "bar").exists()
 
     dvc_file.remove_stage(dvc_file.stages["copy-foo-bar"])
-    assert (
-        "# This copies 'foo' text to 'foo' file."
-        in (tmp_dir / PROJECT_FILE).read_text()
-    )
+    assert "# This copies 'foo' text to 'foo' file." in (tmp_dir / PROJECT_FILE).read_text()
 
 
 def test_remove_stage_removes_dvcfiles_if_no_stages_left(tmp_dir, dvc, run_copy):
@@ -396,9 +391,7 @@ def test_dvcfile_load_with_plots(tmp_dir, dvc):
     )
     plots = list(dvc.plots.collect())
     top_level_plots = plots[0]["workspace"]["definitions"]["data"]["dvc.yaml"]["data"]
-    assert all(
-        name in top_level_plots for name in ("path/to/plot", "path/to/another/plot")
-    )
+    assert all(name in top_level_plots for name in ("path/to/plot", "path/to/another/plot"))
 
 
 def test_dvcfile_dos2unix(tmp_dir, dvc):

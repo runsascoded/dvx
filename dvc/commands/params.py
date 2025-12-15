@@ -25,8 +25,7 @@ class CmdParamsDiff(CmdBase):
         errored = [rev for rev, err in diff_result.get("errors", {}).items() if err]
         if errored:
             ui.error_write(
-                "DVC failed to load some metrics for following revisions:"
-                f" '{', '.join(errored)}'."
+                f"DVC failed to load some metrics for following revisions: '{', '.join(errored)}'."
             )
 
         start = relpath(os.getcwd(), self.repo.root_dir)

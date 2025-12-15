@@ -29,9 +29,7 @@ def test_no_params_yaml_and_vars(tmp_dir, dvc):
 
 
 def test_local_vars(tmp_dir, dvc):
-    resolver = DataResolver(
-        dvc, tmp_dir.fs_path, {"vars": [{"foo": "bar", "bar": "foo"}]}
-    )
+    resolver = DataResolver(dvc, tmp_dir.fs_path, {"vars": [{"foo": "bar", "bar": "foo"}]})
     assert resolver.context == {"foo": "bar", "bar": "foo"}
 
 
@@ -40,8 +38,7 @@ def test_vars_interpolation_errors(tmp_dir, dvc, vars_):
     with pytest.raises(ResolveError) as exc_info:
         DataResolver(dvc, tmp_dir.fs_path, {"vars": [vars_, {"bar": "foo"}]})
     assert (
-        str(exc_info.value)
-        == "failed to parse 'vars' in 'dvc.yaml': interpolating is not allowed"
+        str(exc_info.value) == "failed to parse 'vars' in 'dvc.yaml': interpolating is not allowed"
     )
 
 
@@ -165,9 +162,7 @@ def test_vars_already_loaded_message(tmp_dir, dvc, local, vars_):
     assert "partially" in str(exc_info.value)
 
 
-@pytest.mark.parametrize(
-    "vars_, loc", [(DATA, "build.vars[0]"), ("params.json", "params.json")]
-)
+@pytest.mark.parametrize("vars_, loc", [(DATA, "build.vars[0]"), ("params.json", "params.json")])
 def test_local_overwrite_error(tmp_dir, dvc, vars_, loc):
     (tmp_dir / DEFAULT_PARAMS_FILE).dump(DATA)
     (tmp_dir / "params.json").dump(DATA)

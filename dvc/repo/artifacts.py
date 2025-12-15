@@ -1,7 +1,7 @@
 import os
 import posixpath
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional
 
 from dvc.annotations import Artifact
 from dvc.dvcfile import PROJECT_FILE
@@ -33,9 +33,7 @@ def check_name_format(name: str) -> None:
     try:
         assert_name_is_valid(name)
     except ValidationError as exc:
-        raise InvalidArgumentError(
-            f"Can't use '{name}' as artifact name (ID)."
-        ) from exc
+        raise InvalidArgumentError(f"Can't use '{name}' as artifact name (ID).") from exc
 
 
 def name_is_compatible(name: str) -> bool:
@@ -61,9 +59,7 @@ def check_for_nested_dvc_repo(dvcfile: Path):
     path = dvcfile.parent
     while path.name:
         if (path / Repo.DVC_DIR).is_dir():
-            raise InvalidArgumentError(
-                f"Nested DVC repos like {path} are not supported."
-            )
+            raise InvalidArgumentError(f"Nested DVC repos like {path} are not supported.")
         path = path.parent
 
 
@@ -109,15 +105,13 @@ class Artifacts:
                 artifacts[dvcyaml][name] = Artifact(**value)
         return artifacts
 
-    def add(self, name: str, artifact: Artifact, dvcfile: Optional[str] = None):
+    def add(self, name: str, artifact: Artifact, dvcfile: str | None = None):
         """Add artifact to dvc.yaml."""
         with self.repo.scm_context(quiet=True):
             check_name_format(name)
             dvcyaml = Path(dvcfile or PROJECT_FILE)
             check_for_nested_dvc_repo(
-                dvcyaml.relative_to(self.repo.root_dir)
-                if dvcyaml.is_absolute()
-                else dvcyaml
+                dvcyaml.relative_to(self.repo.root_dir) if dvcyaml.is_absolute() else dvcyaml
             )
 
             with modify_yaml(dvcyaml) as data:
@@ -128,9 +122,7 @@ class Artifacts:
 
         return artifacts.get(name)
 
-    def get_rev(
-        self, name: str, version: Optional[str] = None, stage: Optional[str] = None
-    ):
+    def get_rev(self, name: str, version: str | None = None, stage: str | None = None):
         """Return revision containing the given artifact."""
         from gto.base import sort_versions
         from gto.tag import find, parse_tag
@@ -146,7 +138,7 @@ class Artifacts:
         return gto_tags[0].tag.target
 
     @classmethod
-    def parse_path(cls, name: str) -> tuple[Optional[str], str]:
+    def parse_path(cls, name: str) -> tuple[str | None, str]:
         from gto.constants import SEPARATOR_IN_NAME, fullname_re
 
         name = _reformat_name(name)
@@ -191,11 +183,11 @@ class Artifacts:
     def download(
         self,
         name: str,
-        version: Optional[str] = None,
-        stage: Optional[str] = None,
-        out: Optional[str] = None,
+        version: str | None = None,
+        stage: str | None = None,
+        out: str | None = None,
         force: bool = False,
-        jobs: Optional[int] = None,
+        jobs: int | None = None,
     ) -> tuple[int, str]:
         """Download the specified artifact."""
         from dvc.fs import download as fs_download
@@ -227,12 +219,12 @@ class Artifacts:
     def _download_studio(
         repo_url: str,
         name: str,
-        version: Optional[str] = None,
-        stage: Optional[str] = None,
-        out: Optional[str] = None,
+        version: str | None = None,
+        stage: str | None = None,
+        out: str | None = None,
         force: bool = False,
-        jobs: Optional[int] = None,
-        dvc_studio_config: Optional[dict[str, Any]] = None,
+        jobs: int | None = None,
+        dvc_studio_config: dict[str, Any] | None = None,
         **kwargs,
     ) -> tuple[int, str]:
         from dvc.fs import HTTPFileSystem, generic, localfs
@@ -266,9 +258,7 @@ class Artifacts:
         except DvcException:
             raise
         except Exception as exc:
-            raise DvcException(
-                f"Failed to download artifact '{name}' via Studio"
-            ) from exc
+            raise DvcException(f"Failed to download artifact '{name}' via Studio") from exc
         fs = HTTPFileSystem()
         jobs = jobs or fs.jobs
         with TqdmCallback(
@@ -276,9 +266,7 @@ class Artifacts:
             unit="files",
         ) as cb:
             cb.set_size(len(from_infos))
-            generic.copy(
-                fs, from_infos, localfs, to_infos, callback=cb, batch_size=jobs
-            )
+            generic.copy(fs, from_infos, localfs, to_infos, callback=cb, batch_size=jobs)
 
         return len(to_infos), relpath(localfs.commonpath(to_infos))
 
@@ -287,22 +275,20 @@ class Artifacts:
         cls,
         url: str,
         name: str,
-        version: Optional[str] = None,
-        stage: Optional[str] = None,
-        config: Optional[Union[str, dict[str, Any]]] = None,
-        remote: Optional[str] = None,
-        remote_config: Optional[Union[str, dict[str, Any]]] = None,
-        out: Optional[str] = None,
+        version: str | None = None,
+        stage: str | None = None,
+        config: str | dict[str, Any] | None = None,
+        remote: str | None = None,
+        remote_config: str | dict[str, Any] | None = None,
+        out: str | None = None,
         force: bool = False,
-        jobs: Optional[int] = None,
+        jobs: int | None = None,
     ):
         from dvc.config import Config
         from dvc.repo import Repo
 
         if version and stage:
-            raise InvalidArgumentError(
-                "Artifact version and stage are mutually exclusive."
-            )
+            raise InvalidArgumentError("Artifact version and stage are mutually exclusive.")
 
         # NOTE: We try to download the artifact up to three times
         # 1. via studio with studio config loaded from environment
@@ -311,7 +297,7 @@ class Artifacts:
         # 3. via DVC remote
 
         name = _reformat_name(name)
-        saved_exc: Optional[Exception] = None
+        saved_exc: Exception | None = None
 
         local_dvc_studio_config = Config().get("studio", {})
         args_dvc_studio_config = {}
@@ -378,6 +364,4 @@ class Artifacts:
             except Exception as exc:
                 if saved_exc:
                     logger.exception(str(saved_exc), exc_info=saved_exc.__cause__)
-                raise DvcException(
-                    f"Failed to download artifact '{name}' via DVC remote"
-                ) from exc
+                raise DvcException(f"Failed to download artifact '{name}' via DVC remote") from exc

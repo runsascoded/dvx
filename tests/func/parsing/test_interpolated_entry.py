@@ -64,12 +64,8 @@ def test_vars_and_params_import(tmp_dir, dvc):
     (tmp_dir / DEFAULT_PARAMS_FILE).dump({"dict": {"bar": "bar"}})
     resolver = DataResolver(dvc, tmp_dir.fs_path, d)
 
-    assert_stage_equal(
-        resolver.resolve(), {"stages": {"stage1": {"cmd": "echo foobar bar"}}}
-    )
-    assert resolver.tracked_vars == {
-        "stage1": {DEFAULT_PARAMS_FILE: {"dict.bar": "bar"}}
-    }
+    assert_stage_equal(resolver.resolve(), {"stages": {"stage1": {"cmd": "echo foobar bar"}}})
+    assert resolver.tracked_vars == {"stage1": {DEFAULT_PARAMS_FILE: {"dict.bar": "bar"}}}
 
 
 def test_stage_with_wdir(tmp_dir, dvc):

@@ -543,10 +543,7 @@ def test_get_hash_cached_granular(tmp_dir, dvc, mocker):
     _, _, obj = build(dvc.cache.local, posixpath.join(subdir, "data"), fs, "md5")
     assert obj.hash_info == HashInfo("md5", "8d777f385d3dfec8815d20f7496026dc")
     (tmp_dir / "dir" / "subdir" / "data").unlink()
-    assert (
-        fs.info(posixpath.join(subdir, "data"))["md5"]
-        == "8d777f385d3dfec8815d20f7496026dc"
-    )
+    assert fs.info(posixpath.join(subdir, "data"))["md5"] == "8d777f385d3dfec8815d20f7496026dc"
 
 
 def test_get_hash_mixed_dir(tmp_dir, scm, dvc):
@@ -642,9 +639,7 @@ def test_walk_nested_subrepos(tmp_dir, dvc, scm, traverse_subrepos):
 
         if traverse_subrepos or repo_dir == tmp_dir:
             repo_dir_path = (
-                "/" + repo_dir.relative_to(tmp_dir).as_posix()
-                if repo_dir != tmp_dir
-                else "/"
+                "/" + repo_dir.relative_to(tmp_dir).as_posix() if repo_dir != tmp_dir else "/"
             )
             expected[repo_dir_path] = set(scm_files.keys() | dvc_files.keys() | extras)
             # files inside a dvc directory

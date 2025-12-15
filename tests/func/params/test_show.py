@@ -16,9 +16,7 @@ def test_show_empty(dvc):
 def test_show(tmp_dir, dvc):
     tmp_dir.gen("params.yaml", "foo: bar")
     dvc.run(cmd="echo params.yaml", params=["foo"], name="echo-params")
-    assert dvc.params.show() == {
-        "": {"data": {"params.yaml": {"data": {"foo": "bar"}}}}
-    }
+    assert dvc.params.show() == {"": {"data": {"params.yaml": {"data": {"foo": "bar"}}}}}
 
 
 def test_show_targets(tmp_dir, dvc):
@@ -48,13 +46,7 @@ def test_show_py(tmp_dir, dvc):
         name="echo-params",
     )
     assert dvc.params.show() == {
-        "": {
-            "data": {
-                "params.py": {
-                    "data": {"CONST": 1, "Config": {"foo": 42}, "IS_DIR": True}
-                }
-            }
-        }
+        "": {"data": {"params.py": {"data": {"CONST": 1, "Config": {"foo": 42}, "IS_DIR": True}}}}
     }
 
 
@@ -70,9 +62,7 @@ def test_show_multiple(tmp_dir, dvc):
 def test_show_list(tmp_dir, dvc):
     tmp_dir.gen("params.yaml", "foo:\n- bar\n- baz\n")
     dvc.run(cmd="echo params.yaml", params=["foo"], name="echo-params")
-    assert dvc.params.show() == {
-        "": {"data": {"params.yaml": {"data": {"foo": ["bar", "baz"]}}}}
-    }
+    assert dvc.params.show() == {"": {"data": {"params.yaml": {"data": {"foo": ["bar", "baz"]}}}}}
 
 
 def test_show_branch(tmp_dir, scm, dvc):
@@ -103,11 +93,7 @@ def test_pipeline_params(tmp_dir, scm, dvc, run_copy):
         "master": {"data": {"params.yaml": {"data": {"foo": "qux", "xyz": "val"}}}}
     }
     assert dvc.params.show(revs=["master"]) == {
-        "master": {
-            "data": {
-                "params.yaml": {"data": {"abc": "ignore", "foo": "qux", "xyz": "val"}}
-            }
-        }
+        "master": {"data": {"params.yaml": {"data": {"abc": "ignore", "foo": "qux", "xyz": "val"}}}}
     }
 
 
@@ -153,11 +139,7 @@ def test_deps_with_targets(tmp_dir, scm, dvc, run_copy):
     scm.commit("add stage")
 
     assert dvc.params.show(targets=["params.yaml"], deps_only=True) == {
-        "": {
-            "data": {
-                "params.yaml": {"data": {"abc": "ignore", "foo": "bar", "xyz": "val"}}
-            }
-        }
+        "": {"data": {"params.yaml": {"data": {"abc": "ignore", "foo": "bar", "xyz": "val"}}}}
     }
 
 

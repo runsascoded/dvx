@@ -895,9 +895,7 @@ def test_ls_tree_dvc_only(M, tmp_dir, scm, dvc):
 
     expected = {
         ".": {
-            "data": {
-                "subcontent": {"data.xml": None, "statistics": {"data.csv": None}}
-            },
+            "data": {"subcontent": {"data.xml": None, "statistics": {"data.csv": None}}},
             "model": {"people.csv": None},
             "structure.xml": None,
         }

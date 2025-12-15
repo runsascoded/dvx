@@ -113,9 +113,7 @@ def test_ask_password_custom_auth_header(mocker):
         "host": host,
     }
     fs = WebDAVFileSystem(**config)
-    assert issubset(
-        {"headers": {custom_auth_header: password}, "auth": None}, fs.fs_args
-    )
+    assert issubset({"headers": {custom_auth_header: password}, "auth": None}, fs.fs_args)
 
     config.pop("password")
     fs = WebDAVFileSystem(**config)
@@ -157,9 +155,7 @@ def test_remote_with_jobs(dvc, base_url, fs_cls):
 
 def test_bearer_token_command(mocker):
     mock_auth_obj = mocker.Mock()
-    mock_get_auth = mocker.patch(
-        "dvc_webdav.get_bearer_auth", return_value=mock_auth_obj
-    )
+    mock_get_auth = mocker.patch("dvc_webdav.get_bearer_auth", return_value=mock_auth_obj)
 
     command = "my-token-cmd.sh"
     timeout = 10

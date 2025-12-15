@@ -49,9 +49,7 @@ def test_update_import(tmp_dir, dvc, erepo_dir, cached):
     assert old_rev != new_rev
 
     assert dvc.status() == {
-        "dir.dvc": [
-            {"changed deps": {f"dir ({os.fspath(erepo_dir)})": "update available"}}
-        ],
+        "dir.dvc": [{"changed deps": {f"dir ({os.fspath(erepo_dir)})": "update available"}}],
         "version.dvc": [
             {"changed deps": {f"version ({os.fspath(erepo_dir)})": "update available"}}
         ],
@@ -132,9 +130,7 @@ def test_update_before_and_after_dvc_init(tmp_dir, dvc, git_dir):
     assert old_rev != new_rev
 
     assert dvc.status([stage.path]) == {
-        "file.dvc": [
-            {"changed deps": {f"file ({os.fspath(git_dir)})": "update available"}}
-        ]
+        "file.dvc": [{"changed deps": {f"file ({os.fspath(git_dir)})": "update available"}}]
     }
 
     dvc.update([stage.path])
@@ -209,9 +205,7 @@ def test_update_import_url_no_download(tmp_dir, dvc, workspace, outs_exist, mock
     workspace.gen("file", "file content")
 
     dst = tmp_dir / "imported_file"
-    stage = dvc.imp_url(
-        "remote://workspace/file", os.fspath(dst), no_download=not outs_exist
-    )
+    stage = dvc.imp_url("remote://workspace/file", os.fspath(dst), no_download=not outs_exist)
 
     assert dst.exists() is outs_exist
     hash_info = stage.deps[0].hash_info
@@ -288,9 +282,7 @@ def test_update_recursive(tmp_dir, dvc, erepo_dir):
         old_rev = erepo_dir.scm.get_rev()
 
     tmp_dir.gen({"dir": {"subdir": {}}})
-    stage1 = dvc.imp(
-        os.fspath(erepo_dir), "foo1", os.path.join("dir", "foo1"), rev="branch"
-    )
+    stage1 = dvc.imp(os.fspath(erepo_dir), "foo1", os.path.join("dir", "foo1"), rev="branch")
     stage2 = dvc.imp(
         os.fspath(erepo_dir),
         "foo2",
@@ -383,9 +375,7 @@ def test_update_import_url_to_remote(tmp_dir, dvc, workspace, local_remote):
     assert (tmp_dir / "foo").read_text() == "bar"
 
 
-def test_update_import_url_to_remote_directory(
-    mocker, tmp_dir, dvc, workspace, local_remote
-):
+def test_update_import_url_to_remote_directory(mocker, tmp_dir, dvc, workspace, local_remote):
     workspace.gen({"data": {"foo": "foo", "bar": {"baz": "baz"}}})
     stage = dvc.imp_url("remote://workspace/data", to_remote=True)
 
@@ -427,9 +417,7 @@ def test_update_import_url_to_remote_directory_changed_contents(
     local_workspace.gen({"data": {"foo": "foo", "bar": {"baz": "baz"}}})
     stage = dvc.imp_url("remote://workspace/data", to_remote=True)
 
-    local_workspace.gen(
-        {"data": {"foo": "not_foo", "foo2": "foo", "bar": {"baz2": "baz2"}}}
-    )
+    local_workspace.gen({"data": {"foo": "not_foo", "foo2": "foo", "bar": {"baz2": "baz2"}}})
     (updated,) = dvc.update(stage.path, to_remote=True)
 
     assert stage.deps[0].hash_info != updated.deps[0].hash_info

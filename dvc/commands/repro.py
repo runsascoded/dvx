@@ -129,9 +129,7 @@ and then the stage name name.
         "--dry",
         action="store_true",
         default=False,
-        help=(
-            "Only print the commands that would be executed without actually executing."
-        ),
+        help=("Only print the commands that would be executed without actually executing."),
     )
     repro_parser.add_argument(
         "-k",
@@ -140,10 +138,7 @@ and then the stage name name.
         default="fail",
         const="keep-going",
         dest="on_error",
-        help=(
-            "Continue executing, skipping stages having dependencies "
-            "on the failed stages"
-        ),
+        help=("Continue executing, skipping stages having dependencies on the failed stages"),
     )
     repro_parser.add_argument(
         "--ignore-errors",

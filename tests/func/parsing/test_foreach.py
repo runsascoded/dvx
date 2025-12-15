@@ -32,12 +32,8 @@ def test_with_dict_data(tmp_dir, dvc):
     data = {"foreach": foreach_data, "do": {"cmd": "echo ${key} ${item}"}}
     definition = ForeachDefinition(resolver, context, "build", data)
 
-    assert definition.resolve_one("model1") == {
-        "build@model1": {"cmd": "echo model1 foo"}
-    }
-    assert definition.resolve_one("model2") == {
-        "build@model2": {"cmd": "echo model2 bar"}
-    }
+    assert definition.resolve_one("model1") == {"build@model1": {"cmd": "echo model1 foo"}}
+    assert definition.resolve_one("model2") == {"build@model2": {"cmd": "echo model2 bar"}}
 
     # check that `foreach` item-key replacement didnot leave any leftovers.
     assert not context
@@ -112,9 +108,7 @@ def test_foreach_interpolated_simple_list(tmp_dir, dvc):
         ),
     ],
 )
-def test_foreach_interpolate_with_composite_data(
-    tmp_dir, dvc, foreach_def, foreach_data, result
-):
+def test_foreach_interpolate_with_composite_data(tmp_dir, dvc, foreach_def, foreach_data, result):
     vars_ = [{"models": foreach_data}]
     resolver = DataResolver(dvc, tmp_dir.fs_path, {"vars": vars_})
     data = {"foreach": "${models}", "do": {"cmd": f"echo {foreach_def}"}}
@@ -304,9 +298,7 @@ def test_foreach_with_local_vars(tmp_dir, dvc):
 )
 def test_foreach_with_imported_vars(tmp_dir, dvc, local_import):
     (tmp_dir / "params.yaml").dump({"models": {"model1": {"thresh": "foo"}}})
-    (tmp_dir / "test_params.yaml").dump(
-        {"train": {"epochs": 10}, "prepare": {"nums": 25}}
-    )
+    (tmp_dir / "test_params.yaml").dump({"train": {"epochs": 10}, "prepare": {"nums": 25}})
     resolver = DataResolver(dvc, tmp_dir.fs_path, {})
     foreach_data = ["foo", "bar"]
     data = {
@@ -402,9 +394,7 @@ def test_foreach_with_interpolated_wdir_and_local_vars(tmp_dir, dvc, local_impor
 def test_foreach_do_syntax_is_checked_once(tmp_dir, dvc, mocker):
     do_def = {"cmd": "python script.py --epochs ${item}"}
     data = {"foreach": [0, 1, 2, 3, 4], "do": do_def}
-    definition = ForeachDefinition(
-        DataResolver(dvc, tmp_dir.fs_path, {}), Context(), "build", data
-    )
+    definition = ForeachDefinition(DataResolver(dvc, tmp_dir.fs_path, {}), Context(), "build", data)
     mock = mocker.patch("dvc.parsing.check_syntax_errors", return_value=True)
     definition.resolve_all()
 
@@ -414,9 +404,7 @@ def test_foreach_do_syntax_is_checked_once(tmp_dir, dvc, mocker):
 def test_foreach_data_is_only_resolved_once(tmp_dir, dvc, mocker):
     context = Context(models=["foo", "bar", "baz"])
     data = {"foreach": "${models}", "do": {}}
-    definition = ForeachDefinition(
-        DataResolver(dvc, tmp_dir.fs_path, {}), context, "build", data
-    )
+    definition = ForeachDefinition(DataResolver(dvc, tmp_dir.fs_path, {}), context, "build", data)
     mock = mocker.spy(definition, "_resolve_foreach_data")
 
     definition.resolve_all()

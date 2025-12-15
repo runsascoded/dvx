@@ -13,7 +13,6 @@ from collections.abc import Callable
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
-from dvc_objects.fs.local import LocalFileSystem
 from dvc.exceptions import PrettyDvcException
 from dvc.ui import ui
 from dvc.utils.serialize import (
@@ -22,6 +21,7 @@ from dvc.utils.serialize import (
     parse_yaml,
     parse_yaml_for_update,
 )
+from dvc_objects.fs.local import LocalFileSystem
 
 if TYPE_CHECKING:
     from rich.syntax import Syntax

@@ -58,9 +58,7 @@ def prepare_stages_data(
     max_length: int = MAX_TEXT_LENGTH,
 ) -> dict[str, str]:
     return {
-        stage.addressing: (
-            prepare_description(stage, max_length=max_length) if description else ""
-        )
+        stage.addressing: (prepare_description(stage, max_length=max_length) if description else "")
         for stage in stages
     }
 
@@ -258,10 +256,7 @@ def _add_common_args(parser):
         "--desc",
         type=str,
         metavar="<text>",
-        help=(
-            "User description of the stage (optional). "
-            "This doesn't affect any DVC operations."
-        ),
+        help=("User description of the stage (optional). This doesn't affect any DVC operations."),
     )
     parser.add_argument(
         "--run",
@@ -302,9 +297,7 @@ def add_parser(subparsers, parent_parser):
         help=STAGE_ADD_HELP,
         formatter_class=formatter.RawDescriptionHelpFormatter,
     )
-    stage_add_parser.add_argument(
-        "-n", "--name", help="Name of the stage to add", required=True
-    )
+    stage_add_parser.add_argument("-n", "--name", help="Name of the stage to add", required=True)
     _add_common_args(stage_add_parser)
     stage_add_parser.set_defaults(func=CmdStageAdd)
 
@@ -320,10 +313,7 @@ def add_parser(subparsers, parent_parser):
         "targets",
         nargs="*",
         default=["dvc.yaml"],
-        help=(
-            "Show stages from a dvc.yaml/.dvc file or a directory. "
-            "'dvc.yaml' by default"
-        ),
+        help=("Show stages from a dvc.yaml/.dvc file or a directory. 'dvc.yaml' by default"),
     )
     stage_list_parser.add_argument(
         "--all",

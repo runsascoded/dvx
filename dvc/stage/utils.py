@@ -4,9 +4,9 @@ from typing import TYPE_CHECKING, Any, Union
 
 from funcy import concat, first, lsplit, rpartial
 
-from dvc_data.hashfile.meta import Meta
 from dvc.annotations import ANNOTATION_FIELDS
 from dvc.exceptions import InvalidArgumentError
+from dvc_data.hashfile.meta import Meta
 
 from .exceptions import (
     MissingDataSource,

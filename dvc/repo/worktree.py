@@ -8,9 +8,6 @@ from dvc.log import logger
 from dvc.stage.exceptions import StageUpdateError
 
 if TYPE_CHECKING:
-    from dvc_data.hashfile.meta import Meta
-    from dvc_data.index import DataIndex, DataIndexView
-    from dvc_objects.fs.base import FileSystem
     from dvc.data_cloud import Remote
     from dvc.output import Output
     from dvc.repo import Repo
@@ -18,6 +15,9 @@ if TYPE_CHECKING:
     from dvc.repo.stage import StageInfo
     from dvc.stage import Stage
     from dvc.types import TargetType
+    from dvc_data.hashfile.meta import Meta
+    from dvc_data.index import DataIndex, DataIndexView
+    from dvc_objects.fs.base import FileSystem
 
 logger = logger.getChild(__name__)
 
@@ -221,8 +221,8 @@ def _fetch_out_changes(
     remote_index: Union["DataIndex", "DataIndexView"],
     remote: "Remote",
 ):
-    from dvc_data.index.checkout import apply, compare
     from dvc.fs.callbacks import TqdmCallback
+    from dvc_data.index.checkout import apply, compare
 
     old, new = _get_diff_indexes(out, local_index, remote_index)
 

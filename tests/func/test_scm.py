@@ -36,9 +36,7 @@ def test_lfs_prefetch(tmp_dir, dvc, scm, mocker):
         lfs_prefetch(dvc.dvcfs, ["foo"])
         mock_fetch.assert_not_called()
 
-    tmp_dir.scm_gen(
-        ".gitattributes", ".lfs filter=lfs diff=lfs merge=lfs -text", commit="init lfs"
-    )
+    tmp_dir.scm_gen(".gitattributes", ".lfs filter=lfs diff=lfs merge=lfs -text", commit="init lfs")
     rev = scm.get_rev()
     with dvc.switch(rev):
         lfs_prefetch(dvc.dvcfs, ["foo"])

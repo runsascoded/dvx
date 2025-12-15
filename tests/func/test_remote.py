@@ -170,9 +170,7 @@ def test_dir_hash_should_be_key_order_agnostic(tmp_dir, dvc, mocker):
     assert hash1 == hash2
 
 
-def test_partial_push_n_pull(
-    tmp_dir, dvc, tmp_path_factory, local_remote, mocker
-):
+def test_partial_push_n_pull(tmp_dir, dvc, tmp_path_factory, local_remote, mocker):
     from dvc_objects.fs import generic
 
     foo = tmp_dir.dvc_gen({"foo": "foo content"})[0].outs[0]
@@ -197,9 +195,7 @@ def test_partial_push_n_pull(
         for i in range(len(from_info) - 1, -1, -1):
             from_i = from_info[i]
             to_i = to_info[i]
-            if os.path.abspath(to_i) == os.path.abspath(
-                odb.get(foo.hash_info.value).path
-            ):
+            if os.path.abspath(to_i) == os.path.abspath(odb.get(foo.hash_info.value).path):
                 if on_error:
                     on_error(from_i, to_i, Exception("stop foo"))
                 del from_info[i]
@@ -241,9 +237,7 @@ def test_partial_push_n_pull(
     mocker.stop(mock_download)
 
 
-def test_raise_on_too_many_open_files(
-    tmp_dir, dvc, tmp_path_factory, mocker, local_remote
-):
+def test_raise_on_too_many_open_files(tmp_dir, dvc, tmp_path_factory, mocker, local_remote):
     tmp_dir.dvc_gen({"file": "file content"})
 
     mocker.patch(
@@ -264,9 +258,7 @@ def test_remote_modify_local_on_repo_config(tmp_dir, dvc):
     assert main(["remote", "add", "myremote", "http://example.com/path"]) == 0
     assert main(["remote", "modify", "myremote", "user", "xxx", "--local"]) == 0
     assert dvc.config.load_one("local")["remote"]["myremote"] == {"user": "xxx"}
-    assert dvc.config.load_one("repo")["remote"]["myremote"] == {
-        "url": "http://example.com/path"
-    }
+    assert dvc.config.load_one("repo")["remote"]["myremote"] == {"url": "http://example.com/path"}
     dvc.config.load()
     assert dvc.config["remote"]["myremote"] == {
         "url": "http://example.com/path",
@@ -288,11 +280,7 @@ def test_push_order(tmp_dir, dvc, tmp_path_factory, mocker, local_remote):
     odb = dvc.cloud.get_remote_odb("upstream")
     foo_path = odb.oid_to_path(foo.hash_info.value)
     bar_path = odb.oid_to_path(foo.obj._trie[("bar",)][1].value)
-    paths = list(
-        itertools.chain.from_iterable(
-            args[3] for args, _ in mocked_upload.call_args_list
-        )
-    )
+    paths = list(itertools.chain.from_iterable(args[3] for args, _ in mocked_upload.call_args_list))
     assert paths.index(foo_path) > paths.index(bar_path)
 
 
@@ -300,9 +288,7 @@ def test_remote_modify_validation(dvc):
     remote_name = "drive"
     unsupported_config = "unsupported_config"
     assert main(["remote", "add", "-d", remote_name, "gdrive://test/test"]) == 0
-    assert (
-        main(["remote", "modify", remote_name, unsupported_config, "something"]) == 251
-    )
+    assert main(["remote", "modify", remote_name, unsupported_config, "something"]) == 251
     config = configobj.ConfigObj(dvc.config.files["repo"])
     assert unsupported_config not in config[f'remote "{remote_name}"']
 

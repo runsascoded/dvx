@@ -113,9 +113,7 @@ def test_dump_multiple_pipeline_stages(tmp_dir, dvc):
 
 
 def test_dump_stages_single_stage(tmp_dir, dvc):
-    stage = dvc.stage.create(
-        fname="foo.dvc", outs=["out"], deps=["dep"], single_stage=True
-    )
+    stage = dvc.stage.create(fname="foo.dvc", outs=["out"], deps=["dep"], single_stage=True)
     stage.dvcfile.dump_stages([stage])
     assert (tmp_dir / "foo.dvc").parse() == {
         "deps": [{"hash": "md5", "path": "dep"}],

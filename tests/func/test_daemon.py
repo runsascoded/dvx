@@ -113,9 +113,7 @@ def test_analytics(tmp_path, server):
     assert match, "no match for the report file"
     report_file = match.group(1).strip()
 
-    match = re.search(
-        r".*Spawned .*analytics.* with pid (.*)", output, flags=re.MULTILINE
-    )
+    match = re.search(r".*Spawned .*analytics.* with pid (.*)", output, flags=re.MULTILINE)
     assert match, "no match for the pid"
     pid = int(match.group(1).strip())
 
@@ -150,9 +148,7 @@ def test_updater(tmp_dir, dvc, server):
         text=True,
     )
 
-    match = re.search(
-        r".*Spawned .*updater.* with pid (.*)", output, flags=re.MULTILINE
-    )
+    match = re.search(r".*Spawned .*updater.* with pid (.*)", output, flags=re.MULTILINE)
     assert match, "no match for the pid"
     pid = int(match.group(1).strip())
 

@@ -1,6 +1,6 @@
 import argparse
 import os
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from funcy import compact, first, get_in
 
@@ -22,7 +22,7 @@ logger = logger.getChild(__name__)
 def _show_json(
     renderers_with_errors: list["RendererWithErrors"],
     split=False,
-    errors: Optional[dict[str, Exception]] = None,
+    errors: dict[str, Exception] | None = None,
 ):
     from dvc.render.convert import to_json
     from dvc.utils.serialize import encode_exception
@@ -39,8 +39,7 @@ def _show_json(
             for source, e in per_rev_src_errors.items()
         )
         all_errors.extend(
-            {"name": name, "rev": rev, **encode_exception(e)}
-            for rev, e in def_errors.items()
+            {"name": name, "rev": rev, **encode_exception(e)} for rev, e in def_errors.items()
         )
 
     # these errors are not tied to any renderers
@@ -64,9 +63,7 @@ class CmdPlots(CmdBase):
     def _html_template_path(self):
         html_template_path = self.args.html_template
         if not html_template_path:
-            html_template_path = self.repo.config.get("plots", {}).get(
-                "html_template", None
-            )
+            html_template_path = self.repo.config.get("plots", {}).get("html_template", None)
             if html_template_path and not os.path.isabs(html_template_path):
                 assert self.repo.dvc_dir
                 html_template_path = os.path.join(self.repo.dvc_dir, html_template_path)
@@ -86,18 +83,14 @@ class CmdPlots(CmdBase):
                 logger.error("you can only specify one target for `--show-vega`")
                 return 1
             if self.args.json:
-                logger.error(
-                    "'--show-vega' and '--json' are mutually exclusive options."
-                )
+                logger.error("'--show-vega' and '--json' are mutually exclusive options.")
                 return 1
 
         try:
             plots_data = self._func(targets=self.args.targets, props=self._props())
 
             if not plots_data and not self.args.json:
-                ui.error_write(
-                    "No plots were loaded, visualization file will not be created."
-                )
+                ui.error_write("No plots were loaded, visualization file will not be created.")
 
             out: str = self.args.out or self.repo.config.get("plots", {}).get(
                 "out_dir", "dvc_plots"
@@ -174,9 +167,7 @@ class CmdPlotsDiff(CmdPlots):
 
 class CmdPlotsModify(CmdPlots):
     def run(self):
-        self.repo.plots.modify(
-            self.args.target, props=self._props(), unset=self.args.unset
-        )
+        self.repo.plots.modify(self.args.target, props=self._props(), unset=self.args.unset)
         return 0
 
 
@@ -219,9 +210,7 @@ def add_parser(subparsers, parent_parser):
         required=True,
     )
 
-    SHOW_HELP = (
-        "Generate plots from target files or from `plots` definitions in `dvc.yaml`."
-    )
+    SHOW_HELP = "Generate plots from target files or from `plots` definitions in `dvc.yaml`."
     plots_show_parser = plots_subparsers.add_parser(
         "show",
         parents=[parent_parser],
@@ -232,19 +221,14 @@ def add_parser(subparsers, parent_parser):
     plots_show_parser.add_argument(
         "targets",
         nargs="*",
-        help=(
-            "Plots files or plot IDs from `dvc.yaml` to visualize. "
-            "Shows all plots by default."
-        ),
+        help=("Plots files or plot IDs from `dvc.yaml` to visualize. Shows all plots by default."),
     ).complete = completion.FILE
     _add_props_arguments(plots_show_parser)
     _add_output_argument(plots_show_parser)
     _add_ui_arguments(plots_show_parser)
     plots_show_parser.set_defaults(func=CmdPlotsShow)
 
-    PLOTS_DIFF_HELP = (
-        "Show multiple versions of a plot by overlaying them in a single image."
-    )
+    PLOTS_DIFF_HELP = "Show multiple versions of a plot by overlaying them in a single image."
     plots_diff_parser = plots_subparsers.add_parser(
         "diff",
         parents=[parent_parser],
@@ -313,10 +297,7 @@ def add_parser(subparsers, parent_parser):
         "template",
         default=None,
         nargs="?",
-        help=(
-            "Template for which to show JSON specification. "
-            "List all template names by default."
-        ),
+        help=("Template for which to show JSON specification. List all template names by default."),
     )
     plots_templates_parser.set_defaults(func=CmdPlotsTemplates)
 
@@ -332,12 +313,8 @@ def _add_props_arguments(parser):
         ),
         metavar="<path>",
     ).complete = completion.FILE
-    parser.add_argument(
-        "-x", default=None, help="Field name for X axis.", metavar="<field>"
-    )
-    parser.add_argument(
-        "-y", default=None, help="Field name for Y axis.", metavar="<field>"
-    )
+    parser.add_argument("-x", default=None, help="Field name for X axis.", metavar="<field>")
+    parser.add_argument("-y", default=None, help="Field name for Y axis.", metavar="<field>")
     parser.add_argument(
         "--no-header",
         action="store_false",
@@ -346,12 +323,8 @@ def _add_props_arguments(parser):
         help="Provided CSV or TSV datafile does not have a header.",
     )
     parser.add_argument("--title", default=None, metavar="<text>", help="Plot title.")
-    parser.add_argument(
-        "--x-label", default=None, help="X axis label", metavar="<text>"
-    )
-    parser.add_argument(
-        "--y-label", default=None, help="Y axis label", metavar="<text>"
-    )
+    parser.add_argument("--x-label", default=None, help="X axis label", metavar="<text>")
+    parser.add_argument("--y-label", default=None, help="Y axis label", metavar="<text>")
 
 
 def _add_output_argument(parser, typ="plots"):
@@ -377,9 +350,7 @@ def _add_ui_arguments(parser):
         default=False,
         help=argparse.SUPPRESS,
     )
-    parser.add_argument(
-        "--split", action="store_true", default=False, help=argparse.SUPPRESS
-    )
+    parser.add_argument("--split", action="store_true", default=False, help=argparse.SUPPRESS)
     parser.add_argument(
         "--open",
         action="store_true",

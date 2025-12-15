@@ -5,12 +5,8 @@ import pytest
 from dvc.parsing.context import Context, recurse_not_a_node
 
 
-@pytest.mark.parametrize(
-    "template, var", [("${value}", "value"), ("${ item }", "item")]
-)
-@pytest.mark.parametrize(
-    "data", [True, 12, pi, None, False, 0, "0", "123", "Foobar", "", inf, 3e4]
-)
+@pytest.mark.parametrize("template, var", [("${value}", "value"), ("${ item }", "item")])
+@pytest.mark.parametrize("data", [True, 12, pi, None, False, 0, "0", "123", "Foobar", "", inf, 3e4])
 def test_resolve_primitive_values(data, template, var):
     context = Context({var: data})
     assert context.resolve(template) == data

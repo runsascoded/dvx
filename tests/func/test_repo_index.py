@@ -60,9 +60,7 @@ def test_deps_outs_getters(tmp_dir, dvc, run_copy_metrics):
         params=["param"],
         name="copy-metrics",
     )
-    (tmp_dir / "metric_t.json").dump_json(
-        [{"a": 1, "b": 2}, {"a": 2, "b": 3}], sort_keys=True
-    )
+    (tmp_dir / "metric_t.json").dump_json([{"a": 1, "b": 2}, {"a": 2, "b": 3}], sort_keys=True)
     run_stage2 = run_copy_metrics(
         "metric_t.json",
         "metric.json",
@@ -115,13 +113,9 @@ def assert_index_equal(first, second, strict=True, ordered=True):
     assert len(first) == len(second), "Index have different no. of stages"
     assert set(first) == set(second), "Index does not have same stages"
     if ordered:
-        assert list(first) == list(second), (
-            "Index does not have same sequence of stages"
-        )
+        assert list(first) == list(second), "Index does not have same sequence of stages"
     if strict:
-        assert set(map(id, first)) == set(map(id, second)), (
-            "Index is not strictly equal"
-        )
+        assert set(map(id, first)) == set(map(id, second)), "Index is not strictly equal"
 
 
 def test_skip_graph_checks(dvc, mocker):
@@ -175,9 +169,7 @@ def test_used_objs(tmp_dir, scm, dvc, run_copy):
         assert dvc.index.used_objs() == {None: set(expected_objs)}
         assert dvc.index.used_objs("dir") == {None: set(expected_objs[1:])}
         assert dvc.index.used_objs(".", recursive=True) == {None: set(expected_objs)}
-        assert dvc.index.used_objs("copy-foo-bar", with_deps=True) == {
-            None: {expected_objs[0]}
-        }
+        assert dvc.index.used_objs("copy-foo-bar", with_deps=True) == {None: {expected_objs[0]}}
 
 
 def test_view_granular_dir(tmp_dir, scm, dvc, run_copy):

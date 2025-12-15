@@ -111,9 +111,7 @@ def test_cache_type_is_properly_overridden(tmp_dir, erepo_dir):
         with erepo_dir.dvc.config.edit() as conf:
             conf["cache"]["type"] = "symlink"
         erepo_dir.dvc.cache = CacheManager(erepo_dir.dvc)
-        erepo_dir.scm_add(
-            [erepo_dir.dvc.config.files["repo"]], "set cache type to symlinks"
-        )
+        erepo_dir.scm_add([erepo_dir.dvc.config.files["repo"]], "set cache type to symlinks")
         erepo_dir.dvc_gen("file", "contents", "create file")
     assert system.is_symlink(erepo_dir / "file")
 
@@ -148,9 +146,7 @@ def test_non_cached_output(tmp_dir, erepo_dir):
     dst = src + "_imported"
 
     with erepo_dir.chdir():
-        erepo_dir.dvc.run(
-            outs_no_cache=[src], cmd="echo hello > non_cached_file", name="gen"
-        )
+        erepo_dir.dvc.run(outs_no_cache=[src], cmd="echo hello > non_cached_file", name="gen")
         erepo_dir.scm_add(["dvc.lock", "dvc.yaml"], commit="add non-cached output")
 
     Repo.get(os.fspath(erepo_dir), src, dst)
@@ -240,9 +236,7 @@ def test_get_url_positive(tmp_dir, erepo_dir, caplog, local_cloud):
 
 def test_get_url_not_existing(tmp_dir, erepo_dir, caplog):
     with caplog.at_level(logging.ERROR, logger="dvc"):
-        assert (
-            main(["get", os.fspath(erepo_dir), "not-existing-file", "--show-url"]) != 0
-        )
+        assert main(["get", os.fspath(erepo_dir), "not-existing-file", "--show-url"]) != 0
 
 
 def test_get_url_git_only_repo(tmp_dir, scm, caplog):

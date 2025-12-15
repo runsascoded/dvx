@@ -15,8 +15,6 @@ def test_no_remote_imports():
     }
 
     code = "import dvc.cli, sys; print(' '.join(sys.modules))"
-    res = subprocess.run(
-        [sys.executable, "-c", code], stdout=subprocess.PIPE, check=True
-    )
+    res = subprocess.run([sys.executable, "-c", code], stdout=subprocess.PIPE, check=True)
     modules = res.stdout.decode().split()
     assert not set(modules) & remote_modules

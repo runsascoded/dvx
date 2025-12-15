@@ -27,9 +27,9 @@ def test_diff_dirty(tmp_dir, scm, dvc, run_copy_metrics):
     diff_result = dvc.plots.diff(props=props)
 
     assert get_plot(diff_result, "workspace", file="metric.json") == metric_1
-    assert get_plot(
-        diff_result, "workspace", "definitions", file="", endkey="data"
-    ) == {"metric.json": props}
+    assert get_plot(diff_result, "workspace", "definitions", file="", endkey="data") == {
+        "metric.json": props
+    }
     assert get_plot(diff_result, "HEAD", file="metric.json") == metric_head
     assert get_plot(diff_result, "HEAD", "definitions", file="", endkey="data") == {
         "metric.json": props
@@ -40,14 +40,14 @@ def test_diff_dirty(tmp_dir, scm, dvc, run_copy_metrics):
 
     diff_result = dvc.plots.diff(props=props)
     assert get_plot(diff_result, "workspace", file="metric.json") == metric_2
-    assert get_plot(
-        diff_result, "workspace", "definitions", file="", endkey="data"
-    ) == {"metric.json": props}
+    assert get_plot(diff_result, "workspace", "definitions", file="", endkey="data") == {
+        "metric.json": props
+    }
 
     assert get_plot(diff_result, "HEAD", file="metric.json") == metric_head
-    assert get_plot(
-        diff_result, "workspace", "definitions", file="", endkey="data"
-    ) == {"metric.json": props}
+    assert get_plot(diff_result, "workspace", "definitions", file="", endkey="data") == {
+        "metric.json": props
+    }
 
 
 @pytest.mark.vscode

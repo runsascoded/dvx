@@ -46,9 +46,7 @@ def test_remove_all_queued_experiments(tmp_dir, scm, dvc, exp_stage):
 def test_remove_all_experiments_queued_and_completed(tmp_dir, scm, dvc, exp_stage):
     queue_length = 3
     for i in range(queue_length):
-        dvc.experiments.run(
-            exp_stage.addressing, params=[f"foo={i}"], name=f"exp{i}", queue=True
-        )
+        dvc.experiments.run(exp_stage.addressing, params=[f"foo={i}"], name=f"exp{i}", queue=True)
 
     results = dvc.experiments.run(
         exp_stage.addressing, params=[f"foo={queue_length}"], name=f"exp{queue_length}"
@@ -64,18 +62,11 @@ def test_remove_all_experiments_queued_and_completed(tmp_dir, scm, dvc, exp_stag
 
 
 def test_remove_special_queued_experiments(tmp_dir, scm, dvc, exp_stage):
-    dvc.experiments.run(
-        exp_stage.addressing, params=["foo=1"], queue=True, name="queue1"
-    )
-    dvc.experiments.run(
-        exp_stage.addressing, params=["foo=2"], queue=True, name="queue2"
-    )
-    dvc.experiments.run(
-        exp_stage.addressing, params=["foo=3"], queue=True, name="queue3"
-    )
+    dvc.experiments.run(exp_stage.addressing, params=["foo=1"], queue=True, name="queue1")
+    dvc.experiments.run(exp_stage.addressing, params=["foo=2"], queue=True, name="queue2")
+    dvc.experiments.run(exp_stage.addressing, params=["foo=3"], queue=True, name="queue3")
     queue_revs = {
-        entry.name: entry.stash_rev
-        for entry in dvc.experiments.celery_queue.iter_queued()
+        entry.name: entry.stash_rev for entry in dvc.experiments.celery_queue.iter_queued()
     }
     assert len(queue_revs) == 3
 
@@ -154,23 +145,18 @@ def test_remove_experiments_by_rev(tmp_dir, scm, dvc, exp_stage):
     results = dvc.experiments.run(exp_stage.addressing, params=["foo=1"])
     baseline_exp_ref = first(exp_refs_by_rev(scm, first(results)))
 
-    dvc.experiments.run(
-        exp_stage.addressing, params=["foo=2"], queue=True, name="queue2"
-    )
+    dvc.experiments.run(exp_stage.addressing, params=["foo=2"], queue=True, name="queue2")
     scm.commit("new_baseline")
 
     results = dvc.experiments.run(exp_stage.addressing, params=["foo=3"])
     ref_info = first(exp_refs_by_rev(scm, first(results)))
     new_exp_ref = str(ref_info)
 
-    dvc.experiments.run(
-        exp_stage.addressing, params=["foo=4"], queue=True, name="queue4"
-    )
+    dvc.experiments.run(exp_stage.addressing, params=["foo=4"], queue=True, name="queue4")
 
     assert dvc.experiments.remove(rev=baseline) == [baseline_exp_ref.name]
     queue_revs = {
-        entry.name: entry.stash_rev
-        for entry in dvc.experiments.celery_queue.iter_queued()
+        entry.name: entry.stash_rev for entry in dvc.experiments.celery_queue.iter_queued()
     }
     assert scm.get_ref(str(baseline_exp_ref)) is None
     assert "queue2" in queue_revs
@@ -184,9 +170,7 @@ def test_remove_multi_rev(tmp_dir, scm, dvc, exp_stage):
     results = dvc.experiments.run(exp_stage.addressing, params=["foo=1"])
     baseline_exp_ref = first(exp_refs_by_rev(scm, first(results)))
 
-    dvc.experiments.run(
-        exp_stage.addressing, params=["foo=2"], queue=True, name="queue2"
-    )
+    dvc.experiments.run(exp_stage.addressing, params=["foo=2"], queue=True, name="queue2")
     scm.commit("new_baseline")
 
     results = dvc.experiments.run(exp_stage.addressing, params=["foo=3"])
@@ -214,9 +198,7 @@ def test_keep_selected_by_name(tmp_dir, scm, dvc, exp_stage, keep, expected_remo
     # Setup: Run experiments
     refs = {}
     for i in range(1, len(keep) + len(expected_removed) + 1):
-        results = dvc.experiments.run(
-            exp_stage.addressing, params=[f"foo={i}"], name=f"exp{i}"
-        )
+        results = dvc.experiments.run(exp_stage.addressing, params=[f"foo={i}"], name=f"exp{i}")
         refs[f"exp{i}"] = first(exp_refs_by_rev(scm, first(results)))
         assert scm.get_ref(str(refs[f"exp{i}"])) is not None
 
@@ -249,17 +231,13 @@ def test_keep_selected_by_nonexistent_name(tmp_dir, scm, dvc, exp_stage):
         (1, None, 1, []),  # remove does nothing if no experiments are specified
     ],
 )
-def test_keep_selected_by_rev(
-    tmp_dir, scm, dvc, exp_stage, num_exps, rev, num, expected_removed
-):
+def test_keep_selected_by_rev(tmp_dir, scm, dvc, exp_stage, num_exps, rev, num, expected_removed):
     refs = {}
     revs = {}
     # Setup: Run experiments and commit
     for i in range(1, num_exps + 1):
         scm.commit(f"commit{i}")
-        results = dvc.experiments.run(
-            exp_stage.addressing, params=[f"foo={i}"], name=f"exp{i}"
-        )
+        results = dvc.experiments.run(exp_stage.addressing, params=[f"foo={i}"], name=f"exp{i}")
         refs[f"exp{i}"] = first(exp_refs_by_rev(scm, first(results)))
         revs[f"exp{i}"] = scm.get_rev()
         assert scm.get_ref(str(refs[f"exp{i}"])) is not None

@@ -338,9 +338,7 @@ def test_pull_wildcard_imported_directory_stage(tmp_dir, dvc, erepo_dir):
     assert (tmp_dir / "dir_imported123").read_text() == {"foo": "foo content"}
 
 
-def test_push_wildcard_from_bare_git_repo(
-    tmp_dir, make_tmp_dir, erepo_dir, local_cloud
-):
+def test_push_wildcard_from_bare_git_repo(tmp_dir, make_tmp_dir, erepo_dir, local_cloud):
     Git.init(tmp_dir.fs_path, bare=True).close()
 
     erepo_dir.add_remote(config=local_cloud.config)
@@ -445,9 +443,7 @@ def test_import_from_bare_git_repo(tmp_dir, make_tmp_dir, erepo_dir, local_cloud
         dvc_repo.dvc.imp(os.fspath(tmp_dir), "foo")
 
 
-def test_import_pipeline_tracked_outs(
-    tmp_dir, dvc, scm, erepo_dir, run_copy, local_remote
-):
+def test_import_pipeline_tracked_outs(tmp_dir, dvc, scm, erepo_dir, run_copy, local_remote):
     from dvc.dvcfile import LOCK_FILE, PROJECT_FILE
 
     tmp_dir.gen("foo", "foo")
@@ -702,9 +698,7 @@ def test_import_configs(tmp_dir, scm, dvc, erepo_dir, options, def_repo):
 
     (tmp_dir / "myconfig").touch()
 
-    stage = dvc.imp(
-        os.fspath(erepo_dir), "foo", "foo_imported", no_exec=True, **options
-    )
+    stage = dvc.imp(os.fspath(erepo_dir), "foo", "foo_imported", no_exec=True, **options)
     assert stage.deps[0].def_repo == {"url": os.fspath(erepo_dir), **def_repo}
 
 
@@ -743,9 +737,7 @@ def test_import_invalid_configs(tmp_dir, scm, dvc, erepo_dir):
         ),
     ],
 )
-def test_import_no_hash(
-    tmp_dir, scm, dvc, erepo_dir, mocker, files, expected_info_calls
-):
+def test_import_no_hash(tmp_dir, scm, dvc, erepo_dir, mocker, files, expected_info_calls):
     with erepo_dir.chdir():
         erepo_dir.dvc_gen(files, commit="create foo")
 
@@ -756,12 +748,8 @@ def test_import_no_hash(
     dvc.imp(os.fspath(erepo_dir), name, "out")
 
     local_hashes = [
-        call.args[0]
-        for call in file_md5_spy.call_args_list
-        if call.args[1].protocol == "local"
+        call.args[0] for call in file_md5_spy.call_args_list if call.args[1].protocol == "local"
     ]
     # no files should be hashed, should use existing metadata
     assert not local_hashes
-    assert {
-        call.args[1] for call in index_info_spy.call_args_list
-    } == expected_info_calls
+    assert {call.args[1] for call in index_info_spy.call_args_list} == expected_info_calls

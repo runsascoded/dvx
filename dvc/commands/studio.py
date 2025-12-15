@@ -21,10 +21,7 @@ class CmdStudioLogin(CmdConfig):
         studio = self.config.get("studio", {})
         name = self.args.name
         hostname = (
-            self.args.hostname
-            or os.environ.get(DVC_STUDIO_URL)
-            or studio.get("url")
-            or STUDIO_URL
+            self.args.hostname or os.environ.get(DVC_STUDIO_URL) or studio.get("url") or STUDIO_URL
         )
         scopes = self.args.scopes
 
@@ -77,9 +74,7 @@ class CmdStudioLogout(CmdConfig):
 
         with self.config.edit("global") as conf:
             if not get_in(conf, ["studio", "token"]):
-                ui.error_write(
-                    "Not logged in to Studio. Log in with 'dvc studio login'."
-                )
+                ui.error_write("Not logged in to Studio. Log in with 'dvc studio login'.")
                 return 1
 
             del conf["studio"]["token"]
@@ -173,9 +168,7 @@ def add_parser(subparsers, parent_parser):
     login_parser.set_defaults(func=CmdStudioLogin)
 
     STUDIO_LOGOUT_HELP = "Logout user from Studio"
-    STUDIO_LOGOUT_DESCRIPTION = (
-        "This removes the studio token from your global config.\n"
-    )
+    STUDIO_LOGOUT_DESCRIPTION = "This removes the studio token from your global config.\n"
 
     logout_parser = studio_subparser.add_parser(
         "logout",

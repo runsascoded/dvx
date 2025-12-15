@@ -30,9 +30,7 @@ class TestColorFormatter:
         with caplog.at_level(logging.DEBUG, logger="dvc"):
             logger.debug("message")
 
-            expected = "{blue}{datetime}{nc} {blue}DEBUG{nc}: message".format(
-                **colors, datetime=dt
-            )
+            expected = "{blue}{datetime}{nc} {blue}DEBUG{nc}: message".format(**colors, datetime=dt)
 
             assert expected == formatter.format(caplog.records[0])
 
@@ -99,12 +97,10 @@ class TestColorFormatter:
                 stack_trace = traceback.format_exc()
                 logger.exception("")
 
-            expected = (
-                "{red}{datetime}{nc} {red}ERROR{nc}: description\n{stack_trace}".format(
-                    stack_trace=stack_trace,
-                    **colors,
-                    datetime=dt,
-                )
+            expected = "{red}{datetime}{nc} {red}ERROR{nc}: description\n{stack_trace}".format(
+                stack_trace=stack_trace,
+                **colors,
+                datetime=dt,
             )
 
             assert expected == formatter.format(caplog.records[0])
@@ -117,14 +113,10 @@ class TestColorFormatter:
                 stack_trace = traceback.format_exc()
                 logger.debug("", exc_info=True)
 
-            expected = (
-                "{blue}{datetime}{nc} "
-                "{blue}DEBUG{nc}: description\n"
-                "{stack_trace}".format(
-                    stack_trace=stack_trace,
-                    datetime=dt,
-                    **colors,
-                )
+            expected = "{blue}{datetime}{nc} {blue}DEBUG{nc}: description\n{stack_trace}".format(
+                stack_trace=stack_trace,
+                datetime=dt,
+                **colors,
             )
 
             assert expected == formatter.format(caplog.records[0])
@@ -137,12 +129,10 @@ class TestColorFormatter:
                 stack_trace = traceback.format_exc()
                 logger.exception("something", extra={"tb_only": True})
 
-            expected = (
-                "{red}{datetime}{nc} {red}ERROR{nc}: something\n{stack_trace}".format(
-                    stack_trace=stack_trace,
-                    **colors,
-                    datetime=dt,
-                )
+            expected = "{red}{datetime}{nc} {red}ERROR{nc}: something\n{stack_trace}".format(
+                stack_trace=stack_trace,
+                **colors,
+                datetime=dt,
             )
 
             assert expected == formatter.format(caplog.records[0])
@@ -159,9 +149,7 @@ class TestColorFormatter:
                     logger.exception("message")
 
             expected = (
-                "{red}{datetime}{nc} "
-                "{red}ERROR{nc}: message - second: first\n"
-                "{stack_trace}".format(
+                "{red}{datetime}{nc} {red}ERROR{nc}: message - second: first\n{stack_trace}".format(
                     stack_trace=stack_trace,
                     **colors,
                     datetime=dt,

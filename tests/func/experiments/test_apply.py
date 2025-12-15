@@ -10,9 +10,7 @@ def test_apply(tmp_dir, scm, dvc, exp_stage):
     results = dvc.experiments.run(exp_stage.addressing, params=["foo=2"], tmp_dir=True)
     exp_a = first(results)
 
-    dvc.experiments.run(
-        exp_stage.addressing, params=["foo=3"], tmp_dir=True, name="foo"
-    )
+    dvc.experiments.run(exp_stage.addressing, params=["foo=3"], tmp_dir=True, name="foo")
 
     with pytest.raises(InvalidArgumentError):
         dvc.experiments.apply("bar")
@@ -29,9 +27,7 @@ def test_apply(tmp_dir, scm, dvc, exp_stage):
 def test_apply_failed(tmp_dir, scm, dvc, failed_exp_stage, mocker):
     from dvc.repo.experiments.queue.base import QueueDoneResult, QueueEntry
 
-    dvc.experiments.run(
-        failed_exp_stage.addressing, params=["foo=3"], queue=True, name="foo"
-    )
+    dvc.experiments.run(failed_exp_stage.addressing, params=["foo=3"], queue=True, name="foo")
     exp_rev = dvc.experiments.scm.resolve_rev(f"{CELERY_STASH}@{{0}}")
 
     # patch iter_done to return exp_rev as a failed exp (None-type result)
@@ -59,15 +55,10 @@ def test_apply_failed(tmp_dir, scm, dvc, failed_exp_stage, mocker):
 
 def test_apply_queued(tmp_dir, scm, dvc, exp_stage):
     metrics_original = (tmp_dir / "metrics.yaml").read_text().strip()
-    dvc.experiments.run(
-        exp_stage.addressing, params=["foo=2"], name="exp-a", queue=True
-    )
-    dvc.experiments.run(
-        exp_stage.addressing, params=["foo=3"], name="exp-b", queue=True
-    )
+    dvc.experiments.run(exp_stage.addressing, params=["foo=2"], name="exp-a", queue=True)
+    dvc.experiments.run(exp_stage.addressing, params=["foo=3"], name="exp-b", queue=True)
     queue_revs = {
-        entry.name: entry.stash_rev
-        for entry in dvc.experiments.celery_queue.iter_queued()
+        entry.name: entry.stash_rev for entry in dvc.experiments.celery_queue.iter_queued()
     }
 
     dvc.experiments.apply(queue_revs["exp-a"])

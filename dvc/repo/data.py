@@ -4,12 +4,14 @@ from collections import defaultdict, deque
 from collections.abc import Iterable, Iterator, Mapping
 from typing import TYPE_CHECKING, Optional, TypedDict, Union
 
-from dvc_data.index import DataIndexDirError
 from dvc.fs.callbacks import DEFAULT_CALLBACK, Callback, TqdmCallback
 from dvc.log import logger
 from dvc.ui import ui
+from dvc_data.index import DataIndexDirError
 
 if TYPE_CHECKING:
+    from dvc.repo import Repo
+    from dvc.scm import Git, NoSCM
     from dvc_data.index import (
         BaseDataIndex,
         DataIndex,
@@ -19,8 +21,6 @@ if TYPE_CHECKING:
     )
     from dvc_data.index.diff import Change
     from dvc_objects.fs.base import FileSystem
-    from dvc.repo import Repo
-    from dvc.scm import Git, NoSCM
 
 logger = logger.getChild(__name__)
 
@@ -319,9 +319,9 @@ def _diff_head_to_index(
     granular: bool = False,
     with_renames: bool = False,
 ) -> DiffResult:
-    from dvc_data.index import DataIndex
     from dvc.exceptions import NotDvcRepoError
     from dvc.scm import RevError
+    from dvc_data.index import DataIndex
 
     index = repo.index.data["repo"]
     index_view = filter_index(index, filter_keys=filter_keys)
@@ -406,8 +406,8 @@ def _get_entries_not_in_remote(
     remote_refresh: bool = False,
 ) -> list[str]:
     """Get entries that are not in remote storage."""
-    from dvc_data.index import StorageKeyError
     from dvc.repo.worktree import worktree_view
+    from dvc_data.index import StorageKeyError
 
     entries: dict[DataIndexKey, DataIndexEntry] = {}
 

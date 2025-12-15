@@ -93,9 +93,7 @@ def test_partial_upload(tmp_dir, dvc, index, mocker):
         for i in range(len(from_info) - 1, -1, -1):
             from_i = from_info[i]
             to_i = to_info[i]
-            if os.path.abspath(to_i) == os.path.abspath(
-                odb.get(baz.hash_info.value).path
-            ):
+            if os.path.abspath(to_i) == os.path.abspath(odb.get(baz.hash_info.value).path):
                 if on_error:
                     on_error(from_i, to_i, Exception("stop baz"))
                 del from_info[i]

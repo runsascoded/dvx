@@ -199,9 +199,7 @@ def test_pull(tmp_dir, scm, dvc, git_downstream, exp_stage, use_url):
     exp3 = first(results)
     ref_info3 = first(exp_refs_by_rev(scm, exp3))
 
-    downstream_exp.pull(
-        git_downstream.remote, [ref_info1.name, ref_info2.name], force=True
-    )
+    downstream_exp.pull(git_downstream.remote, [ref_info1.name, ref_info2.name], force=True)
     assert git_downstream.tmp_dir.scm.get_ref(str(ref_info1)) == exp1
     assert git_downstream.tmp_dir.scm.get_ref(str(ref_info2)) == exp2
     assert git_downstream.tmp_dir.scm.get_ref(str(ref_info3)) is None
@@ -373,9 +371,7 @@ def test_push_pull_invalid_workspace(
         assert "failed to collect" not in caplog.text
 
 
-@pytest.mark.parametrize(
-    "auto_push, expected_key", [(True, "up_to_date"), (False, "success")]
-)
+@pytest.mark.parametrize("auto_push, expected_key", [(True, "up_to_date"), (False, "success")])
 def test_auto_push_on_run(
     tmp_dir, scm, dvc, git_upstream, local_remote, exp_stage, auto_push, expected_key
 ):
@@ -391,9 +387,7 @@ def test_auto_push_on_run(
     assert first(dvc.experiments.push(name=exp_name, git_remote=remote)) == expected_key
 
 
-@pytest.mark.parametrize(
-    "auto_push, expected_key", [(True, "up_to_date"), (False, "success")]
-)
+@pytest.mark.parametrize("auto_push, expected_key", [(True, "up_to_date"), (False, "success")])
 def test_auto_push_on_save(
     tmp_dir, scm, dvc, git_upstream, local_remote, exp_stage, auto_push, expected_key
 ):
@@ -410,9 +404,7 @@ def test_auto_push_on_save(
     assert first(dvc.experiments.push(name=exp_name, git_remote=remote)) == expected_key
 
 
-def test_auto_push_misconfigured(
-    tmp_dir, scm, dvc, git_upstream, local_remote, exp_stage, caplog
-):
+def test_auto_push_misconfigured(tmp_dir, scm, dvc, git_upstream, local_remote, exp_stage, caplog):
     with dvc.config.edit() as conf:
         conf["exp"]["auto_push"] = True
         conf["exp"]["git_remote"] = "notfound"
@@ -431,8 +423,6 @@ def test_auto_push_tmp_dir(tmp_dir, scm, dvc, git_upstream, local_remote, exp_st
         conf["exp"]["git_remote"] = remote
 
     exp_name = "foo"
-    dvc.experiments.run(
-        exp_stage.addressing, params=["foo=2"], name=exp_name, tmp_dir=True
-    )
+    dvc.experiments.run(exp_stage.addressing, params=["foo=2"], name=exp_name, tmp_dir=True)
 
     assert first(dvc.experiments.push(name=exp_name, git_remote=remote)) == "up_to_date"

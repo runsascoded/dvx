@@ -7,7 +7,7 @@ import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 from dvc.log import logger
 
@@ -127,7 +127,7 @@ def _detached_subprocess(args: Sequence[str], **kwargs) -> int:
     return _posix_detached_subprocess(args, **kwargs)
 
 
-def _map_log_level_to_flag() -> Optional[str]:
+def _map_log_level_to_flag() -> str | None:
     flags = {logging.DEBUG: "-v", logging.TRACE: "-vv"}  # type: ignore[attr-defined]
     return flags.get(logger.getEffectiveLevel())
 
@@ -145,9 +145,9 @@ def daemon(args: list[str]) -> None:
 
 def _spawn(
     args: list[str],
-    executable: Optional[Union[str, list[str]]] = None,
-    env: Optional[Mapping[str, str]] = None,
-    output_file: Optional[str] = None,
+    executable: str | list[str] | None = None,
+    env: Mapping[str, str] | None = None,
+    output_file: str | None = None,
 ) -> int:
     file: AbstractContextManager[Any] = nullcontext()
     kwargs = {}
@@ -164,7 +164,7 @@ def _spawn(
         return _detached_subprocess(executable + args, env=env, **kwargs)
 
 
-def daemonize(args: list[str], executable: Union[str, list[str], None] = None) -> None:
+def daemonize(args: list[str], executable: str | list[str] | None = None) -> None:
     if os.name not in ("posix", "nt"):
         return
 

@@ -5,11 +5,11 @@ from typing import TYPE_CHECKING, Any
 
 from funcy import get_in, lcat, once, project
 
-from dvc_data.hashfile.meta import Meta
 from dvc import dependency, output
 from dvc.log import logger
 from dvc.parsing import FOREACH_KWD, JOIN, MATRIX_KWD, EntryNotFound
 from dvc.utils.objects import cached_property
+from dvc_data.hashfile.meta import Meta
 
 from . import PipelineStage, Stage, loads_from
 from .exceptions import StageNameUnspecified, StageNotFound

@@ -99,9 +99,7 @@ def test_get_used_objs(exists, expected_message, mocker, caplog):
 
     mocker.patch.object(output, "use_cache", True)
     mocker.patch.object(stage, "is_repo_import", False)
-    mocker.patch.object(
-        Output, "exists", new_callable=mocker.PropertyMock
-    ).return_value = exists
+    mocker.patch.object(Output, "exists", new_callable=mocker.PropertyMock).return_value = exists
 
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger="dvc"):

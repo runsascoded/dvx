@@ -248,11 +248,7 @@ def test_collect_symlink(tmp_dir, dvc, with_deps):
             dvc.stage.collect(target=str(data_link / "foo.dvc"), with_deps=with_deps)
     else:
         stage = next(
-            iter(
-                dvc.stage.collect(
-                    target=str(data_link / "foo.dvc"), with_deps=with_deps
-                )
-            )
+            iter(dvc.stage.collect(target=str(data_link / "foo.dvc"), with_deps=with_deps))
         )
 
         assert stage.addressing == os.path.join("data_link", "foo.dvc")
@@ -340,8 +336,6 @@ def test_stage_add_duplicated_output(tmp_dir, dvc):
 
     with pytest.raises(
         OutputDuplicationError,
-        match=re.escape(
-            "Use `dvc remove foo.dvc` to stop tracking the overlapping output."
-        ),
+        match=re.escape("Use `dvc remove foo.dvc` to stop tracking the overlapping output."),
     ):
         dvc.stage.add(name="duplicated", cmd="echo bar > foo", outs=["foo"])

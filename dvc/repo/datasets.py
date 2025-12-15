@@ -39,7 +39,7 @@ def _get_dataset_record(name: str) -> "DatasetRecord":
 
 
 def _get_dataset_info(
-    name: str, record: Optional["DatasetRecord"] = None, version: Optional[int] = None
+    name: str, record: Optional["DatasetRecord"] = None, version: int | None = None
 ) -> "DatasetVersion":
     record = record or _get_dataset_record(name)
     assert record
@@ -52,7 +52,7 @@ def default_str(v) -> str:
     return default_if_none("")(v)
 
 
-def to_datetime(d: Union[str, datetime]) -> datetime:
+def to_datetime(d: str | datetime) -> datetime:
     return datetime.fromisoformat(d) if isinstance(d, str) else d
 
 
@@ -93,7 +93,7 @@ class DatasetSpec(SerDe):
 class DVCDatasetSpec(DatasetSpec):
     type: Literal["dvc"]
     path: str = field(default="", converter=default_str)
-    rev: Optional[str] = None
+    rev: str | None = None
 
 
 @frozen(kw_only=True, order=True)
@@ -132,12 +132,12 @@ def to_spec(lock: "Lock") -> "Spec":
 class DVCDataset:
     manifest_path: str
     spec: DVCDatasetSpec
-    lock: Optional[DVCDatasetLock] = None
+    lock: DVCDatasetLock | None = None
     _invalidated: bool = field(default=False, eq=False, repr=False)
 
     type: ClassVar[Literal["dvc"]] = "dvc"
 
-    def update(self, repo, rev: Optional[str] = None, **kwargs) -> "Self":
+    def update(self, repo, rev: str | None = None, **kwargs) -> "Self":
         from dvc.dependency import RepoDependency
 
         spec = self.spec
@@ -163,7 +163,7 @@ class DVCDataset:
 class DatachainDataset:
     manifest_path: str
     spec: "DatasetSpec"
-    lock: "Optional[DatachainDatasetLock]" = field(default=None)
+    lock: "DatachainDatasetLock | None" = field(default=None)
     _invalidated: bool = field(default=False, eq=False, repr=False)
 
     type: ClassVar[Literal["dc"]] = "dc"
@@ -173,7 +173,7 @@ class DatachainDataset:
         return self.name_version[1] is not None
 
     @property
-    def name_version(self) -> tuple[str, Optional[int]]:
+    def name_version(self) -> tuple[str, int | None]:
         url = urlparse(self.spec.url)
         path = url.netloc + url.path
         parts = path.split("@v")
@@ -187,7 +187,7 @@ class DatachainDataset:
         self,
         repo,  # noqa: ARG002
         record: Optional["DatasetRecord"] = None,
-        version: Optional[int] = None,
+        version: int | None = None,
         **kwargs,
     ) -> "Self":
         name, _version = self.name_version
@@ -205,7 +205,7 @@ class DatachainDataset:
 class URLDataset:
     manifest_path: str
     spec: "DatasetSpec"
-    lock: "Optional[URLDatasetLock]" = None
+    lock: "URLDatasetLock | None" = None
     _invalidated: bool = field(default=False, eq=False, repr=False)
 
     type: ClassVar[Literal["url"]] = "url"
@@ -213,9 +213,7 @@ class URLDataset:
     def update(self, repo, **kwargs):
         from dvc.dependency import Dependency
 
-        dep = Dependency(
-            None, self.spec.url, repo=repo, fs_config={"version_aware": True}
-        )
+        dep = Dependency(None, self.spec.url, repo=repo, fs_config={"version_aware": True})
         dep.save()
         d = dep.dumpd(datasets=True)
         files = [
@@ -277,10 +275,10 @@ class Datasets(Mapping[str, Dataset]):
         }
 
     @cached_property
-    def _lock(self) -> dict[str, Optional[dict[str, Any]]]:
+    def _lock(self) -> dict[str, dict[str, Any] | None]:
         datasets_lock = self.repo.index._datasets_lock
 
-        def find(path, name) -> Optional[dict[str, Any]]:
+        def find(path, name) -> dict[str, Any] | None:
             # only look for `name` in the lock file next to the
             # corresponding `dvc.yaml` file
             lock = datasets_lock.get(path, [])
@@ -312,7 +310,7 @@ class Datasets(Mapping[str, Dataset]):
         raise ValueError(f"unknown dataset type: {spec.get('type', '')}")
 
     @staticmethod
-    def _lock_from_info(lock: Optional[dict[str, Any]]) -> Optional[Lock]:
+    def _lock_from_info(lock: dict[str, Any] | None) -> Lock | None:
         kl = {"dvc": DVCDatasetLock, "dc": DatachainDatasetLock, "url": URLDatasetLock}
         if lock and (cls := kl.get(lock.get("type", ""))):  # type: ignore[assignment]
             return cls.from_dict(lock)  # type: ignore[attr-defined]
@@ -323,7 +321,7 @@ class Datasets(Mapping[str, Dataset]):
         cls,
         manifest_path: str,
         spec_data: dict[str, Any],
-        lock_data: Optional[dict[str, Any]] = None,
+        lock_data: dict[str, Any] | None = None,
     ) -> Dataset:
         _invalidated = False
         spec = cls._spec_from_info(spec_data)
@@ -396,9 +394,7 @@ class Datasets(Mapping[str, Dataset]):
                     f"got {type(version).__name__!r}"
                 )
             if version < 1:
-                raise ValueError(
-                    f"DataChain dataset version should be >=1, got {version}"
-                )
+                raise ValueError(f"DataChain dataset version should be >=1, got {version}")
 
         new = dataset.update(self.repo, **kwargs)
 
@@ -418,7 +414,7 @@ class Datasets(Mapping[str, Dataset]):
         lockfile = Lockfile(self.repo, Path(manifest_path).with_suffix(".lock"))
         lockfile.dump_dataset(lock_data)
 
-    def dump(self, dataset: Dataset, old: Optional[Dataset] = None) -> None:
+    def dump(self, dataset: Dataset, old: Dataset | None = None) -> None:
         if not old or old.spec != dataset.spec:
             self._dump_spec(dataset.manifest_path, dataset.spec)
         if dataset.lock and (not old or old.lock != dataset.lock):
