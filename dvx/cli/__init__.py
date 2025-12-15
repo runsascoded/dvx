@@ -1,7 +1,6 @@
 """This module provides an entrypoint to the dvc cli and parsing utils."""
 
 import logging
-from typing import Optional
 
 from dvx.log import logger
 

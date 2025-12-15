@@ -27,7 +27,7 @@ class ThreadPoolExecutor(futures.ThreadPoolExecutor):
         def create_taskset(n: int) -> set[futures.Future]:
             return {self.submit(fn, *args) for args in islice(it, n)}
 
-        it = zip(*iterables)
+        it = zip(*iterables, strict=False)
         tasks = create_taskset(self._max_workers * 5)
         while tasks:
             done, tasks = futures.wait(tasks, return_when=futures.FIRST_COMPLETED)

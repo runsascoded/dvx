@@ -5,7 +5,7 @@ import json
 import os
 import re
 import sys
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import colorama
 from colorama import AnsiToWin32

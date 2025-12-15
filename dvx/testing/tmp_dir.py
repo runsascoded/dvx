@@ -80,8 +80,6 @@ class TmpDir(pathlib.Path):
                 raise NotImplementedError(
                     f"cannot instantiate {cls.__name__!r} on your system"
                 )
-            if sys.version_info < (3, 10):
-                self._init()
             return self
 
     def init(self, *, scm=False, dvc=False, subdir=False):

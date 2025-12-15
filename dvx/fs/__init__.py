@@ -1,6 +1,5 @@
 import glob
 from itertools import repeat
-from typing import Optional
 from urllib.parse import urlparse
 
 from dvc_http import HTTPFileSystem, HTTPSFileSystem  # noqa: F401

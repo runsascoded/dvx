@@ -124,7 +124,7 @@ def _ast_assign_to_dict(assign, only_self_params=False, lineno=False):
     value: Any
     if isinstance(assign.value, ast.Dict):
         value = {}
-        for key, val in zip(assign.value.keys, assign.value.values):
+        for key, val in zip(assign.value.keys, assign.value.values, strict=True):
             if lineno:
                 value[ast.literal_eval(key)] = {  # type: ignore[arg-type]
                     "lineno": assign.lineno - 1,

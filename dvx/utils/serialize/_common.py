@@ -3,7 +3,7 @@
 import os
 from collections.abc import Callable
 from contextlib import AbstractContextManager, contextmanager
-from typing import TYPE_CHECKING, Any, Optional, Protocol, TextIO, Union
+from typing import TYPE_CHECKING, Any, Optional, Protocol, TextIO
 
 from funcy import reraise
 
@@ -34,7 +34,7 @@ class LoaderFn(Protocol):
     def __call__(self, path: "StrPath", fs: Optional["FileSystem"] = None) -> Any: ...
 
 
-ReadType = Union[bytes, str, None]
+ReadType = bytes | str | None
 ParserFn = Callable[[ReadType, "StrPath"], dict]
 
 

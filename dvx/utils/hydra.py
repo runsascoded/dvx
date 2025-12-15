@@ -130,7 +130,7 @@ def to_hydra_overrides(path_overrides):
 def dict_product(dicts):
     import itertools
 
-    return [dict(zip(dicts, x)) for x in itertools.product(*dicts.values())]
+    return [dict(zip(dicts, x, strict=True)) for x in itertools.product(*dicts.values())]
 
 
 def get_hydra_sweeps(path_overrides):

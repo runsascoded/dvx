@@ -97,7 +97,7 @@ def rich_table(
     table = Table(box=border_style[borders])
 
     if isinstance(header_styles, abc.Sequence):
-        hs: dict[str, Styles] = dict(zip(headers or [], header_styles))
+        hs: dict[str, Styles] = dict(zip(headers or [], header_styles, strict=True))
     else:
         hs = header_styles or {}
 

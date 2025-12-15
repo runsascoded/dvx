@@ -229,7 +229,7 @@ def test_partial_push_n_pull(
             from_info = [from_info]
         if isinstance(to_info, str):
             to_info = [to_info]
-        for from_i, to_i in zip(from_info, to_info):
+        for from_i, to_i in zip(from_info, to_info, strict=True):
             on_error(from_i, to_i, Exception())
 
     mock_download = mocker.patch.object(generic, "transfer", unreliable_download)

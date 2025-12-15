@@ -43,7 +43,7 @@ def outputs_equal(actual, expected):
         return output.fspath
 
     assert len(actual) == len(expected)
-    pairs = zip(sorted(actual, key=sort_fn), sorted(expected, key=sort_fn))
+    pairs = zip(sorted(actual, key=sort_fn), sorted(expected, key=sort_fn), strict=True)
     assert all(actual.fspath == expected.fspath for actual, expected in pairs)
     return True
 

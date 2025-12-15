@@ -62,7 +62,7 @@ def _get_missing_paths(
                 list(paths_map), batch_size=batch_size, callback=callback
             )
 
-        for cache_path, exists in zip(paths_map, results):
+        for cache_path, exists in zip(paths_map, results, strict=True):
             if exists:
                 continue
 

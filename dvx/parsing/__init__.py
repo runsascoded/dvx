@@ -3,7 +3,7 @@ import os
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from itertools import product
-from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Union
+from typing import TYPE_CHECKING, Any, NamedTuple, Union
 
 from funcy import collecting, first, isa, join, reraise
 
@@ -568,7 +568,7 @@ class MatrixDefinition:
         for combination in product(*matrix.values()):
             d: DictStrAny = {}
             fragments: list[str] = []
-            for k, (i, v) in zip(matrix.keys(), combination):
+            for k, (i, v) in zip(matrix.keys(), combination, strict=True):
                 d[k] = v
                 fragments.append(f"{k}{i}" if is_map_or_seq(v) else to_str(v))
 

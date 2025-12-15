@@ -371,7 +371,7 @@ def test_dvc_pull_pipeline_stages(tmp_dir, dvc, run_copy, local_remote):
     }
     assert all((tmp_dir / file).exists() for file in outs)
 
-    for out, stage in zip(outs, [stage0, stage1, stage2]):
+    for out, stage in zip(outs, [stage0, stage1, stage2], strict=True):
         for target in [stage.addressing, out]:
             clean(outs, dvc)
             stats = dvc.pull([target])

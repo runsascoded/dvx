@@ -348,7 +348,7 @@ def test_exceptions(
 
     # strip whitespace on the right: output is always left-justified
     # by rich.syntax.Syntax:
-    for expected_line, err_line in zip(expected.splitlines(), err.splitlines()):
+    for expected_line, err_line in zip(expected.splitlines(), err.splitlines(), strict=True):
         assert expected_line == err_line.rstrip(" ")
 
 

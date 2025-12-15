@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 logger = logger.getChild(__name__)
 
-RepoFactory = Union[Callable[..., "Repo"], type["Repo"]]
+RepoFactory = Callable[..., "Repo"] | type["Repo"]
 Key = tuple[str, ...]
 
 

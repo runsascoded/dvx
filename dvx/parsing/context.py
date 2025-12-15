@@ -4,7 +4,7 @@ from collections.abc import Mapping, MutableMapping, MutableSequence, Sequence
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from typing import Any, Union
+from typing import Any
 
 from funcy import identity, lfilter, nullcontext, select
 
@@ -21,7 +21,7 @@ from dvx.parsing.interpolate import (
 )
 
 logger = logger.getChild(__name__)
-SeqOrMap = Union[Sequence, Mapping]
+SeqOrMap = Sequence | Mapping
 DictStr = dict[str, Any]
 
 
