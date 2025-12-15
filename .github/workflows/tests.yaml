@@ -151,9 +151,15 @@ jobs:
       env:
         COVERAGE_CORE: sysmon
         PYTHONUTF8: 1
+      # Skip tests that require optional storage backends (dvc-s3, dvc-ssh, etc.)
       run: >
         pytest ${{ matrix.pytestargs }} -n=logical --dist=worksteal --timeout=300 --durations=0
         --cov --cov-report=xml --cov-report=term  --durations-path=./.github/.test_durations
+        --ignore=tests/unit/fs/test_fs.py
+        --ignore=tests/unit/fs/test_tree.py
+        --ignore=tests/unit/output/test_load.py
+        --ignore=tests/unit/remote/
+        --ignore=tests/unit/test_info.py
     - name: upload coverage report
       uses: codecov/codecov-action@v5
   check:
