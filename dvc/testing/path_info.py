@@ -2,7 +2,8 @@ import os
 import pathlib
 import posixpath
 import sys
-from typing import Callable, ClassVar
+from collections.abc import Callable
+from typing import ClassVar
 from urllib.parse import urlparse
 
 from dvc.utils import relpath
@@ -138,9 +139,7 @@ class URLInfo(_BasePath):
         self._fill_parts(p.scheme, p.hostname, p.username, p.port, p.path)
 
     @classmethod
-    def from_parts(
-        cls, scheme=None, host=None, user=None, port=None, path="", netloc=None
-    ):
+    def from_parts(cls, scheme=None, host=None, user=None, port=None, path="", netloc=None):
         assert bool(host) ^ bool(netloc)
 
         if netloc is not None:
@@ -351,6 +350,4 @@ class HTTPURLInfo(URLInfo):
 class WebDAVURLInfo(URLInfo):
     @cached_property
     def url(self) -> str:
-        return "{}://{}{}".format(
-            self.scheme.replace("webdav", "http"), self.netloc, self._spath
-        )
+        return "{}://{}{}".format(self.scheme.replace("webdav", "http"), self.netloc, self._spath)

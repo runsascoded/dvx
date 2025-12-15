@@ -34,19 +34,14 @@ def imp_url(
 
     if to_remote and (no_exec or no_download or version_aware):
         raise InvalidArgumentError(
-            "--no-exec/--no-download/--version-aware cannot be combined with "
-            "--to-remote"
+            "--no-exec/--no-download/--version-aware cannot be combined with --to-remote"
         )
 
     if not to_remote and remote:
         raise InvalidArgumentError("--remote can't be used without --to-remote")
 
     # NOTE: when user is importing something from within their own repository
-    if (
-        erepo is None
-        and os.path.exists(url)
-        and path_isin(os.path.abspath(url), self.root_dir)
-    ):
+    if erepo is None and os.path.exists(url) and path_isin(os.path.abspath(url), self.root_dir):
         url = relpath(url, wdir)
 
     if version_aware:

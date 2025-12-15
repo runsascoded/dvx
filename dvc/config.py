@@ -92,12 +92,12 @@ class Config(dict):
 
     def __init__(
         self,
-        dvc_dir: Optional[str] = None,
-        local_dvc_dir: Optional[str] = None,
+        dvc_dir: str | None = None,
+        local_dvc_dir: str | None = None,
         validate: bool = True,
         fs: Optional["FileSystem"] = None,
         config: Optional["DictStrAny"] = None,
-        remote: Optional[str] = None,
+        remote: str | None = None,
         remote_config: Optional["DictStrAny"] = None,
     ):
         from dvc.fs import LocalFileSystem
@@ -114,9 +114,7 @@ class Config(dict):
         if not fs and not local_dvc_dir:
             self.local_dvc_dir = dvc_dir
 
-        self.load(
-            validate=validate, config=config, remote=remote, remote_config=remote_config
-        )
+        self.load(validate=validate, config=config, remote=remote, remote_config=remote_config)
 
     @classmethod
     def from_cwd(cls, fs: Optional["FileSystem"] = None, **kwargs):
@@ -144,8 +142,7 @@ class Config(dict):
     @cached_property
     def files(self) -> dict[str, str]:
         files = {
-            level: os.path.join(self.get_dir(level), self.CONFIG)
-            for level in ("system", "global")
+            level: os.path.join(self.get_dir(level), self.CONFIG) for level in ("system", "global")
         }
 
         if self.dvc_dir is not None:
@@ -177,7 +174,7 @@ class Config(dict):
         self,
         validate: bool = True,
         config: Optional["DictStrAny"] = None,
-        remote: Optional[str] = None,
+        remote: str | None = None,
         remote_config: Optional["DictStrAny"] = None,
     ):
         """Loads config from all the config files.
@@ -439,6 +436,4 @@ def merge(into, update):
 
 
 def _lower_keys(data):
-    return {
-        k.lower(): _lower_keys(v) if isinstance(v, dict) else v for k, v in data.items()
-    }
+    return {k.lower(): _lower_keys(v) if isinstance(v, dict) else v for k, v in data.items()}

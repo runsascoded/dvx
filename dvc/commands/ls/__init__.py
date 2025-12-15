@@ -1,4 +1,4 @@
-from typing import Callable
+from collections.abc import Callable
 
 from dvc.cli import completion, formatter
 from dvc.cli.command import CmdBaseNoRepo
@@ -193,8 +193,7 @@ class CmdList(CmdBaseNoRepo):
 
 def add_parser(subparsers, parent_parser):
     LIST_HELP = (
-        "List repository contents, including files"
-        " and directories tracked by DVC and by Git."
+        "List repository contents, including files and directories tracked by DVC and by Git."
     )
     list_parser = subparsers.add_parser(
         "list",
@@ -224,9 +223,7 @@ def add_parser(subparsers, parent_parser):
         type=int,
         help="Limit the depth of recursion.",
     )
-    list_parser.add_argument(
-        "--dvc-only", action="store_true", help="Show only DVC outputs."
-    )
+    list_parser.add_argument("--dvc-only", action="store_true", help="Show only DVC outputs.")
     list_parser.add_argument(
         "--json",
         action="store_true",
@@ -242,8 +239,7 @@ def add_parser(subparsers, parent_parser):
         "--config",
         type=str,
         help=(
-            "Path to a config file that will be merged with the config "
-            "in the target repository."
+            "Path to a config file that will be merged with the config in the target repository."
         ),
     )
     list_parser.add_argument(

@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from dvc.fs import localfs
 from dvc.utils.fs import path_isin
@@ -46,7 +46,7 @@ def get_pipelines(graph: "DiGraph"):
 
 
 def get_subgraph_of_nodes(
-    graph: "DiGraph", sources: Optional[list[Any]] = None, downstream: bool = False
+    graph: "DiGraph", sources: list[Any] | None = None, downstream: bool = False
 ) -> "DiGraph":
     from networkx import dfs_postorder_nodes, reverse_view
 

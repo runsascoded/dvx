@@ -3,7 +3,7 @@ import shlex
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 from dvc.log import logger
 from dvc.utils import relpath
@@ -18,27 +18,25 @@ logger = logger.getChild(__name__)
 
 
 class SCMContext:
-    def __init__(self, scm: "Base", config: Optional[dict[str, Any]] = None) -> None:
+    def __init__(self, scm: "Base", config: dict[str, Any] | None = None) -> None:
         from funcy import get_in
 
         self.scm: Base = scm
-        self.autostage: bool = get_in(
-            config or {}, ["core", "autostage"], default=False
-        )
+        self.autostage: bool = get_in(config or {}, ["core", "autostage"], default=False)
         self.ignored_paths: list[str] = []
         self.files_to_track: set[str] = set()
         self.quiet: bool = False
 
-    def track_file(self, paths: Union[str, Iterable[str], None] = None) -> None:
+    def track_file(self, paths: str | Iterable[str] | None = None) -> None:
         """Track file to remind user to track new files or autostage later."""
         return self.files_to_track.update(ensure_list(paths))
 
     @staticmethod
-    def _make_git_add_cmd(paths: Union[str, Iterable[str]]) -> str:
+    def _make_git_add_cmd(paths: str | Iterable[str]) -> str:
         files = " ".join(map(shlex.quote, ensure_list(paths)))
         return f"\tgit add {files}"
 
-    def add(self, paths: Union[str, Iterable[str]]) -> None:
+    def add(self, paths: str | Iterable[str]) -> None:
         from scmrepo.exceptions import UnsupportedIndexFormat
 
         from dvc.scm import add_no_submodules
@@ -50,8 +48,7 @@ class SCMContext:
             add_cmd = self._make_git_add_cmd([relpath(path) for path in paths])
             logger.info("")
             msg = (
-                f"failed to add, add manually using:\n\n{add_cmd}\n"
-                f"\nSee {link} for more details.\n"
+                f"failed to add, add manually using:\n\n{add_cmd}\n\nSee {link} for more details.\n"
             )
             logger.warning(msg)
 
@@ -95,7 +92,7 @@ class SCMContext:
 
     @contextmanager
     def __call__(
-        self, autostage: Optional[bool] = None, quiet: Optional[bool] = None
+        self, autostage: bool | None = None, quiet: bool | None = None
     ) -> Iterator["SCMContext"]:
         try:
             yield self
@@ -118,16 +115,10 @@ class SCMContext:
 
         if autostage:
             self.track_changed_files()
-        elif (
-            not quiet
-            and not isinstance(self.scm, NoSCM)
-            and logger.isEnabledFor(logging.INFO)
-        ):
+        elif not quiet and not isinstance(self.scm, NoSCM) and logger.isEnabledFor(logging.INFO):
             add_cmd = self._make_git_add_cmd(self.files_to_track)
             logger.info("\nTo track the changes with git, run:\n\n%s", add_cmd)
-            logger.info(
-                "\nTo enable auto staging, run:\n\n\tdvc config core.autostage true"
-            )
+            logger.info("\nTo enable auto staging, run:\n\n\tdvc config core.autostage true")
 
         self.files_to_track = set()
 
@@ -140,7 +131,7 @@ class SCMContext:
         self._cm.__exit__(*exc_args)
 
 
-def scm_context(method, autostage: Optional[bool] = None, quiet: Optional[bool] = None):
+def scm_context(method, autostage: bool | None = None, quiet: bool | None = None):
     @wraps(method)
     def run(repo: "Repo", *args, **kw):
         with repo.scm_context(autostage=autostage, quiet=quiet):

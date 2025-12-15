@@ -14,26 +14,18 @@ def _joint_status(pairs, check_updates=True):
     for stage, filter_info in pairs:
         if stage.frozen and not (stage.is_repo_import or stage.is_versioned_import):
             logger.warning(
-                (
-                    "%s is frozen. Its dependencies are"
-                    " not going to be shown in the status output."
-                ),
+                ("%s is frozen. Its dependencies are not going to be shown in the status output."),
                 stage,
             )
-        status_info.update(
-            stage.status(check_updates=check_updates, filter_info=filter_info)
-        )
+        status_info.update(stage.status(check_updates=check_updates, filter_info=filter_info))
 
     return status_info
 
 
-def _local_status(
-    self, targets=None, with_deps=False, recursive=False, check_updates=True
-):
+def _local_status(self, targets=None, with_deps=False, recursive=False, check_updates=True):
     targets = targets or [None]
     pairs = chain.from_iterable(
-        self.stage.collect_granular(t, with_deps=with_deps, recursive=recursive)
-        for t in targets
+        self.stage.collect_granular(t, with_deps=with_deps, recursive=recursive) for t in targets
     )
 
     return _joint_status(pairs, check_updates=check_updates)

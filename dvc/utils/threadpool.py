@@ -1,7 +1,7 @@
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from concurrent import futures
 from itertools import islice
-from typing import Any, Callable, Optional, TypeVar
+from typing import Any, TypeVar
 
 _T = TypeVar("_T")
 
@@ -9,16 +9,14 @@ _T = TypeVar("_T")
 class ThreadPoolExecutor(futures.ThreadPoolExecutor):
     def __init__(
         self,
-        max_workers: Optional[int] = None,
+        max_workers: int | None = None,
         cancel_on_error: bool = False,
         **kwargs,
     ):
         super().__init__(max_workers=max_workers, **kwargs)
         self._cancel_on_error = cancel_on_error
 
-    def imap_unordered(
-        self, fn: Callable[..., _T], *iterables: Iterable[Any]
-    ) -> Iterator[_T]:
+    def imap_unordered(self, fn: Callable[..., _T], *iterables: Iterable[Any]) -> Iterator[_T]:
         """Lazier version of map that does not preserve ordering of results.
 
         It does not create all the futures at once to reduce memory usage.
@@ -27,7 +25,7 @@ class ThreadPoolExecutor(futures.ThreadPoolExecutor):
         def create_taskset(n: int) -> set[futures.Future]:
             return {self.submit(fn, *args) for args in islice(it, n)}
 
-        it = zip(*iterables)
+        it = zip(*iterables, strict=False)
         tasks = create_taskset(self._max_workers * 5)
         while tasks:
             done, tasks = futures.wait(tasks, return_when=futures.FIRST_COMPLETED)

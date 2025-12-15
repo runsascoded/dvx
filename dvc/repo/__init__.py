@@ -1,9 +1,9 @@
 import os
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from contextlib import AbstractContextManager, contextmanager
 from functools import wraps
-from typing import TYPE_CHECKING, Callable, Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 from dvc.exceptions import (
     DvcException,
@@ -16,6 +16,8 @@ from dvc.log import logger
 from dvc.utils.objects import cached_property
 
 if TYPE_CHECKING:
+    from dvc_data.hashfile.state import StateBase
+    from dvc_data.index import DataIndex, DataIndexEntry
     from dvc.fs import FileSystem
     from dvc.fs.data import DataFileSystem
     from dvc.fs.dvc import DVCFileSystem
@@ -24,10 +26,7 @@ if TYPE_CHECKING:
     from dvc.scm import Git, NoSCM
     from dvc.stage import Stage
     from dvc.types import DictStrAny
-    from dvc_data.hashfile.state import StateBase
-    from dvc_data.index import DataIndex, DataIndexEntry
 
-    from .experiments import Experiments
     from .index import Index
     from .scm_context import SCMContext
 
@@ -71,7 +70,6 @@ class Repo:
     from dvc.repo.diff import diff  # type: ignore[misc]
     from dvc.repo.du import du as _du  # type: ignore[misc]
     from dvc.repo.fetch import fetch  # type: ignore[misc]
-    from dvc.repo.freeze import freeze, unfreeze  # type: ignore[misc]
     from dvc.repo.gc import gc  # type: ignore[misc]
     from dvc.repo.get import get as _get  # type: ignore[misc]
     from dvc.repo.get_url import get_url as _get_url  # type: ignore[misc]
@@ -85,8 +83,6 @@ class Repo:
     from dvc.repo.pull import pull  # type: ignore[misc]
     from dvc.repo.push import push  # type: ignore[misc]
     from dvc.repo.remove import remove  # type: ignore[misc]
-    from dvc.repo.reproduce import reproduce  # type: ignore[misc]
-    from dvc.repo.run import run  # type: ignore[misc]
     from dvc.repo.status import status  # type: ignore[misc]
     from dvc.repo.update import update  # type: ignore[misc]
 
@@ -101,15 +97,15 @@ class Repo:
 
     def _get_repo_dirs(
         self,
-        root_dir: Optional[str] = None,
+        root_dir: str | None = None,
         fs: Optional["FileSystem"] = None,
         uninitialized: bool = False,
-        scm: Optional[Union["Git", "NoSCM"]] = None,
-    ) -> tuple[str, Optional[str]]:
+        scm: Union["Git", "NoSCM"] | None = None,
+    ) -> tuple[str, str | None]:
         from dvc.fs import localfs
         from dvc.scm import SCM, SCMError
 
-        dvc_dir: Optional[str] = None
+        dvc_dir: str | None = None
         try:
             root_dir = self.find_root(root_dir, fs)
             fs = fs or localfs
@@ -134,32 +130,27 @@ class Repo:
 
     def __init__(  # noqa: PLR0915
         self,
-        root_dir: Optional[str] = None,
+        root_dir: str | None = None,
         fs: Optional["FileSystem"] = None,
-        rev: Optional[str] = None,
+        rev: str | None = None,
         subrepos: bool = False,
         uninitialized: bool = False,
         config: Optional["DictStrAny"] = None,
-        url: Optional[str] = None,
-        repo_factory: Optional[Callable] = None,
-        scm: Optional[Union["Git", "NoSCM"]] = None,
-        remote: Optional[str] = None,
+        url: str | None = None,
+        repo_factory: Callable | None = None,
+        scm: Union["Git", "NoSCM"] | None = None,
+        remote: str | None = None,
         remote_config: Optional["DictStrAny"] = None,
         _wait_for_lock: bool = False,
     ):
+        from dvc_data.hashfile.state import State, StateNoop
         from dvc.cachemgr import CacheManager
         from dvc.data_cloud import DataCloud
         from dvc.fs import GitFileSystem, LocalFileSystem
         from dvc.lock import LockNoop, make_lock
-        from dvc.repo.artifacts import Artifacts
-        from dvc.repo.datasets import Datasets
-        from dvc.repo.metrics import Metrics
-        from dvc.repo.params import Params
-        from dvc.repo.plots import Plots
         from dvc.repo.stage import StageLoad
         from dvc.scm import SCM
         from dvc.stage.cache import StageCache
-        from dvc_data.hashfile.state import State, StateNoop
 
         self.url = url
         self._fs_conf = {"repo_factory": repo_factory}
@@ -168,7 +159,7 @@ class Repo:
         self._config = config
         self._remote = remote
         self._remote_config = remote_config
-        self._data_index: Optional[DataIndex] = None
+        self._data_index: DataIndex | None = None
         self._wait_for_lock = _wait_for_lock
 
         if rev and not fs:
@@ -177,7 +168,7 @@ class Repo:
             self._fs = GitFileSystem(scm=self._scm, rev=rev)
 
         self.root_dir: str
-        self.dvc_dir: Optional[str]
+        self.dvc_dir: str | None
         (self.root_dir, self.dvc_dir) = self._get_repo_dirs(
             root_dir=root_dir, fs=self.fs, uninitialized=uninitialized, scm=scm
         )
@@ -210,9 +201,7 @@ class Repo:
                     wait=self._wait_for_lock,
                 )
                 os.makedirs(self.site_cache_dir, exist_ok=True)
-                if not fs and (
-                    checksum_jobs := self.config["core"].get("checksum_jobs")
-                ):
+                if not fs and (checksum_jobs := self.config["core"].get("checksum_jobs")):
                     self.fs.hash_jobs = checksum_jobs
 
                 self.state = State(self.root_dir, self.site_cache_dir, self.dvcignore)
@@ -226,15 +215,7 @@ class Repo:
 
             self._ignore()
 
-        self.metrics: Metrics = Metrics(self)
-        self.plots: Plots = Plots(self)
-        self.params: Params = Params(self)
-        self.artifacts: Artifacts = Artifacts(self)
-        self.datasets: Datasets = Datasets(self)
-
-        self.stage_collection_error_handler: Optional[
-            Callable[[str, Exception], None]
-        ] = None
+        self.stage_collection_error_handler: Callable[[str, Exception], None] | None = None
         self._lock_depth: int = 0
 
     def __str__(self):
@@ -254,7 +235,7 @@ class Repo:
         )
 
     @cached_property
-    def local_dvc_dir(self) -> Optional[str]:
+    def local_dvc_dir(self) -> str | None:
         from dvc.fs import GitFileSystem, LocalFileSystem
 
         if not self.dvc_dir:
@@ -290,9 +271,7 @@ class Repo:
 
         return Index.from_repo(self)
 
-    def check_graph(
-        self, stages: Iterable["Stage"], callback: Optional[Callable] = None
-    ) -> None:
+    def check_graph(self, stages: Iterable["Stage"], callback: Callable | None = None) -> None:
         if not getattr(self, "_skip_graph_checks", False):
             new = self.index.update(stages)
             if callable(callback):
@@ -300,7 +279,7 @@ class Repo:
             new.check_graph()
 
     @staticmethod
-    def open(url: Optional[str], *args, **kwargs) -> "Repo":
+    def open(url: str | None, *args, **kwargs) -> "Repo":
         from .open_repo import open_repo
 
         return open_repo(url, *args, **kwargs)
@@ -343,12 +322,6 @@ class Repo:
                 return self.scm.get_rev()
         assert isinstance(self.fs, GitFileSystem)
         return self.fs.rev
-
-    @cached_property
-    def experiments(self) -> "Experiments":
-        from dvc.repo.experiments import Experiments
-
-        return Experiments(self)
 
     @property
     def fs(self) -> "FileSystem":
@@ -482,8 +455,7 @@ class Repo:
         with_deps=False,
         all_tags=False,
         all_commits=False,
-        all_experiments=False,
-        commit_date: Optional[str] = None,
+        commit_date: str | None = None,
         remote=None,
         force=False,
         jobs=None,
@@ -501,8 +473,7 @@ class Repo:
         (namely, a file described as an output on a stage).
 
         The scope is, by default, the working directory, but you can use
-        `all_branches`/`all_tags`/`all_commits`/`all_experiments` to expand
-        the scope.
+        `all_branches`/`all_tags`/`all_commits` to expand the scope.
 
         Returns:
             A dict mapping (remote) ODB instances to sets of objects that
@@ -516,7 +487,6 @@ class Repo:
             all_branches=all_branches,
             all_tags=all_tags,
             all_commits=all_commits,
-            all_experiments=all_experiments,
             commit_date=commit_date,
             num=num,
         ):
@@ -545,9 +515,7 @@ class Repo:
 
         return used
 
-    def find_outs_by_path(
-        self, path, outs=None, recursive=False, strict=True
-    ) -> list["Output"]:
+    def find_outs_by_path(self, path, outs=None, recursive=False, strict=True) -> list["Output"]:
         # using `outs_graph` to ensure graph checks are run
         outs = outs or self.index.outs_graph
 
@@ -645,9 +613,7 @@ class Repo:
         btime = self._btime or getattr(os.stat(root_dir), "st_birthtime", None)
 
         md5 = hashlib.md5(
-            str(
-                (root_dir, subdir, btime, getpass.getuser(), version_tuple[0], salt)
-            ).encode(),
+            str((root_dir, subdir, btime, getpass.getuser(), version_tuple[0], salt)).encode(),
             usedforsecurity=False,
         )
         repo_token = md5.hexdigest()
@@ -663,7 +629,6 @@ class Repo:
 
     def _reset(self):
         self.scm._reset()
-        self.datasets._reset()
         self.state.close()
         if "dvcfs" in self.__dict__:
             self.dvcfs.close()

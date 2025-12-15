@@ -7,8 +7,7 @@ logger = logger.getChild(__name__)
 def _update_import_on_remote(stage, remote, jobs):
     if stage.is_repo_import:
         raise InvalidArgumentError(
-            "Data imported from other DVC or Git repositories can't "
-            "be updated with --to-remote"
+            "Data imported from other DVC or Git repositories can't be updated with --to-remote"
         )
 
     stage.save_deps()

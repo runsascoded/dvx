@@ -41,9 +41,7 @@ def parse_py_for_update(text, path):
 def _dump(data, stream):
     old_params = data[_PARAMS_KEY]
     new_params = {
-        key: value
-        for key, value in data.items()
-        if key not in [_PARAMS_KEY, _PARAMS_TEXT_KEY]
+        key: value for key, value in data.items() if key not in [_PARAMS_KEY, _PARAMS_TEXT_KEY]
     }
     old_lines = data[_PARAMS_TEXT_KEY].splitlines(True)
 
@@ -53,9 +51,7 @@ def _dump(data, stream):
                 lines = _update_lines(lines, old_dct[key], value)
             elif value != old_dct[key]["value"]:
                 lineno = old_dct[key]["lineno"]
-                lines[lineno] = lines[lineno].replace(
-                    f" = {old_dct[key]['value']}", f" = {value}"
-                )
+                lines[lineno] = lines[lineno].replace(f" = {old_dct[key]['value']}", f" = {value}")
             else:
                 continue
         return lines
@@ -101,9 +97,7 @@ def _ast_tree_to_dict(tree, only_self_params=False, lineno=False):
             elif isinstance(_body, ast.ClassDef):
                 result.update({_body.name: _ast_tree_to_dict(_body, lineno=lineno)})
             elif isinstance(_body, ast.FunctionDef) and _body.name == "__init__":
-                result.update(
-                    _ast_tree_to_dict(_body, only_self_params=True, lineno=lineno)
-                )
+                result.update(_ast_tree_to_dict(_body, only_self_params=True, lineno=lineno))
         except ValueError:
             continue
         except AttributeError:
@@ -124,7 +118,7 @@ def _ast_assign_to_dict(assign, only_self_params=False, lineno=False):
     value: Any
     if isinstance(assign.value, ast.Dict):
         value = {}
-        for key, val in zip(assign.value.keys, assign.value.values):
+        for key, val in zip(assign.value.keys, assign.value.values, strict=True):
             if lineno:
                 value[ast.literal_eval(key)] = {  # type: ignore[arg-type]
                     "lineno": assign.lineno - 1,

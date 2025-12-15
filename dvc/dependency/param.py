@@ -1,14 +1,14 @@
 import os
 import typing
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import dpath
 
+from dvc_data.hashfile.hash_info import HashInfo
 from dvc.exceptions import DvcException
 from dvc.log import logger
 from dvc.utils.serialize import ParseError, load_path
-from dvc_data.hashfile.hash_info import HashInfo
 
 from .base import Dependency
 
@@ -37,7 +37,7 @@ class BadParamFileError(DvcException):
 def read_param_file(
     fs: "FileSystem",
     path: str,
-    key_paths: Optional[list[str]] = None,
+    key_paths: list[str] | None = None,
     flatten: bool = False,
     **load_kwargs,
 ) -> Any:
@@ -102,9 +102,7 @@ class ParamsDependency(Dependency):
                 info[param] = values[param]
         self.hash_info = HashInfo(self.PARAM_PARAMS, info)  # type: ignore[arg-type]
 
-    def read_params(
-        self, flatten: bool = True, **kwargs: typing.Any
-    ) -> dict[str, typing.Any]:
+    def read_params(self, flatten: bool = True, **kwargs: typing.Any) -> dict[str, typing.Any]:
         try:
             self.validate_filepath()
         except MissingParamsFile:
@@ -145,10 +143,7 @@ class ParamsDependency(Dependency):
             elif param not in info:
                 st = "new"
             elif actual[param] != info[param]:
-                if (
-                    isinstance(actual[param], tuple)
-                    and list(actual[param]) == info[param]
-                ):
+                if isinstance(actual[param], tuple) and list(actual[param]) == info[param]:
                     continue
                 st = "modified"
             else:
@@ -165,9 +160,7 @@ class ParamsDependency(Dependency):
         if not self.exists:
             raise MissingParamsFile(f"Parameters file '{self}' does not exist")
         if self.isdir():
-            raise ParamsIsADirectoryError(
-                f"'{self}' is a directory, expected a parameters file"
-            )
+            raise ParamsIsADirectoryError(f"'{self}' is a directory, expected a parameters file")
 
     def get_hash(self):
         info = self.read_params()
@@ -175,9 +168,7 @@ class ParamsDependency(Dependency):
         missing_params = set(self.params) - set(info.keys())
         if missing_params:
             raise MissingParamsError(
-                "Parameters '{}' are missing from '{}'.".format(
-                    ", ".join(missing_params), self
-                )
+                "Parameters '{}' are missing from '{}'.".format(", ".join(missing_params), self)
             )
 
         return HashInfo(self.PARAM_PARAMS, info)  # type: ignore[arg-type]

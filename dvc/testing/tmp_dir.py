@@ -77,11 +77,7 @@ class TmpDir(pathlib.Path):
             kw = {"init": False} if sys.version_info < (3, 10) else {}
             self = cls._from_parts(args, **kw)  # type: ignore[attr-defined]
             if not self._flavour.is_supported:
-                raise NotImplementedError(
-                    f"cannot instantiate {cls.__name__!r} on your system"
-                )
-            if sys.version_info < (3, 10):
-                self._init()
+                raise NotImplementedError(f"cannot instantiate {cls.__name__!r} on your system")
             return self
 
     def init(self, *, scm=False, dvc=False, subdir=False):
@@ -113,8 +109,7 @@ class TmpDir(pathlib.Path):
     def _require(self, name):
         if not hasattr(self, name):
             raise TypeError(
-                f"Can't use {name} for this temporary dir. "
-                f'Did you forget to use "{name}" fixture?'
+                f'Can\'t use {name} for this temporary dir. Did you forget to use "{name}" fixture?'
             )
 
     # Bootstrapping methods
@@ -157,9 +152,7 @@ class TmpDir(pathlib.Path):
 
             return os.path.join(os.path.dirname(stage_path), Git.GITIGNORE)
 
-        gitignores = [
-            to_gitignore(s) for s in output_paths if os.path.exists(to_gitignore(s))
-        ]
+        gitignores = [to_gitignore(s) for s in output_paths if os.path.exists(to_gitignore(s))]
         return self.scm_add(output_paths + gitignores, commit=msg, force=force)
 
     def dvc_add(self, filenames, commit=None):
@@ -225,9 +218,7 @@ class TmpDir(pathlib.Path):
         # IsADirectoryError when we try to `open` a directory, so we can't
         # rely on exception flow control
         if self.is_dir():
-            return {
-                path.name: path.read_text(*args, **kwargs) for path in self.iterdir()
-            }
+            return {path.name: path.read_text(*args, **kwargs) for path in self.iterdir()}
         kwargs.setdefault("encoding", "utf-8")  # type: ignore[call-overload]
         return super().read_text(*args, **kwargs)
 

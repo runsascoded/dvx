@@ -1,6 +1,7 @@
 import contextlib
 import os
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Optional, TypeVar, Union
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from dvc.exceptions import DvcException
 from dvc.log import logger
@@ -33,9 +34,7 @@ LOCK_FILE = "dvc.lock"
 class FileIsGitIgnored(DvcException):
     def __init__(self, path, pipeline_file=False):
         super().__init__(
-            "{}'{}' is git-ignored.".format(
-                "bad DVC file name " if pipeline_file else "", path
-            )
+            "{}'{}' is git-ignored.".format("bad DVC file name " if pipeline_file else "", path)
         )
 
 
@@ -92,9 +91,7 @@ class FileMixin:
         return hash(self.path)
 
     def __eq__(self, other):
-        return self.repo == other.repo and os.path.abspath(
-            self.path
-        ) == os.path.abspath(other.path)
+        return self.repo == other.repo and os.path.abspath(self.path) == os.path.abspath(other.path)
 
     def __str__(self):
         return f"{self.__class__.__name__}: {self.relpath}"
@@ -140,7 +137,7 @@ class FileMixin:
         return self._load_yaml(**kwargs)
 
     @classmethod
-    def validate(cls, d: _T, fname: Optional[str] = None) -> _T:
+    def validate(cls, d: _T, fname: str | None = None) -> _T:
         from dvc.utils.strictyaml import validate
 
         return validate(d, cls.SCHEMA, path=fname)  # type: ignore[arg-type]
@@ -178,7 +175,7 @@ class SingleStageFile(FileMixin):
     metrics: ClassVar[list[str]] = []
     plots: ClassVar[Any] = {}
     params: ClassVar[list[str]] = []
-    artifacts: ClassVar[dict[str, Optional[dict[str, Any]]]] = {}
+    artifacts: ClassVar[dict[str, dict[str, Any] | None]] = {}
 
     @property
     def stage(self) -> "Stage":
@@ -270,9 +267,7 @@ class ProjectFile(FileMixin):
             )
             if loc is not None:
                 if raw[loc] != parsed[loc]:
-                    raise ParametrizedDumpError(
-                        "cannot update a parametrized dataset entry"
-                    )
+                    raise ParametrizedDumpError("cannot update a parametrized dataset entry")
 
                 apply_diff(dataset, raw[loc])
                 raw[loc] = dataset
@@ -338,7 +333,7 @@ class ProjectFile(FileMixin):
         return self.LOADER(self, self.contents, self.lockfile_contents)
 
     @property
-    def artifacts(self) -> dict[str, Optional[dict[str, Any]]]:
+    def artifacts(self) -> dict[str, dict[str, Any] | None]:
         return self.resolver.resolve_artifacts()
 
     @property
@@ -439,9 +434,7 @@ class Lockfile(FileMixin):
             data["stages"] = data.get("stages", {})
             for stage in stages:
                 stage_data = serialize.to_lockfile(stage, **kwargs)
-                modified = data["stages"].get(stage.name, {}) != stage_data.get(
-                    stage.name, {}
-                )
+                modified = data["stages"].get(stage.name, {}) != stage_data.get(stage.name, {})
                 if modified:
                     is_modified = True
                     if not log_updated:
@@ -476,9 +469,7 @@ class Lockfile(FileMixin):
         raise NotImplementedError
 
 
-def load_file(
-    repo: "Repo", path: "StrOrBytesPath", **kwargs: Any
-) -> Union[ProjectFile, SingleStageFile]:
+def load_file(repo: "Repo", path: "StrOrBytesPath", **kwargs: Any) -> ProjectFile | SingleStageFile:
     _, ext = os.path.splitext(path)
     if ext in (".yaml", ".yml"):
         return ProjectFile(repo, path, **kwargs)

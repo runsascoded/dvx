@@ -4,7 +4,6 @@ import shutil
 import sys
 from pathlib import Path
 from subprocess import check_call, check_output
-from typing import Optional
 
 import pytest
 from dulwich.porcelain import clone
@@ -30,7 +29,7 @@ class VirtualEnv:
     def install(self, *packages: str) -> None:
         check_call([sys.executable, "-m", "uv", "pip", "install", *packages])  # noqa: S603
 
-    def run(self, cmd: str, *args: str, env: Optional[dict[str, str]] = None) -> None:
+    def run(self, cmd: str, *args: str, env: dict[str, str] | None = None) -> None:
         exe = self.which(cmd)
         check_call([exe, *args], env=env)  # noqa: S603
 
@@ -141,9 +140,7 @@ def dvc_bin(request, make_dvc_bin):
         dvc_version = make_dvc_bin.version
         version = Version(parse(dvc_version).base_version)
         if version not in spec:
-            pytest.skip(
-                f"Version {dvc_version} does not satisfy requirement {spec!r}: {reason}"
-            )
+            pytest.skip(f"Version {dvc_version} does not satisfy requirement {spec!r}: {reason}")
     return make_dvc_bin
 
 
@@ -211,9 +208,7 @@ def _pull(repo, *args):
 
 @pytest.fixture
 def make_dataset(request, bench_config, tmp_dir, dvc_bench_repo):
-    def _make_dataset(
-        dvcfile=False, files=True, cache=False, commit=False, remote=False
-    ):
+    def _make_dataset(dvcfile=False, files=True, cache=False, commit=False, remote=False):
         from dvc.repo import Repo
 
         path = tmp_dir / "dataset"

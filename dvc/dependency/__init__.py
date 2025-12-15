@@ -48,9 +48,7 @@ def loadd_from(stage, d_list) -> list[Dependency]:
         files = d.pop(Output.PARAM_FILES, None)
         hash_name = d.pop(Output.PARAM_HASH, None)
         fs_config = d.pop(Output.PARAM_FS_CONFIG, None)
-        ret.append(
-            _get(stage, p, d, files=files, hash_name=hash_name, fs_config=fs_config)
-        )
+        ret.append(_get(stage, p, d, files=files, hash_name=hash_name, fs_config=fs_config))
     return ret
 
 

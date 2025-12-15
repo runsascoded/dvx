@@ -68,9 +68,7 @@ def _edit_rwlock(lock_dir, fs, hardlink):
 
 
 def _infos_to_str(infos):
-    return "\n".join(
-        "  (PID {}): {}".format(info["pid"], info["cmd"]) for info in infos
-    )
+    return "\n".join("  (PID {}): {}".format(info["pid"], info["cmd"]) for info in infos)
 
 
 def _check_blockers(tmp_dir, lock, info, *, mode, waiters):

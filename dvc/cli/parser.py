@@ -7,23 +7,20 @@ from functools import lru_cache
 from dvc import __version__
 from dvc.commands import (
     add,
-    artifacts,
     cache,
+    cat,
     check_ignore,
     checkout,
     commit,
     completion,
     config,
-    daemon,
-    dag,
+    content_diff,
     data,
     data_sync,
-    dataset,
     destroy,
     diff,
     du,
-    experiments,
-    freeze,
+    fsck,
     gc,
     get,
     get_url,
@@ -35,17 +32,11 @@ from dvc.commands import (
     install,
     ls,
     ls_url,
-    metrics,
     move,
-    params,
-    plots,
-    queue,
     remote,
     remove,
-    repro,
     root,
-    stage,
-    studio,
+    run,
     unprotect,
     update,
     version,
@@ -58,23 +49,20 @@ logger = logger.getChild(__name__)
 
 COMMANDS = [
     add,
-    artifacts,
     cache,
+    cat,
     check_ignore,
     checkout,
     commit,
     completion,
     config,
-    daemon,
-    dag,
+    content_diff,
     data,
     data_sync,
-    dataset,
     destroy,
     diff,
     du,
-    experiments,
-    freeze,
+    fsck,
     gc,
     get,
     get_url,
@@ -86,17 +74,11 @@ COMMANDS = [
     install,
     ls,
     ls_url,
-    metrics,
     move,
-    params,
-    plots,
-    queue,
     remote,
     remove,
-    repro,
     root,
-    stage,
-    studio,
+    run,
     unprotect,
     update,
     version,
@@ -147,12 +129,8 @@ def get_parent_parser():
 
     parent_parser = argparse.ArgumentParser(add_help=False)
     log_level_group = parent_parser.add_mutually_exclusive_group()
-    log_level_group.add_argument(
-        "-q", "--quiet", action="count", default=0, help="Be quiet."
-    )
-    log_level_group.add_argument(
-        "-v", "--verbose", action="count", default=0, help="Be verbose."
-    )
+    log_level_group.add_argument("-q", "--quiet", action="count", default=0, help="Be quiet.")
+    log_level_group.add_argument("-v", "--verbose", action="count", default=0, help="Be verbose.")
     add_debugging_flags(parent_parser)
 
     return parent_parser
@@ -163,7 +141,7 @@ def get_main_parser():
     parent_parser = get_parent_parser()
 
     # Main parser
-    desc = "Data Version Control"
+    desc = "Minimal Data Version Control"
     parser = DvcParser(
         prog="dvc",
         description=desc,
@@ -213,7 +191,7 @@ def get_main_parser():
         title="Available Commands",
         metavar="command",
         dest="cmd",
-        help="Use `dvc command --help` for command-specific help.",
+        help="Use `dvx command --help` for command-specific help.",
         required=True,
     )
 

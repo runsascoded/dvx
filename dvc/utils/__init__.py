@@ -5,7 +5,7 @@ import json
 import os
 import re
 import sys
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import colorama
 from colorama import AnsiToWin32
@@ -52,10 +52,7 @@ def dict_sha256(d, **kwargs):
 
 
 def _split(list_to_split, chunk_size):
-    return [
-        list_to_split[i : i + chunk_size]
-        for i in range(0, len(list_to_split), chunk_size)
-    ]
+    return [list_to_split[i : i + chunk_size] for i in range(0, len(list_to_split), chunk_size)]
 
 
 # NOTE: Check if we are in a bundle
@@ -247,7 +244,7 @@ def env2bool(var, undefined=False):
     return bool(re.search("1|y|yes|true", var, flags=re.IGNORECASE))
 
 
-def resolve_output(inp: str, out: Optional[str], force=False) -> str:
+def resolve_output(inp: str, out: str | None, force=False) -> str:
     from urllib.parse import urlparse
 
     from dvc.exceptions import FileExistsLocallyError
@@ -292,11 +289,8 @@ def resolve_paths(repo, out, always_local=False):
         os.path.isdir(abspath) and localfs.is_symlink(abspath)
     ):
         msg = (
-            "Cannot add files inside symlinked directories to DVC. "
-            "See {} for more information."
-        ).format(
-            format_link("https://dvc.org/doc/user-guide/troubleshooting#add-symlink")
-        )
+            "Cannot add files inside symlinked directories to DVC. See {} for more information."
+        ).format(format_link("https://dvc.org/doc/user-guide/troubleshooting#add-symlink"))
         raise DvcException(msg)
     else:
         wdir = dirname
@@ -321,8 +315,8 @@ def error_link(name):
 
 
 def parse_target(
-    target: str, default: Optional[str] = None, isa_glob: bool = False
-) -> tuple[Optional[str], Optional[str]]:
+    target: str, default: str | None = None, isa_glob: bool = False
+) -> tuple[str | None, str | None]:
     from dvc.dvcfile import LOCK_FILE, PROJECT_FILE, is_valid_filename
     from dvc.exceptions import DvcException
     from dvc.parsing import JOIN
@@ -351,9 +345,7 @@ def parse_target(
 
     if path:
         if os.path.basename(path) == LOCK_FILE:
-            raise DvcException(
-                "Did you mean: `{}`?".format(target.replace(".lock", ".yaml", 1))
-            )
+            raise DvcException("Did you mean: `{}`?".format(target.replace(".lock", ".yaml", 1)))
         if not name:
             ret = (target, None)
             return ret if is_valid_filename(target) else ret[::-1]
@@ -369,9 +361,7 @@ def glob_targets(targets, glob=True, recursive=True):
     from glob import iglob
 
     results = [
-        exp_target
-        for target in targets
-        for exp_target in iglob(target, recursive=recursive)
+        exp_target for target in targets for exp_target in iglob(target, recursive=recursive)
     ]
 
     if not results:
@@ -408,7 +398,7 @@ def errored_revisions(rev_data: dict) -> list:
     return result
 
 
-def isatty(stream: "Optional[TextIO]") -> bool:
+def isatty(stream: "TextIO | None") -> bool:
     if stream is None:
         return False
     return stream.isatty()

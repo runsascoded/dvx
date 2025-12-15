@@ -1,7 +1,7 @@
 import os
 import tempfile
 import threading
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from funcy import retry, wrap_with
 
@@ -18,7 +18,7 @@ logger = logger.getChild(__name__)
 
 
 @map_scm_exception()
-def _external_repo(url, rev: Optional[str] = None, **kwargs) -> "Repo":
+def _external_repo(url, rev: str | None = None, **kwargs) -> "Repo":
     logger.debug("Creating external repo %s@%s", url, rev)
     path = _cached_clone(url, rev)
     # Local HEAD points to the tip of whatever branch we first cloned from
@@ -191,9 +191,7 @@ def _clone_default_branch(url, rev):
 
                 try:
                     git = clone(url, clone_path, shallow_branch=rev)
-                    shallow = os.path.exists(
-                        os.path.join(clone_path, Git.GIT_DIR, "shallow")
-                    )
+                    shallow = os.path.exists(os.path.join(clone_path, Git.GIT_DIR, "shallow"))
                     if shallow:
                         logger.debug("erepo: using shallow clone for branch '%s'", rev)
                 except CloneError:
@@ -212,11 +210,8 @@ def _clone_default_branch(url, rev):
 
 
 def _pull(git: "Git", unshallow: bool = False):
-    from dvc.repo.experiments.utils import fetch_all_exps
-
     git.fetch(unshallow=unshallow)
     _merge_upstream(git)
-    fetch_all_exps(git, "origin")
 
 
 def _merge_upstream(git: "Git"):

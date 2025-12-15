@@ -14,9 +14,7 @@ def check_required_version(pkg: str, dist: str = "dvc", log_level=logging.WARNIN
     from packaging.requirements import InvalidRequirement, Requirement
 
     try:
-        reqs = {
-            r.name: r.specifier for r in map(Requirement, metadata.requires(dist) or [])
-        }
+        reqs = {r.name: r.specifier for r in map(Requirement, metadata.requires(dist) or [])}
         version = metadata.version(pkg)
     except (metadata.PackageNotFoundError, InvalidRequirement):
         return

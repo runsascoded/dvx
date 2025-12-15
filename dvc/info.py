@@ -78,10 +78,7 @@ def _get_caches(cache):
 
 
 def _get_remotes(config):
-    return [
-        get_fs_cls(get_fs_config(config, name=remote)).protocol
-        for remote in config["remote"]
-    ]
+    return [get_fs_cls(get_fs_config(config, name=remote)).protocol for remote in config["remote"]]
 
 
 def _get_linktype_support_info(repo):

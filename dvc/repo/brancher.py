@@ -1,6 +1,6 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from scmrepo.git import Git
 
@@ -20,9 +20,8 @@ def brancher(
     all_branches=False,
     all_tags=False,
     all_commits=False,
-    all_experiments=False,
     workspace=True,
-    commit_date: Optional[str] = None,
+    commit_date: str | None = None,
     sha_only=False,
     num=1,
 ):
@@ -34,9 +33,8 @@ def brancher(
         all_commits (bool): iterate over all commits.
         all_tags (bool): iterate over all available tags.
         workspace (bool): include workspace.
-        commit_date (str): Keep experiments from the commits after(include)
-                            a certain date. Date must match the extended
-                            ISO 8601 format (YYYY-MM-DD).
+        commit_date (str): Keep commits after (include) a certain date.
+                          Date must match the extended ISO 8601 format (YYYY-MM-DD).
         sha_only (bool): only return git SHA for a revision.
 
     Yields:
@@ -51,7 +49,6 @@ def brancher(
             all_branches,
             all_tags,
             all_commits,
-            all_experiments,
             commit_date,
         ]
     ):
@@ -89,7 +86,6 @@ def brancher(
         all_branches=all_branches,
         all_tags=all_tags,
         all_commits=all_commits,
-        all_experiments=all_experiments,
         commit_date=commit_date,
         num=num,
     )

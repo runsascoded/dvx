@@ -56,9 +56,7 @@ def update(
         if rev:
             raise InvalidArgumentError("--rev can't be used with worktree update")
         if no_download:
-            raise InvalidArgumentError(
-                "--no-download can't be used with worktree update"
-            )
+            raise InvalidArgumentError("--no-download can't be used with worktree update")
         if to_remote:
             raise InvalidArgumentError("--to-remote can't be used with worktree update")
         update_worktree_stages(self, other_stage_infos)

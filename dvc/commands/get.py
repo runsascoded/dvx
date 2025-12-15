@@ -50,9 +50,7 @@ class CmdGet(CmdBaseNoRepo):
             logger.exception("failed to get '%s'", self.args.path)
             return 1
         except DvcException:
-            logger.exception(
-                "failed to get '%s' from '%s'", self.args.path, self.args.url
-            )
+            logger.exception("failed to get '%s' from '%s'", self.args.path, self.args.url)
             return 1
 
 
@@ -65,9 +63,7 @@ def add_parser(subparsers, parent_parser):
         help=GET_HELP,
         formatter_class=formatter.RawDescriptionHelpFormatter,
     )
-    get_parser.add_argument(
-        "url", help="Location of DVC or Git repository to download from"
-    )
+    get_parser.add_argument("url", help="Location of DVC or Git repository to download from")
     get_parser.add_argument(
         "path", help="Path to a file or directory within the repository"
     ).complete = completion.FILE
@@ -88,18 +84,14 @@ def add_parser(subparsers, parent_parser):
         "--show-url",
         action="store_true",
         help=(
-            "Print the storage location (URL) the target data would be "
-            "downloaded from, and exit."
+            "Print the storage location (URL) the target data would be downloaded from, and exit."
         ),
     )
     get_parser.add_argument(
         "-j",
         "--jobs",
         type=int,
-        help=(
-            "Number of jobs to run simultaneously. "
-            "The default value is 4 * cpu_count(). "
-        ),
+        help=("Number of jobs to run simultaneously. The default value is 4 * cpu_count(). "),
         metavar="<number>",
     )
     get_parser.add_argument(
@@ -113,8 +105,7 @@ def add_parser(subparsers, parent_parser):
         "--config",
         type=str,
         help=(
-            "Path to a config file that will be merged with the config "
-            "in the target repository."
+            "Path to a config file that will be merged with the config in the target repository."
         ),
     )
     get_parser.add_argument(

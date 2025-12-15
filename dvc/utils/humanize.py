@@ -14,13 +14,8 @@ def join(words):
 
 
 def get_summary(stats):
-    status = (
-        (state, len(data) if is_seq(data) else data) for state, data in stats if data
-    )
-    return join(
-        "{} file{} {}".format(num, "s" if num > 1 else "", state)
-        for state, num in status
-    )
+    status = ((state, len(data) if is_seq(data) else data) for state, data in stats if data)
+    return join("{} file{} {}".format(num, "s" if num > 1 else "", state) for state, num in status)
 
 
 ELLIPSIS = "…"

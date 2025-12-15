@@ -1,7 +1,7 @@
 from collections import OrderedDict
 from collections.abc import Iterable
 from operator import attrgetter
-from typing import TYPE_CHECKING, Any, Optional, Union, no_type_check
+from typing import TYPE_CHECKING, Any, no_type_check
 
 from funcy import post_processing
 
@@ -80,7 +80,7 @@ def _serialize_params_keys(params: Iterable["ParamsDependency"]):
     at the first, and then followed by entry of other files in lexicographic
     order. The keys of those custom files are also sorted in the same order.
     """
-    keys: list[Union[str, dict[str, Optional[list[str]]]]] = []
+    keys: list[str | dict[str, list[str] | None]] = []
     for param_dep in sorted(params, key=attrgetter("def_path")):
         # when on no_exec, params are not filled and are saved as list
         k: list[str] = sorted(param_dep.params)
@@ -141,6 +141,7 @@ def to_pipeline_file(stage: "PipelineStage"):
 
 
 def to_single_stage_lockfile(stage: "Stage", **kwargs) -> dict:
+    from dvc_data.hashfile.tree import Tree
     from dvc.cachemgr import LEGACY_HASH_NAMES
     from dvc.dependency import DatasetDependency
     from dvc.output import (
@@ -148,7 +149,6 @@ def to_single_stage_lockfile(stage: "Stage", **kwargs) -> dict:
         _serialize_tree_obj_to_files,
         split_file_meta_from_cloud,
     )
-    from dvc_data.hashfile.tree import Tree
 
     assert stage.cmd
 
@@ -164,8 +164,7 @@ def to_single_stage_lockfile(stage: "Stage", **kwargs) -> dict:
             if obj:
                 assert isinstance(obj, Tree)
                 ret[item.PARAM_FILES] = [
-                    split_file_meta_from_cloud(f)
-                    for f in _serialize_tree_obj_to_files(obj)
+                    split_file_meta_from_cloud(f) for f in _serialize_tree_obj_to_files(obj)
                 ]
         else:
             assert item.meta is not None

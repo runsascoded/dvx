@@ -29,8 +29,7 @@ class CmdRemoteAdd(CmdRemote):
         with self.config.edit(self.args.level) as conf:
             if self.args.name in conf["remote"] and not self.args.force:
                 raise ConfigError(
-                    f"remote '{self.args.name}' already exists. Use `-f|--force` to "
-                    "overwrite it."
+                    f"remote '{self.args.name}' already exists. Use `-f|--force` to overwrite it."
                 )
 
             conf["remote"][self.args.name] = {"url": self.args.url}
@@ -95,15 +94,10 @@ class CmdRemoteDefault(CmdRemote):
                     conf["core"].pop("remote", None)
                 else:
                     merged_conf = self.config.load_config_to_level(self.args.level)
-                    if (
-                        self.args.name in conf["remote"]
-                        or self.args.name in merged_conf["remote"]
-                    ):
+                    if self.args.name in conf["remote"] or self.args.name in merged_conf["remote"]:
                         conf["core"]["remote"] = self.args.name
                     else:
-                        raise ConfigError(
-                            "default remote must be present in remote list."
-                        )
+                        raise ConfigError("default remote must be present in remote list.")
         return 0
 
 
@@ -133,9 +127,7 @@ class CmdRemoteRename(CmdRemote):
 
         all_config = self.config.load_config_to_level(None)
         if self.args.new in all_config.get("remote", {}):
-            raise ConfigError(
-                f"Rename failed. Remote name {self.args.new!r} already exists."
-            )
+            raise ConfigError(f"Rename failed. Remote name {self.args.new!r} already exists.")
 
         with self.config.edit(self.args.level) as conf:
             self._check_exists(conf)
@@ -234,9 +226,7 @@ def add_parser(subparsers, parent_parser):
         "name", help="Name of the remote"
     ).complete = completion.REMOTE
     remote_modify_parser.add_argument("option", help="Name of the option to modify.")
-    remote_modify_parser.add_argument(
-        "value", nargs="?", help="(optional) Value of the option."
-    )
+    remote_modify_parser.add_argument("value", nargs="?", help="(optional) Value of the option.")
     remote_modify_parser.add_argument(
         "-u",
         "--unset",

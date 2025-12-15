@@ -121,9 +121,7 @@ FOREACH_IN = {
     vol.Required(FOREACH_KWD): vol.Any(dict, list, str),
     vol.Required(DO_KWD): STAGE_DEFINITION,
 }
-SINGLE_PIPELINE_STAGE_SCHEMA = {
-    str: either_or(STAGE_DEFINITION, FOREACH_IN, [FOREACH_KWD, DO_KWD])
-}
+SINGLE_PIPELINE_STAGE_SCHEMA = {str: either_or(STAGE_DEFINITION, FOREACH_IN, [FOREACH_KWD, DO_KWD])}
 
 DATASET_SCHEMA = vol.Schema(
     {vol.Required("type"): str, vol.Required("name"): str}, extra=vol.ALLOW_EXTRA

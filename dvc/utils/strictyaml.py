@@ -9,9 +9,11 @@ Not to be confused with strictyaml, a python library with similar motivations.
 
 import re
 import typing
+from collections.abc import Callable
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
+from dvc_objects.fs.local import LocalFileSystem
 from dvc.exceptions import PrettyDvcException
 from dvc.ui import ui
 from dvc.utils.serialize import (
@@ -20,7 +22,6 @@ from dvc.utils.serialize import (
     parse_yaml,
     parse_yaml_for_update,
 )
-from dvc_objects.fs.local import LocalFileSystem
 
 if TYPE_CHECKING:
     from rich.syntax import Syntax
@@ -35,7 +36,7 @@ _T = TypeVar("_T")
 merge_conflict_marker = re.compile("^([<=>]{7}) .*$", re.MULTILINE)
 
 
-def make_relpath(fs_path: str, fs: "Optional[FileSystem]" = None) -> str:
+def make_relpath(fs_path: str, fs: "FileSystem | None" = None) -> str:
     from os import curdir, pardir, sep
 
     from dvc.utils import relpath
@@ -85,14 +86,14 @@ class YAMLSyntaxError(PrettyDvcException, YAMLFileCorruptedError):
         path: str,
         yaml_text: str,
         exc: Exception,
-        rev: Optional[str] = None,
+        rev: str | None = None,
     ) -> None:
         self.yaml_text: str = yaml_text
         self.exc: Exception = exc
 
         merge_conflicts = merge_conflict_marker.search(self.yaml_text)
         self.hint = " (possible merge conflicts)" if merge_conflicts else ""
-        self.rev: Optional[str] = rev
+        self.rev: str | None = rev
         super().__init__(path)
         self.relpath: str = path
 
@@ -109,12 +110,8 @@ class YAMLSyntaxError(PrettyDvcException, YAMLFileCorruptedError):
         def prepare_linecol(mark: "StreamMark") -> str:
             return f"in line {mark.line + 1}, column {mark.column + 1}"
 
-        def prepare_message(
-            message: str, mark: Optional["StreamMark"] = None
-        ) -> "RichText":
-            cause = ", ".join(
-                [message.capitalize(), prepare_linecol(mark) if mark else ""]
-            )
+        def prepare_message(message: str, mark: Optional["StreamMark"] = None) -> "RichText":
+            cause = ", ".join([message.capitalize(), prepare_linecol(mark) if mark else ""])
             return _prepare_cause(cause)
 
         def prepare_code(mark: "StreamMark") -> "Syntax":
@@ -151,9 +148,7 @@ class YAMLSyntaxError(PrettyDvcException, YAMLFileCorruptedError):
             ui.error_write(line, styled=True)
 
 
-def determine_linecol(
-    data, paths, max_steps=5
-) -> tuple[Optional[int], Optional[int], int]:
+def determine_linecol(data, paths, max_steps=5) -> tuple[int | None, int | None, int]:
     """Determine linecol from the CommentedMap for the `paths` location.
 
     CommentedMap from `ruamel.yaml` has `.lc` property from which we can read
@@ -200,9 +195,9 @@ class YAMLValidationError(PrettyDvcException):
     def __init__(
         self,
         exc: "MultipleInvalid",
-        path: Optional[str] = None,
-        text: Optional[str] = None,
-        rev: Optional[str] = None,
+        path: str | None = None,
+        text: str | None = None,
+        rev: str | None = None,
     ) -> None:
         self.text = text or ""
         self.exc = exc
@@ -266,9 +261,9 @@ class YAMLValidationError(PrettyDvcException):
 def validate(
     data: _T,
     schema: Callable[[_T], _T],
-    text: Optional[str] = None,
-    path: Optional[str] = None,
-    rev: Optional[str] = None,
+    text: str | None = None,
+    path: str | None = None,
+    rev: str | None = None,
 ) -> _T:
     from voluptuous import MultipleInvalid
 
@@ -280,7 +275,7 @@ def validate(
 
 def load(
     path: str,
-    schema: Optional[Callable[[_T], _T]] = None,
+    schema: Callable[[_T], _T] | None = None,
     fs: Optional["FileSystem"] = None,
     encoding: str = "utf-8",
     round_trip: bool = False,

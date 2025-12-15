@@ -1,7 +1,7 @@
 """
-DVC
+DVX
 ----
-Make your data science projects reproducible and shareable.
+Minimal data version control - content-addressable storage for data files.
 """
 
 import dvc.logger

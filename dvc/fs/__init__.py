@@ -1,10 +1,7 @@
 import glob
 from itertools import repeat
-from typing import Optional
 from urllib.parse import urlparse
 
-from dvc.config import ConfigError as RepoConfigError
-from dvc.config_schema import SCHEMA, Invalid
 from dvc_http import HTTPFileSystem, HTTPSFileSystem  # noqa: F401
 
 # pylint: disable=unused-import
@@ -26,6 +23,8 @@ from dvc_objects.fs.errors import (  # noqa: F401
     ConfigError,
     RemoteMissingDepsError,
 )
+from dvc.config import ConfigError as RepoConfigError
+from dvc.config_schema import SCHEMA, Invalid
 
 from .callbacks import Callback  # noqa: F401
 from .data import DataFileSystem  # noqa: F401
@@ -47,8 +46,8 @@ known_implementations.update(
 
 
 def download(
-    fs: "FileSystem", fs_path: str, to: str, jobs: Optional[int] = None
-) -> list[tuple[str, str, Optional[dict]]]:
+    fs: "FileSystem", fs_path: str, to: str, jobs: int | None = None
+) -> list[tuple[str, str, dict | None]]:
     from dvc.scm import lfs_prefetch
 
     from .callbacks import TqdmCallback
@@ -69,15 +68,11 @@ def download(
         # NOTE: We use dvc-objects generic.copy over fs.get since it makes file
         # download atomic and avoids fsspec glob/regex path expansion.
         if fs.isdir(fs_path):
-            from_infos = [
-                path for path in fs.find(fs_path) if not path.endswith(fs.flavour.sep)
-            ]
+            from_infos = [path for path in fs.find(fs_path) if not path.endswith(fs.flavour.sep)]
             if not from_infos:
                 localfs.makedirs(to, exist_ok=True)
                 return []
-            to_infos = [
-                localfs.join(to, *fs.relparts(info, fs_path)) for info in from_infos
-            ]
+            to_infos = [localfs.join(to, *fs.relparts(info, fs_path)) for info in from_infos]
         else:
             from_infos = [fs_path]
             to_infos = [to]

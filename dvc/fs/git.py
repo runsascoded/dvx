@@ -18,8 +18,8 @@ class GitFileSystem(FileSystem):
 
     def __init__(
         self,
-        path: Optional[str] = None,
-        rev: Optional[str] = None,
+        path: str | None = None,
+        rev: str | None = None,
         scm: Optional["Git"] = None,
         trie: Optional["GitTrie"] = None,
         **kwargs: Any,

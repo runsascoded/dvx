@@ -188,9 +188,7 @@ def make_workspace(tmp_dir, dvc, make_cloud):
         cloud = make_cloud(typ)
 
         tmp_dir.add_remote(name=name, config=cloud.config, default=False)
-        tmp_dir.add_remote(
-            name=f"{name}-cache", url="remote://workspace/cache", default=False
-        )
+        tmp_dir.add_remote(name=f"{name}-cache", url="remote://workspace/cache", default=False)
 
         scheme = getattr(cloud, "scheme", "local")
         if scheme != "http":

@@ -32,27 +32,25 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
+    from dvc_data.hashfile.db import HashFileDB
+    from dvc_data.hashfile.hash_info import HashInfo
+    from dvc_objects.db import ObjectDB
     from dvc.dependency import Dependency, ParamsDependency
     from dvc.dvcfile import ProjectFile, SingleStageFile
     from dvc.output import Output
     from dvc.repo import Repo
     from dvc.types import StrPath
-    from dvc_data.hashfile.db import HashFileDB
-    from dvc_data.hashfile.hash_info import HashInfo
-    from dvc_objects.db import ObjectDB
 
 logger = logger.getChild(__name__)
 # Disallow all punctuation characters except hyphen and underscore
 INVALID_STAGENAME_CHARS = set(string.punctuation) - {"_", "-"}
 Env = dict[str, str]
-ChangedEntries = tuple[list[str], list[str], Optional[str]]
+ChangedEntries = tuple[list[str], list[str], str | None]
 
 _T = TypeVar("_T")
 
 
-def loads_from(
-    cls: type[_T], repo: "Repo", path: str, wdir: str, data: dict[str, Any]
-) -> _T:
+def loads_from(cls: type[_T], repo: "Repo", path: str, wdir: str, data: dict[str, Any]) -> _T:
     kw = {
         "repo": repo,
         "path": path,
@@ -77,7 +75,7 @@ def loads_from(
 @dataclass
 class RawData:
     parametrized: bool = False
-    generated_from: Optional[str] = None
+    generated_from: str | None = None
 
 
 def create_stage(cls: type[_T], repo, path, **kwargs) -> _T:
@@ -141,7 +139,7 @@ class Stage(params.StageParams):
         always_changed=False,
         stage_text=None,
         dvcfile=None,
-        desc: Optional[str] = None,
+        desc: str | None = None,
         meta=None,
     ):
         if deps is None:
@@ -160,7 +158,7 @@ class Stage(params.StageParams):
         self.always_changed = always_changed
         self._stage_text = stage_text
         self._dvcfile = dvcfile
-        self.desc: Optional[str] = desc
+        self.desc: str | None = desc
         self.meta = meta
         self.raw_data = RawData()
 
@@ -180,9 +178,7 @@ class Stage(params.StageParams):
             return self._dvcfile
 
         if not self.path:
-            raise DvcException(
-                "Stage does not have any path set and is detached from dvcfile."
-            )
+            raise DvcException("Stage does not have any path set and is detached from dvcfile.")
 
         from dvc.dvcfile import load_file
 
@@ -290,7 +286,7 @@ class Stage(params.StageParams):
         )
 
     def short_description(self) -> Optional["str"]:
-        desc: Optional[str] = None
+        desc: str | None = None
         if self.desc:
             with suppress(ValueError):
                 # try to use first non-empty line as a description
@@ -298,9 +294,7 @@ class Stage(params.StageParams):
                 return line.strip()
         return desc
 
-    def changed_deps(
-        self, allow_missing: bool = False, upstream: Optional[list] = None
-    ) -> bool:
+    def changed_deps(self, allow_missing: bool = False, upstream: list | None = None) -> bool:
         if self.frozen:
             return False
 
@@ -310,9 +304,7 @@ class Stage(params.StageParams):
         return self._changed_deps(allow_missing=allow_missing, upstream=upstream)
 
     @rwlocked(read=["deps"])
-    def _changed_deps(
-        self, allow_missing: bool = False, upstream: Optional[list] = None
-    ) -> bool:
+    def _changed_deps(self, allow_missing: bool = False, upstream: list | None = None) -> bool:
         for dep in self.deps:
             status = dep.status()
             if status:
@@ -358,9 +350,7 @@ class Stage(params.StageParams):
         return changed
 
     @rwlocked(read=["deps", "outs"])
-    def changed(
-        self, allow_missing: bool = False, upstream: Optional[list] = None
-    ) -> bool:
+    def changed(self, allow_missing: bool = False, upstream: list | None = None) -> bool:
         is_changed = (
             # Short-circuit order: stage md5 is fast,
             # deps are expected to change
@@ -406,7 +396,7 @@ class Stage(params.StageParams):
         source: str,
         odb: Optional["ObjectDB"] = None,
         to_remote: bool = False,
-        jobs: Optional[int] = None,
+        jobs: int | None = None,
         force: bool = False,
     ) -> None:
         assert len(self.outs) == 1
@@ -480,7 +470,7 @@ class Stage(params.StageParams):
     def dumpd(self, **kwargs) -> dict[str, Any]:
         return get_dump(self, **kwargs)
 
-    def compute_md5(self) -> Optional[str]:
+    def compute_md5(self) -> str | None:
         # `dvc add`ed files don't need stage md5
         if self.is_data_source and not (self.is_import or self.is_repo_import):
             m = None
@@ -609,9 +599,7 @@ class Stage(params.StageParams):
                 allow_missing = True
 
             no_cache_outs = any(
-                not out.use_cache
-                for out in self.outs
-                if not (out.is_metric or out.is_plot)
+                not out.use_cache for out in self.outs if not (out.is_metric or out.is_plot)
             )
             self.save(
                 allow_missing=allow_missing,
@@ -642,9 +630,7 @@ class Stage(params.StageParams):
         return filter(_func, self.outs) if fs_path else self.outs
 
     @rwlocked(write=["outs"])
-    def checkout(
-        self, allow_missing: bool = False, **kwargs
-    ) -> dict[str, list["StrPath"]]:
+    def checkout(self, allow_missing: bool = False, **kwargs) -> dict[str, list["StrPath"]]:
         stats: dict[str, list[StrPath]] = defaultdict(list)
         if self.is_partial_import:
             return stats
@@ -656,7 +642,7 @@ class Stage(params.StageParams):
         return stats
 
     @staticmethod
-    def _checkout(out, **kwargs) -> tuple[Optional[str], list[str]]:
+    def _checkout(out, **kwargs) -> tuple[str | None, list[str]]:
         try:
             result = out.checkout(**kwargs)
             added, modified = result or (None, None)
@@ -668,12 +654,10 @@ class Stage(params.StageParams):
 
     @rwlocked(read=["deps", "outs"])
     def status(
-        self, check_updates: bool = False, filter_info: Optional[bool] = None
-    ) -> dict[str, list[Union[str, dict[str, str]]]]:
-        ret: list[Union[str, dict[str, str]]] = []
-        show_import = (
-            self.is_repo_import or self.is_versioned_import
-        ) and check_updates
+        self, check_updates: bool = False, filter_info: bool | None = None
+    ) -> dict[str, list[str | dict[str, str]]]:
+        ret: list[str | dict[str, str]] = []
+        show_import = (self.is_repo_import or self.is_versioned_import) and check_updates
 
         if not self.frozen or show_import:
             self._status_deps(ret)
@@ -718,13 +702,10 @@ class Stage(params.StageParams):
 
     def outs_cached(self) -> bool:
         return all(
-            not out.changed_cache() if out.use_cache else not out.changed()
-            for out in self.outs
+            not out.changed_cache() if out.use_cache else not out.changed() for out in self.outs
         )
 
-    def get_used_objs(
-        self, *args, **kwargs
-    ) -> dict[Optional["HashFileDB"], set["HashInfo"]]:
+    def get_used_objs(self, *args, **kwargs) -> dict[Optional["HashFileDB"], set["HashInfo"]]:
         """Return set of object IDs used by this stage."""
         if self.is_partial_import and not self.is_repo_import:
             return {}
@@ -741,9 +722,7 @@ class Stage(params.StageParams):
             raise MergeError("unable to auto-merge pipeline stages")
 
         if not stage.is_data_source or stage.deps or len(stage.outs) > 1:
-            raise MergeError(
-                "unable to auto-merge DVC files that weren't created by `dvc add`"
-            )
+            raise MergeError("unable to auto-merge DVC files that weren't created by `dvc add`")
 
         if ancestor_out and not stage.outs:
             raise MergeError("unable to auto-merge DVC files with deleted outputs")
@@ -775,7 +754,7 @@ class Stage(params.StageParams):
 
 
 class PipelineStage(Stage):
-    def __init__(self, *args, name: Optional[str] = None, **kwargs):
+    def __init__(self, *args, name: str | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = name
         self.cmd_changed = False

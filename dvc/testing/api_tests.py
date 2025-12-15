@@ -9,9 +9,7 @@ class TestAPI:
     def test_get_url(self, tmp_dir, dvc, remote):
         tmp_dir.dvc_gen("foo", "foo")
 
-        expected_url = (
-            remote / "files" / "md5" / "ac/bd18db4cc2f85cedef654fccc4a4d8"
-        ).url
+        expected_url = (remote / "files" / "md5" / "ac/bd18db4cc2f85cedef654fccc4a4d8").url
         assert api.get_url("foo") == expected_url
 
     def test_open(self, tmp_dir, dvc, remote):
@@ -69,9 +67,7 @@ class TestAPI:
 
         fs = DVCFileSystem(**fs_kwargs)
 
-        assert fs.ls("/", detail=False) == M.unordered(
-            "/.gitignore", "/scripts", "/data"
-        )
+        assert fs.ls("/", detail=False) == M.unordered("/.gitignore", "/scripts", "/data")
         assert fs.ls("scripts", detail=False) == ["scripts/script1"]
         assert fs.ls("data", detail=False) == M.unordered("data/foo", "data/bar")
 
@@ -95,9 +91,7 @@ class TestAPI:
         assert fs.info("/data") == data_info
         assert fs.info("/scripts") == scripts_info
         assert fs.info("/data/foo") == M.dict(name="/data/foo", type="file")
-        assert fs.info("/scripts/script1") == M.dict(
-            name="/scripts/script1", type="file"
-        )
+        assert fs.info("/scripts/script1") == M.dict(name="/scripts/script1", type="file")
 
         assert not fs.isdvc("/")
         assert fs.isdvc("/data")

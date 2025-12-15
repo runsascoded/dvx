@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from funcy import compact
 
@@ -16,13 +16,13 @@ from . import locked
 @scm_context
 def imp_db(
     self: "Repo",
-    sql: Optional[str] = None,
-    table: Optional[str] = None,
+    sql: str | None = None,
+    table: str | None = None,
     frozen: bool = True,
     output_format: str = "csv",
-    out: Optional[str] = None,
+    out: str | None = None,
     force: bool = False,
-    connection: Optional[str] = None,
+    connection: str | None = None,
 ):
     assert sql or table
     assert output_format in ("csv", "json")

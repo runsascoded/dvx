@@ -11,9 +11,7 @@ class Table(RichTable):
         super().add_column(*args, **kwargs)
         self.columns[-1].collapse = collapse  # type: ignore[attr-defined]
 
-    def _calculate_column_widths(
-        self, console: "Console", options: "ConsoleOptions"
-    ) -> list[int]:
+    def _calculate_column_widths(self, console: "Console", options: "ConsoleOptions") -> list[int]:
         """Calculate the widths of each column, including padding, not
         including borders.
 

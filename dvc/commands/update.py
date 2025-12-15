@@ -58,10 +58,7 @@ def add_parser(subparsers, parent_parser):
         "--no-download",
         action="store_true",
         default=False,
-        help=(
-            "Update .dvc file git revision/hash value(s)"
-            " but do not download the file(s)."
-        ),
+        help=("Update .dvc file git revision/hash value(s) but do not download the file(s)."),
     )
     update_parser.add_argument(
         "--to-remote",
@@ -79,10 +76,7 @@ def add_parser(subparsers, parent_parser):
         "-j",
         "--jobs",
         type=int,
-        help=(
-            "Number of jobs to run simultaneously. "
-            "The default value is 4 * cpu_count(). "
-        ),
+        help=("Number of jobs to run simultaneously. The default value is 4 * cpu_count(). "),
         metavar="<number>",
     )
     update_parser.set_defaults(func=CmdUpdate)

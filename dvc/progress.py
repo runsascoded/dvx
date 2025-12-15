@@ -93,9 +93,7 @@ class Tqdm(tqdm):
         self.postfix = postfix or {"info": ""}
         if bar_format is None:
             if self.__len__():
-                self.bar_format = (
-                    self.BAR_FMT_DEFAULT_NESTED if self.pos else self.BAR_FMT_DEFAULT
-                )
+                self.bar_format = self.BAR_FMT_DEFAULT_NESTED if self.pos else self.BAR_FMT_DEFAULT
             else:
                 self.bar_format = self.BAR_FMT_NOTOTAL
         else:
@@ -135,9 +133,7 @@ class Tqdm(tqdm):
     def close(self):
         self.postfix["info"] = ""
         # remove ETA (either unknown or zero); remove completed bar
-        self.bar_format = self.bar_format.replace("<{remaining}", "").replace(
-            "|{bar:10}|", " "
-        )
+        self.bar_format = self.bar_format.replace("<{remaining}", "").replace("|{bar:10}|", " ")
         super().close()
 
     @property

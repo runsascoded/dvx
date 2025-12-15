@@ -3,8 +3,8 @@ import shutil
 
 import pytest
 
-from dvc.utils.fs import remove
 from dvc_data.hashfile.tree import Tree
+from dvc.utils.fs import remove
 
 
 def _check_status(status, **kwargs):
@@ -101,9 +101,7 @@ class TestRemote:
             pytest.skip("HTTP remote does not support stage cache")
 
         tmp_dir.gen("foo", "foo")
-        stage = dvc.stage.add(
-            deps=["foo"], outs=["bar"], name="copy-foo-bar", cmd="cp foo bar"
-        )
+        stage = dvc.stage.add(deps=["foo"], outs=["bar"], name="copy-foo-bar", cmd="cp foo bar")
         dvc.reproduce(stage.addressing)
         assert dvc.push(run_cache=True) == 2
 
@@ -242,9 +240,7 @@ class TestRemoteVersionAware:
 
         assert dvc.pull()
         assert (tmp_dir / "data_dir" / "data").read_text() == "data"
-        assert (
-            tmp_dir / "data_dir" / "data_sub_dir" / "data_sub"
-        ).read_text() == "data_sub"
+        assert (tmp_dir / "data_dir" / "data_sub_dir" / "data_sub").read_text() == "data_sub"
         assert (tmp_dir / "data_dir.dvc").read_text() == data_dir_dvc
 
         run_copy("data_dir", "data_dir_copy", name="copy")
@@ -284,13 +280,9 @@ class TestRemoteVersionAware:
         assert not (remote_version_aware / "data_dir_copy").exists()
         assert dvc.pull()
         assert (tmp_dir / "data_dir" / "data").read_text() == "data"
-        assert (
-            tmp_dir / "data_dir" / "data_sub_dir" / "data_sub"
-        ).read_text() == "data_sub"
+        assert (tmp_dir / "data_dir" / "data_sub_dir" / "data_sub").read_text() == "data_sub"
         assert (tmp_dir / "data_dir_copy" / "data").read_text() == "data"
-        assert (
-            tmp_dir / "data_dir_copy" / "data_sub_dir" / "data_sub"
-        ).read_text() == "data_sub"
+        assert (tmp_dir / "data_dir_copy" / "data_sub_dir" / "data_sub").read_text() == "data_sub"
 
 
 class TestRemoteWorktree:
@@ -335,9 +327,7 @@ class TestRemoteWorktree:
 
         dvc.pull()
         assert (tmp_dir / "data_dir" / "data").read_text() == "data"
-        assert (
-            tmp_dir / "data_dir" / "data_sub_dir" / "data_sub"
-        ).read_text() == "data_sub"
+        assert (tmp_dir / "data_dir" / "data_sub_dir" / "data_sub").read_text() == "data_sub"
 
     def test_deletion(self, tmp_dir, dvc, scm, remote_worktree):
         tmp_dir.dvc_gen(

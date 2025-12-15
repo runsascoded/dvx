@@ -1,9 +1,9 @@
 import os
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
-from dvc.fs import GitFileSystem, Schemes
 from dvc_data.hashfile.db import get_odb
 from dvc_data.hashfile.hash import DEFAULT_ALGORITHM
+from dvc.fs import GitFileSystem, Schemes
 
 if TYPE_CHECKING:
     from dvc.repo import Repo
@@ -15,8 +15,8 @@ def _get_odb(
     repo,
     settings,
     fs=None,
-    prefix: Optional[tuple[str, ...]] = None,
-    hash_name: Optional[str] = None,
+    prefix: tuple[str, ...] | None = None,
+    hash_name: str | None = None,
     **kwargs,
 ):
     from dvc.fs import get_cloud_fs
@@ -117,7 +117,7 @@ class CacheManager:
         return self.legacy.path
 
     @property
-    def default_local_cache_dir(self) -> Optional[str]:
+    def default_local_cache_dir(self) -> str | None:
         repo = self._repo
         if repo and repo.local_dvc_dir:
             return os.path.join(repo.local_dvc_dir, self.CACHE_DIR)
@@ -130,18 +130,15 @@ def migrate_2_to_3(repo: "Repo", dry: bool = False):
     Legacy 'md5-dos2unix' objects will be re-hashed with 'md5', added to 3.x cache,
     and then a link from the legacy 2.x location to the 3.x location will be created.
     """
+    from dvc_data.hashfile.db.migrate import migrate, prepare
     from dvc.fs.callbacks import TqdmCallback
     from dvc.ui import ui
-    from dvc_data.hashfile.db.migrate import migrate, prepare
 
     src = repo.cache.legacy
     dest = repo.cache.local
     if dry:
         oids = list(src._list_oids())
-        ui.write(
-            f"{len(oids)} files will be re-hashed and migrated to the DVC 3.0 cache "
-            "location."
-        )
+        ui.write(f"{len(oids)} files will be re-hashed and migrated to the DVC 3.0 cache location.")
         return
 
     with TqdmCallback(desc="Computing DVC 3.0 hashes", unit="files") as cb:

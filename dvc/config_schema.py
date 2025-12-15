@@ -171,9 +171,7 @@ REMOTE_SCHEMAS = {
         "access_key_id": str,
         "secret_access_key": str,
         "session_token": str,
-        Optional(
-            "listobjects", default=False, description=DEPRECATED
-        ): Bool,  # obsoleted
+        Optional("listobjects", default=False, description=DEPRECATED): Bool,  # obsoleted
         Optional("use_ssl", default=True): Bool,
         Optional("allow_anonymous_login", default=False): Bool,
         "ssl_verify": Any(Bool, str),
@@ -312,9 +310,7 @@ SCHEMA = {
     },
     "state": {
         Marker("dir", description=DEPRECATED): str,  # obsoleted
-        Marker("row_limit", description=DEPRECATED): All(
-            Coerce(int), Range(1)
-        ),  # obsoleted
+        Marker("row_limit", description=DEPRECATED): All(Coerce(int), Range(1)),  # obsoleted
         Marker("row_cleanup_quota", description=DEPRECATED): All(
             Coerce(int), Range(0, 100)
         ),  # obsoleted

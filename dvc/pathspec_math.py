@@ -64,10 +64,7 @@ def _change_dirname(dirname, pattern_list, new_dirname):
     if rel.startswith(".."):
         raise ValueError("change dirname can only change to parent path")
 
-    return [
-        PatternInfo(change_rule(rule.patterns, rel), rule.file_info)
-        for rule in pattern_list
-    ]
+    return [PatternInfo(change_rule(rule.patterns, rel), rule.file_info) for rule in pattern_list]
 
 
 def merge_patterns(flavour, pattern_a, prefix_a, pattern_b, prefix_b):

@@ -100,18 +100,13 @@ def add_parser(subparsers, parent_parser):
         default=False,
         help="Show the exclude patterns along with each target path.",
     )
-    parser.add_argument(
-        "-a", "--all", action="store_true", default=False, help=argparse.SUPPRESS
-    )
+    parser.add_argument("-a", "--all", action="store_true", default=False, help=argparse.SUPPRESS)
     parser.add_argument(
         "-n",
         "--non-matching",
         action="store_true",
         default=False,
-        help=(
-            "Include the target paths which don't match any pattern "
-            "in the `--details` list."
-        ),
+        help=("Include the target paths which don't match any pattern in the `--details` list."),
     )
     parser.add_argument(
         "--stdin",

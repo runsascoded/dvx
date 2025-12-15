@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from dvc.exceptions import InvalidArgumentError
 from dvc.log import logger
@@ -19,22 +19,17 @@ def _validate_args(**kwargs):
     if remote and not (cloud or not_in_remote):
         raise InvalidArgumentError("`--remote` requires `--cloud` or `--not-in-remote`")
     if not_in_remote and cloud:
-        raise InvalidArgumentError(
-            "`--not-in-remote` and `--cloud` are mutually exclusive"
-        )
+        raise InvalidArgumentError("`--not-in-remote` and `--cloud` are mutually exclusive")
     if not any(kwargs.values()):
         raise InvalidArgumentError(
             "Either of `-w|--workspace`, `-a|--all-branches`, `-T|--all-tags` "
-            "`--all-experiments`, `--all-commits`, `--date` or `--rev` "
-            "needs to be set."
+            "`--all-commits`, `--date` or `--rev` needs to be set."
         )
     if kwargs.get("num") and not kwargs.get("rev"):
         raise InvalidArgumentError("`--num` can only be used alongside `--rev`")
 
 
-def _used_obj_ids_not_in_remote(
-    remote_odb_to_obj_ids: "ObjectContainer", jobs: Optional[int] = None
-):
+def _used_obj_ids_not_in_remote(remote_odb_to_obj_ids: "ObjectContainer", jobs: int | None = None):
     used_obj_ids = set()
     remote_oids = set()
     for remote_odb, obj_ids in remote_odb_to_obj_ids.items():
@@ -54,31 +49,29 @@ def gc(
     self: "Repo",
     all_branches: bool = False,
     cloud: bool = False,
-    remote: Optional[str] = None,
+    remote: str | None = None,
     with_deps: bool = False,
     all_tags: bool = False,
     all_commits: bool = False,
-    all_experiments: bool = False,
     force: bool = False,
-    jobs: Optional[int] = None,
-    repos: Optional[list[str]] = None,
+    jobs: int | None = None,
+    repos: list[str] | None = None,
     workspace: bool = False,
-    commit_date: Optional[str] = None,
-    rev: Optional[str] = None,
-    num: Optional[int] = None,
+    commit_date: str | None = None,
+    rev: str | None = None,
+    num: int | None = None,
     not_in_remote: bool = False,
     dry: bool = False,
     skip_failed: bool = False,
 ):
     # require `workspace` to be true to come into effect.
     # assume `workspace` to be enabled if any of `all_tags`, `all_commits`,
-    # `all_experiments` or `all_branches` are enabled.
+    # or `all_branches` are enabled.
     _validate_args(
         workspace=workspace,
         all_tags=all_tags,
         all_commits=all_commits,
         all_branches=all_branches,
-        all_experiments=all_experiments,
         commit_date=commit_date,
         rev=rev,
         num=num,
@@ -88,9 +81,9 @@ def gc(
 
     from contextlib import ExitStack
 
-    from dvc.repo import Repo
     from dvc_data.hashfile.db import get_index
     from dvc_data.hashfile.gc import gc as ogc
+    from dvc.repo import Repo
 
     if not repos:
         repos = []
@@ -107,7 +100,6 @@ def gc(
                 with_deps=with_deps,
                 all_tags=all_tags,
                 all_commits=all_commits,
-                all_experiments=all_experiments,
                 commit_date=commit_date,
                 remote=remote,
                 force=force,
@@ -150,9 +142,7 @@ def gc(
             logger.info("No unused cache to remove from remote.")
 
 
-def _merge_remote_obj_ids(
-    repo: "Repo", remote: Optional[str], used_objs: "ObjectContainer"
-):
+def _merge_remote_obj_ids(repo: "Repo", remote: str | None, used_objs: "ObjectContainer"):
     # Merge default remote used objects with remote-per-output used objects
     default_obj_ids = used_objs.pop(None, set())
     remote_odb = repo.cloud.get_remote_odb(remote, "gc -c", hash_name="md5")

@@ -1,12 +1,12 @@
 import os
 import pathlib
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Union
 
 from funcy import concat, first, lsplit, rpartial
 
+from dvc_data.hashfile.meta import Meta
 from dvc.annotations import ANNOTATION_FIELDS
 from dvc.exceptions import InvalidArgumentError
-from dvc_data.hashfile.meta import Meta
 
 from .exceptions import (
     MissingDataSource,
@@ -77,9 +77,7 @@ def fill_stage_outputs(stage, **kwargs):
         )
 
 
-def fill_stage_dependencies(
-    stage, deps=None, erepo=None, params=None, fs_config=None, db=None
-):
+def fill_stage_dependencies(stage, deps=None, erepo=None, params=None, fs_config=None, db=None):
     from dvc.dependency import loads_from, loads_params
 
     assert not stage.deps
@@ -99,25 +97,18 @@ def check_no_externals(stage):
         return
 
     str_outs = ", ".join(outs)
-    link = format_link(
-        "https://dvc.org/doc/user-guide/pipelines/external-dependencies-and-outputs"
-    )
+    link = format_link("https://dvc.org/doc/user-guide/pipelines/external-dependencies-and-outputs")
     if stage.is_data_source:
-        link = format_link(
-            "https://dvc.org/doc/user-guide/data-management/importing-external-data"
-        )
+        link = format_link("https://dvc.org/doc/user-guide/data-management/importing-external-data")
     raise StageExternalOutputsError(
-        f"Cached output(s) outside of DVC project: {str_outs}. "
-        f"See {link} for more info."
+        f"Cached output(s) outside of DVC project: {str_outs}. See {link} for more info."
     )
 
 
 def check_circular_dependency(stage):
     from dvc.exceptions import CircularDependencyError
 
-    circular_dependencies = {d.fs_path for d in stage.deps} & {
-        o.fs_path for o in stage.outs
-    }
+    circular_dependencies = {d.fs_path for d in stage.deps} & {o.fs_path for o in stage.outs}
 
     if circular_dependencies:
         raise CircularDependencyError(str(circular_dependencies.pop()))
@@ -262,7 +253,7 @@ def check_stage_exists(repo: "Repo", stage: Union["Stage", "PipelineStage"], pat
 
 
 def validate_kwargs(
-    single_stage: bool = False, fname: Optional[str] = None, **kwargs
+    single_stage: bool = False, fname: str | None = None, **kwargs
 ) -> dict[str, Any]:
     """Prepare, validate and process kwargs passed from cli"""
     cmd = kwargs.get("cmd")
@@ -274,8 +265,7 @@ def validate_kwargs(
         raise InvalidArgumentError("`-n|--name` is incompatible with `--single-stage`")
     if stage_name and fname:
         raise InvalidArgumentError(
-            "`--file` is currently incompatible with `-n|--name` "
-            "and requires `--single-stage`"
+            "`--file` is currently incompatible with `-n|--name` and requires `--single-stage`"
         )
     if not stage_name and not single_stage:
         raise InvalidArgumentError("`-n|--name` is required")

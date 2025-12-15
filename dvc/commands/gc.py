@@ -17,7 +17,6 @@ class CmdGC(CmdBase):
             all_branches=self.args.all_branches,
             all_tags=self.args.all_tags,
             all_commits=self.args.all_commits,
-            all_experiments=self.args.all_experiments,
             commit_date=self.args.commit_date,
             workspace=self.args.workspace,
             rev=self.args.rev,
@@ -50,9 +49,6 @@ class CmdGC(CmdBase):
             if self.args.rev:
                 msg += f" and last {self.args.num} commits from {self.args.rev}"
 
-        if self.args.all_experiments:
-            msg += " and all experiments"
-
         if self.args.not_in_remote:
             msg += " that are not present in the DVC remote"
 
@@ -74,7 +70,6 @@ class CmdGC(CmdBase):
             all_branches=self.args.all_branches,
             all_tags=self.args.all_tags,
             all_commits=self.args.all_commits,
-            all_experiments=self.args.all_experiments,
             commit_date=self.args.commit_date,
             cloud=self.args.cloud,
             remote=self.args.remote,
@@ -165,12 +160,6 @@ def add_parser(subparsers, parent_parser):
         ),
     )
     gc_parser.add_argument(
-        "--all-experiments",
-        action="store_true",
-        default=False,
-        help="Keep data files for all experiments.",
-    )
-    gc_parser.add_argument(
         "--not-in-remote",
         action="store_true",
         default=False,
@@ -206,10 +195,7 @@ def add_parser(subparsers, parent_parser):
         "-j",
         "--jobs",
         type=int,
-        help=(
-            "Number of jobs to run simultaneously. "
-            "The default value is 4 * cpu_count(). "
-        ),
+        help=("Number of jobs to run simultaneously. The default value is 4 * cpu_count(). "),
         metavar="<number>",
     )
     gc_parser.add_argument(

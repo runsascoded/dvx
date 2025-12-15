@@ -4,7 +4,7 @@ from collections.abc import Mapping, MutableMapping, MutableSequence, Sequence
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from typing import Any, Optional, Union
+from typing import Any
 
 from funcy import identity, lfilter, nullcontext, select
 
@@ -21,7 +21,7 @@ from dvc.parsing.interpolate import (
 )
 
 logger = logger.getChild(__name__)
-SeqOrMap = Union[Sequence, Mapping]
+SeqOrMap = Sequence | Mapping
 DictStr = dict[str, Any]
 
 
@@ -57,8 +57,7 @@ class MergeError(ContextError):
         new_src = new.meta.source
         path = new.meta.path()
         super().__init__(
-            f"cannot redefine '{path}' from '{new_src}'"
-            f" as it already exists in '{preexisting}'"
+            f"cannot redefine '{path}' from '{new_src}' as it already exists in '{preexisting}'"
         )
 
 
@@ -99,12 +98,12 @@ def recurse_not_a_node(data: dict):
 
 @dataclass
 class Meta:
-    source: Optional[str] = None
+    source: str | None = None
     dpaths: list[str] = field(default_factory=list)
     local: bool = True
 
     @staticmethod
-    def update_path(meta: "Meta", path: Union[str, int]):
+    def update_path(meta: "Meta", path: str | int):
         dpaths = [*meta.dpaths, str(path)]
         return replace(meta, dpaths=dpaths)
 
@@ -157,7 +156,7 @@ PRIMITIVES = (int, float, str, bytes, bool)
 
 class Container(Node, ABC):  # noqa: PLW1641
     meta: Meta
-    data: Union[list, dict]
+    data: list | dict
     _key_transform = staticmethod(identity)
 
     def __init__(self, meta=None) -> None:
@@ -168,7 +167,7 @@ class Container(Node, ABC):  # noqa: PLW1641
         return self._convert_with_meta(value, meta)
 
     @staticmethod
-    def _convert_with_meta(value, meta: Optional[Meta] = None):
+    def _convert_with_meta(value, meta: Meta | None = None):
         if value is None or isinstance(value, PRIMITIVES):
             assert meta
             return Value(value, meta=meta)
@@ -232,7 +231,7 @@ class Container(Node, ABC):  # noqa: PLW1641
 class CtxList(Container, MutableSequence):
     _key_transform = staticmethod(int)
 
-    def __init__(self, values: Sequence, meta: Optional[Meta] = None):
+    def __init__(self, values: Sequence, meta: Meta | None = None):
         super().__init__(meta=meta)
         self.data: list = []
         self.extend(values)
@@ -257,8 +256,8 @@ class CtxList(Container, MutableSequence):
 class CtxDict(Container, MutableMapping):
     def __init__(
         self,
-        mapping: Optional[Mapping] = None,
-        meta: Optional[Meta] = None,
+        mapping: Mapping | None = None,
+        meta: Meta | None = None,
         **kwargs,
     ):
         super().__init__(meta=meta)
@@ -348,9 +347,7 @@ class Context(CtxDict):
         return node.value if unwrap else node
 
     @classmethod
-    def load_from(
-        cls, fs, path: str, select_keys: Optional[list[str]] = None
-    ) -> "Context":
+    def load_from(cls, fs, path: str, select_keys: list[str] | None = None) -> "Context":
         from dvc.utils.serialize import load_path
 
         if not fs.exists(path):
@@ -361,9 +358,7 @@ class Context(CtxDict):
         data = load_path(path, fs)
         if not isinstance(data, Mapping):
             typ = type(data).__name__
-            raise ParamsLoadError(
-                f"expected a dictionary, got '{typ}' in file '{path}'"
-            )
+            raise ParamsLoadError(f"expected a dictionary, got '{typ}' in file '{path}'")
 
         if select_keys:
             try:
@@ -409,25 +404,19 @@ class Context(CtxDict):
     def check_loaded(self, path, item, keys):
         imported = self.imports[path]
         if not keys and isinstance(imported, list):
-            raise VarsAlreadyLoaded(
-                f"cannot load '{item}' as it's partially loaded already"
-            )
+            raise VarsAlreadyLoaded(f"cannot load '{item}' as it's partially loaded already")
         if keys and imported is None:
-            raise VarsAlreadyLoaded(
-                f"cannot partially load '{item}' as it's already loaded."
-            )
+            raise VarsAlreadyLoaded(f"cannot partially load '{item}' as it's already loaded.")
         if isinstance(imported, list) and set(keys) & set(imported):
-            raise VarsAlreadyLoaded(
-                f"cannot load '{item}' as it's partially loaded already"
-            )
+            raise VarsAlreadyLoaded(f"cannot load '{item}' as it's partially loaded already")
 
     def load_from_vars(
         self,
         fs,
         vars_: list,
         wdir: str,
-        stage_name: Optional[str] = None,
-        default: Optional[str] = None,
+        stage_name: str | None = None,
+        default: str | None = None,
     ):
         if default:
             to_import = fs.join(wdir, default)

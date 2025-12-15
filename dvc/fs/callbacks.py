@@ -1,5 +1,5 @@
 from contextlib import ExitStack
-from typing import TYPE_CHECKING, BinaryIO, Optional, Union
+from typing import TYPE_CHECKING, BinaryIO, Optional
 
 from fsspec.callbacks import DEFAULT_CALLBACK, Callback  # noqa: F401
 from fsspec.callbacks import TqdmCallback as _TqdmCallback
@@ -17,20 +17,18 @@ if TYPE_CHECKING:
 class TqdmCallback(_TqdmCallback):
     def __init__(
         self,
-        size: Optional[int] = None,
+        size: int | None = None,
         value: int = 0,
         progress_bar: Optional["tqdm"] = None,
-        tqdm_cls: Optional[type["tqdm"]] = None,
+        tqdm_cls: type["tqdm"] | None = None,
         **tqdm_kwargs,
     ):
         tqdm_kwargs.pop("total", None)
-        super().__init__(
-            tqdm_kwargs=tqdm_kwargs, tqdm_cls=tqdm_cls or Tqdm, size=size, value=value
-        )
+        super().__init__(tqdm_kwargs=tqdm_kwargs, tqdm_cls=tqdm_cls or Tqdm, size=size, value=value)
         if progress_bar is not None:
             self.tqdm = progress_bar
 
-    def branched(self, path_1: "Union[str, BinaryIO]", path_2: str, **kwargs):
+    def branched(self, path_1: "str | BinaryIO", path_2: str, **kwargs):
         desc = path_1 if isinstance(path_1, str) else path_2
         return TqdmCallback(bytes=True, desc=desc)
 
@@ -38,12 +36,12 @@ class TqdmCallback(_TqdmCallback):
 class RichCallback(Callback):
     def __init__(
         self,
-        size: Optional[int] = None,
+        size: int | None = None,
         value: int = 0,
         progress: Optional["RichTransferProgress"] = None,
-        desc: Optional[str] = None,
+        desc: str | None = None,
         bytes: bool = False,  # noqa: A002
-        unit: Optional[str] = None,
+        unit: str | None = None,
         disable: bool = False,
         transient: bool = True,
     ) -> None:
@@ -94,7 +92,7 @@ class RichCallback(Callback):
             visible=not self.disable,
         )
 
-    def branched(self, path_1: Union[str, BinaryIO], path_2: str, **kwargs):
+    def branched(self, path_1: str | BinaryIO, path_2: str, **kwargs):
         return RichCallback(
             progress=self.progress,
             desc=path_1 if isinstance(path_1, str) else path_2,

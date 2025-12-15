@@ -40,8 +40,7 @@ class CmdImport(CmdBase):
 
 def add_parser(subparsers, parent_parser):
     IMPORT_HELP = (
-        "Download file or directory tracked by DVC or by Git "
-        "into the workspace, and track it."
+        "Download file or directory tracked by DVC or by Git into the workspace, and track it."
     )
 
     import_parser = subparsers.add_parser(
@@ -51,9 +50,7 @@ def add_parser(subparsers, parent_parser):
         help=IMPORT_HELP,
         formatter_class=formatter.RawTextHelpFormatter,
     )
-    import_parser.add_argument(
-        "url", help="Location of DVC or Git repository to download from"
-    )
+    import_parser.add_argument("url", help="Location of DVC or Git repository to download from")
     import_parser.add_argument(
         "path", help="Path to a file or directory within the repository"
     ).complete = completion.FILE
@@ -97,18 +94,14 @@ def add_parser(subparsers, parent_parser):
         "-j",
         "--jobs",
         type=int,
-        help=(
-            "Number of jobs to run simultaneously. "
-            "The default value is 4 * cpu_count(). "
-        ),
+        help=("Number of jobs to run simultaneously. The default value is 4 * cpu_count(). "),
         metavar="<number>",
     )
     import_parser.add_argument(
         "--config",
         type=str,
         help=(
-            "Path to a config file that will be merged with the config "
-            "in the target repository."
+            "Path to a config file that will be merged with the config in the target repository."
         ),
     )
     import_parser.add_argument(

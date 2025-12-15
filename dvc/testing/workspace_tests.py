@@ -1,5 +1,4 @@
 import os
-from typing import Union
 
 import pytest
 from funcy import first
@@ -73,7 +72,7 @@ class TestImport:
         # of directories. So instead we create an empty file that ends with a
         # trailing slash in order to actually support this operation
         if is_object_storage:
-            contents: Union[str, dict[str, str]] = ""
+            contents: str | dict[str, str] = ""
         else:
             contents = {}
 
@@ -235,18 +234,14 @@ class TestLsUrl:
             ],
         )
 
-        result = ls_url(
-            str(cloud / "dir"), fs_config=cloud.config, recursive=True, maxdepth=0
-        )
+        result = ls_url(str(cloud / "dir"), fs_config=cloud.config, recursive=True, maxdepth=0)
         match_files(
             fs,
             result,
             [{"path": (cloud / "dir").fs_path, "isdir": False}],
         )
 
-        result = ls_url(
-            str(cloud / "dir"), fs_config=cloud.config, recursive=True, maxdepth=1
-        )
+        result = ls_url(str(cloud / "dir"), fs_config=cloud.config, recursive=True, maxdepth=1)
         match_files(
             fs,
             result,
@@ -256,9 +251,7 @@ class TestLsUrl:
             ],
         )
 
-        result = ls_url(
-            str(cloud / "dir"), fs_config=cloud.config, recursive=True, maxdepth=2
-        )
+        result = ls_url(str(cloud / "dir"), fs_config=cloud.config, recursive=True, maxdepth=2)
         match_files(
             fs,
             result,
@@ -381,9 +374,7 @@ class TestToRemote:
         assert hash_info.name == "md5"
         assert hash_info.value == "55d05978954d1b2cd7b06aedda9b9e43.dir"
         file_parts = json.loads(
-            (
-                remote / "files" / "md5" / "55" / "d05978954d1b2cd7b06aedda9b9e43.dir"
-            ).read_text()
+            (remote / "files" / "md5" / "55" / "d05978954d1b2cd7b06aedda9b9e43.dir").read_text()
         )
 
         assert len(file_parts) == 3
@@ -395,6 +386,6 @@ class TestToRemote:
 
         for file_part in file_parts:
             md5 = file_part["md5"]
-            assert (
-                remote / "files" / "md5" / md5[:2] / md5[2:]
-            ).read_text() == file_part["relpath"]
+            assert (remote / "files" / "md5" / md5[:2] / md5[2:]).read_text() == file_part[
+                "relpath"
+            ]

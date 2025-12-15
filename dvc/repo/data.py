@@ -4,14 +4,12 @@ from collections import defaultdict, deque
 from collections.abc import Iterable, Iterator, Mapping
 from typing import TYPE_CHECKING, Optional, TypedDict, Union
 
+from dvc_data.index import DataIndexDirError
 from dvc.fs.callbacks import DEFAULT_CALLBACK, Callback, TqdmCallback
 from dvc.log import logger
 from dvc.ui import ui
-from dvc_data.index import DataIndexDirError
 
 if TYPE_CHECKING:
-    from dvc.repo import Repo
-    from dvc.scm import Git, NoSCM
     from dvc_data.index import (
         BaseDataIndex,
         DataIndex,
@@ -21,6 +19,8 @@ if TYPE_CHECKING:
     )
     from dvc_data.index.diff import Change
     from dvc_objects.fs.base import FileSystem
+    from dvc.repo import Repo
+    from dvc.scm import Git, NoSCM
 
 logger = logger.getChild(__name__)
 
@@ -51,18 +51,16 @@ def _adapt_path_from_entry(entry: "DataIndexEntry") -> str:
 
 def _get_missing_paths(
     to_check: Mapping["FileSystem", Mapping[str, Iterable["DataIndexEntry"]]],
-    batch_size: Optional[int] = None,
+    batch_size: int | None = None,
     callback: "Callback" = DEFAULT_CALLBACK,
 ) -> Iterator[str]:
     for fs, paths_map in to_check.items():
         if batch_size == 1 or (batch_size is None and fs.protocol == "local"):
             results = list(callback.wrap(map(fs.exists, paths_map)))
         else:
-            results = fs.exists(
-                list(paths_map), batch_size=batch_size, callback=callback
-            )
+            results = fs.exists(list(paths_map), batch_size=batch_size, callback=callback)
 
-        for cache_path, exists in zip(paths_map, results):
+        for cache_path, exists in zip(paths_map, results, strict=True):
             if exists:
                 continue
 
@@ -105,10 +103,10 @@ def _diff(
     old: "BaseDataIndex",
     new: "BaseDataIndex",
     *,
-    filter_keys: Optional[Iterable["DataIndexKey"]] = None,
+    filter_keys: Iterable["DataIndexKey"] | None = None,
     granular: bool = False,
     not_in_cache: bool = False,
-    batch_size: Optional[int] = None,
+    batch_size: int | None = None,
     callback: "Callback" = DEFAULT_CALLBACK,
     with_renames: bool = False,
 ) -> DiffResult:
@@ -195,14 +193,10 @@ def _diff(
         else:
             ret[change_typ].append(_adapt_path(change))  # type: ignore[literal-required]
 
-    total_items = sum(
-        len(entries) for paths in to_check.values() for entries in paths.values()
-    )
+    total_items = sum(len(entries) for paths in to_check.values() for entries in paths.values())
     with TqdmCallback(size=total_items, desc="Checking cache", unit="entry") as cb:
         missing_items = list(
-            _get_missing_paths(
-                to_check, batch_size=batch_size, callback=StorageCallback(cb)
-            ),
+            _get_missing_paths(to_check, batch_size=batch_size, callback=StorageCallback(cb)),
         )
         if missing_items:
             ret["not_in_cache"] = missing_items
@@ -247,7 +241,7 @@ def _git_info(scm: Union["Git", "NoSCM"], untracked_files: str = "all") -> GitIn
 
 def filter_index(
     index: Union["DataIndex", "DataIndexView"],
-    filter_keys: Optional[Iterable["DataIndexKey"]] = None,
+    filter_keys: Iterable["DataIndexKey"] | None = None,
 ) -> "BaseDataIndex":
     from dvc_data.index.view import DataIndexView
 
@@ -283,9 +277,9 @@ def filter_index(
 
 def _diff_index_to_wtree(
     repo: "Repo",
-    filter_keys: Optional[Iterable["DataIndexKey"]] = None,
+    filter_keys: Iterable["DataIndexKey"] | None = None,
     granular: bool = False,
-    batch_size: Optional[int] = None,
+    batch_size: int | None = None,
     with_renames: bool = False,
 ) -> DiffResult:
     from .index import build_data_index
@@ -321,13 +315,13 @@ def _diff_index_to_wtree(
 def _diff_head_to_index(
     repo: "Repo",
     head: str = "HEAD",
-    filter_keys: Optional[Iterable["DataIndexKey"]] = None,
+    filter_keys: Iterable["DataIndexKey"] | None = None,
     granular: bool = False,
     with_renames: bool = False,
 ) -> DiffResult:
+    from dvc_data.index import DataIndex
     from dvc.exceptions import NotDvcRepoError
     from dvc.scm import RevError
-    from dvc_data.index import DataIndex
 
     index = repo.index.data["repo"]
     index_view = filter_index(index, filter_keys=filter_keys)
@@ -407,13 +401,13 @@ def iter_index(
 
 def _get_entries_not_in_remote(
     repo: "Repo",
-    filter_keys: Optional[Iterable["DataIndexKey"]] = None,
+    filter_keys: Iterable["DataIndexKey"] | None = None,
     granular: bool = False,
     remote_refresh: bool = False,
 ) -> list[str]:
     """Get entries that are not in remote storage."""
-    from dvc.repo.worktree import worktree_view
     from dvc_data.index import StorageKeyError
+    from dvc.repo.worktree import worktree_view
 
     entries: dict[DataIndexKey, DataIndexEntry] = {}
 
@@ -486,15 +480,15 @@ def _prune_keys(filter_keys: Iterable["DataIndexKey"]) -> list["DataIndexKey"]:
 
 def status(
     repo: "Repo",
-    targets: Optional[Iterable[Union[os.PathLike[str], str]]] = None,
+    targets: Iterable[os.PathLike[str] | str] | None = None,
     *,
     granular: bool = False,
     untracked_files: str = "no",
-    remote: Optional[str] = None,
+    remote: str | None = None,
     not_in_remote: bool = False,
     remote_refresh: bool = False,
-    config: Optional[dict] = None,
-    batch_size: Optional[int] = None,
+    config: dict | None = None,
+    batch_size: int | None = None,
     head: str = "HEAD",
     with_renames: bool = True,
 ) -> Status:
@@ -544,14 +538,10 @@ def status(
         unchanged &= set(committed_diff.pop("unchanged", []))
 
     git_info = _git_info(repo.scm, untracked_files=untracked_files)
-    scm_filter_targets = {
-        os.path.relpath(os.path.abspath(t), repo.scm.root_dir) for t in targets
-    }
+    scm_filter_targets = {os.path.relpath(os.path.abspath(t), repo.scm.root_dir) for t in targets}
     untracked_it: Iterable[str] = git_info.get("untracked", [])
     if scm_filter_targets:
-        untracked_it = (
-            f for f in untracked_it if _matches_target(f, scm_filter_targets)
-        )
+        untracked_it = (f for f in untracked_it if _matches_target(f, scm_filter_targets))
     untracked = _transform_git_paths_to_dvc(repo, untracked_it)
     # order matters here
     return Status(

@@ -3,17 +3,17 @@
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Optional
 
+from dvc_data.hashfile.db import get_index
+from dvc_data.hashfile.transfer import TransferResult
 from dvc.config import NoRemoteError, RemoteConfigError
 from dvc.log import logger
 from dvc.utils.objects import cached_property
-from dvc_data.hashfile.db import get_index
-from dvc_data.hashfile.transfer import TransferResult
 
 if TYPE_CHECKING:
-    from dvc.fs import FileSystem
     from dvc_data.hashfile.db import HashFileDB
     from dvc_data.hashfile.hash_info import HashInfo
     from dvc_data.hashfile.status import CompareStatusResult
+    from dvc.fs import FileSystem
 
 logger = logger.getChild(__name__)
 
@@ -30,9 +30,9 @@ class Remote:
 
     @cached_property
     def odb(self) -> "HashFileDB":
-        from dvc.cachemgr import CacheManager
         from dvc_data.hashfile.db import get_odb
         from dvc_data.hashfile.hash import DEFAULT_ALGORITHM
+        from dvc.cachemgr import CacheManager
 
         path = self.path
         if self.worktree:
@@ -80,7 +80,7 @@ class DataCloud:
 
     def get_remote(
         self,
-        name: Optional[str] = None,
+        name: str | None = None,
         command: str = "<command>",
     ) -> "Remote":
         if not name:
@@ -94,9 +94,7 @@ class DataCloud:
             if config.get("worktree"):
                 version_aware = config.get("version_aware")
                 if version_aware is False:
-                    raise RemoteConfigError(
-                        "worktree remotes require version_aware cloud"
-                    )
+                    raise RemoteConfigError("worktree remotes require version_aware cloud")
                 if version_aware is None:
                     config["version_aware"] = True
 
@@ -125,7 +123,7 @@ class DataCloud:
 
     def get_remote_odb(
         self,
-        name: Optional[str] = None,
+        name: str | None = None,
         command: str = "<command>",
         hash_name: str = "md5",
     ) -> "HashFileDB":
@@ -133,9 +131,7 @@ class DataCloud:
 
         remote = self.get_remote(name=name, command=command)
         if remote.fs.version_aware or remote.worktree:
-            raise RemoteConfigError(
-                f"'{command}' is unsupported for cloud versioned remotes"
-            )
+            raise RemoteConfigError(f"'{command}' is unsupported for cloud versioned remotes")
         if hash_name in LEGACY_HASH_NAMES:
             return remote.legacy_odb
         return remote.odb
@@ -143,8 +139,7 @@ class DataCloud:
     def _log_missing(self, status: "CompareStatusResult"):
         if status.missing:
             missing_desc = "\n".join(
-                f"name: {hash_info.obj_name}, {hash_info}"
-                for hash_info in status.missing
+                f"name: {hash_info.obj_name}, {hash_info}" for hash_info in status.missing
             )
             logger.warning(
                 (
@@ -168,8 +163,8 @@ class DataCloud:
     def push(
         self,
         objs: Iterable["HashInfo"],
-        jobs: Optional[int] = None,
-        remote: Optional[str] = None,
+        jobs: int | None = None,
+        remote: str | None = None,
         odb: Optional["HashFileDB"] = None,
     ) -> "TransferResult":
         """Push data items in a cloud-agnostic way.
@@ -201,7 +196,7 @@ class DataCloud:
         self,
         objs: Iterable["HashInfo"],
         *,
-        jobs: Optional[int] = None,
+        jobs: int | None = None,
         odb: "HashFileDB",
     ) -> "TransferResult":
         from dvc.fs.callbacks import TqdmCallback
@@ -228,8 +223,8 @@ class DataCloud:
     def pull(
         self,
         objs: Iterable["HashInfo"],
-        jobs: Optional[int] = None,
-        remote: Optional[str] = None,
+        jobs: int | None = None,
+        remote: str | None = None,
         odb: Optional["HashFileDB"] = None,
     ) -> "TransferResult":
         """Pull data items in a cloud-agnostic way.
@@ -262,7 +257,7 @@ class DataCloud:
         self,
         objs: Iterable["HashInfo"],
         *,
-        jobs: Optional[int] = None,
+        jobs: int | None = None,
         odb: "HashFileDB",
     ) -> "TransferResult":
         from dvc.fs.callbacks import TqdmCallback
@@ -290,8 +285,8 @@ class DataCloud:
     def status(
         self,
         objs: Iterable["HashInfo"],
-        jobs: Optional[int] = None,
-        remote: Optional[str] = None,
+        jobs: int | None = None,
+        remote: str | None = None,
         odb: Optional["HashFileDB"] = None,
     ):
         """Check status of data items in a cloud-agnostic way.
@@ -331,7 +326,7 @@ class DataCloud:
         self,
         objs: Iterable["HashInfo"],
         *,
-        jobs: Optional[int] = None,
+        jobs: int | None = None,
         odb: "HashFileDB",
     ):
         from dvc_data.hashfile.status import compare_status

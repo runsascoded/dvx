@@ -3,8 +3,8 @@ from urllib.parse import urlparse
 
 from funcy import compact, merge
 
-from dvc.exceptions import DvcException
 from dvc_data.hashfile.hash_info import HashInfo
+from dvc.exceptions import DvcException
 
 from .db import AbstractDependency
 
@@ -43,9 +43,7 @@ class DatasetDependency(AbstractDependency):
 
     def fill_values(self, values=None):
         """Load params values dynamically."""
-        self.hash_info = HashInfo(
-            self.PARAM_DATASET, merge(self.hash_info.value, values or {})
-        )
+        self.hash_info = HashInfo(self.PARAM_DATASET, merge(self.hash_info.value, values or {}))
 
     def workspace_status(self):
         ds = self.repo.datasets[self.name]
@@ -68,8 +66,7 @@ class DatasetDependency(AbstractDependency):
         if not ds.lock:
             if ds._invalidated:
                 raise DvcException(
-                    "Dataset information is not in sync. "
-                    f"Run 'dvc ds update {self.name}' to sync."
+                    f"Dataset information is not in sync. Run 'dvc ds update {self.name}' to sync."
                 )
             raise DvcException("Dataset information missing from dvc.lock file")
         return HashInfo(self.PARAM_DATASET, ds.lock.to_dict())  # type: ignore[arg-type]

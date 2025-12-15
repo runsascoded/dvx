@@ -3,7 +3,7 @@ import os
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from itertools import product
-from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Union
+from typing import TYPE_CHECKING, Any, NamedTuple, Union
 
 from funcy import collecting, first, isa, join, reraise
 
@@ -71,9 +71,7 @@ def _format_preamble(msg: str, path: str, spacing: str = " ") -> str:
 
 
 def format_and_raise(exc: Exception, msg: str, path: str) -> "NoReturn":
-    spacing = (
-        "\n" if isinstance(exc, (ParseError, MergeError, VarsAlreadyLoaded)) else " "
-    )
+    spacing = "\n" if isinstance(exc, (ParseError, MergeError, VarsAlreadyLoaded)) else " "
     message = _format_preamble(msg, path, spacing) + str(exc)
 
     # FIXME: cannot reraise because of how we log "cause" of the exception
@@ -81,18 +79,14 @@ def format_and_raise(exc: Exception, msg: str, path: str) -> "NoReturn":
     _reraise_err(ResolveError, message, from_exc=exc)
 
 
-def _reraise_err(
-    exc_cls: type[Exception], *args, from_exc: Optional[Exception] = None
-) -> "NoReturn":
+def _reraise_err(exc_cls: type[Exception], *args, from_exc: Exception | None = None) -> "NoReturn":
     err = exc_cls(*args)
     if from_exc and logger.isEnabledFor(logging.DEBUG):
         raise err from from_exc
     raise err
 
 
-def check_syntax_errors(
-    definition: "DictStrAny", name: str, path: str, where: str = "stages"
-):
+def check_syntax_errors(definition: "DictStrAny", name: str, path: str, where: str = "stages"):
     for key, d in definition.items():
         try:
             check_recursive_parse_errors(d)
@@ -105,7 +99,7 @@ def is_map_or_seq(data: Any) -> bool:
     return not isinstance(data, str) and _is_map_or_seq(data)
 
 
-def split_group_name(name: str) -> tuple[str, Optional[str]]:
+def split_group_name(name: str) -> tuple[str, str | None]:
     group, *keys = name.rsplit(JOIN, maxsplit=1)
     return group, first(keys)
 
@@ -217,8 +211,8 @@ class DataResolver:
     # Top-level sections are eagerly evaluated, whereas stages are lazily evaluated,
     # one-by-one.
 
-    def resolve_artifacts(self) -> dict[str, Optional[dict[str, Any]]]:
-        d: dict[str, Optional[dict[str, Any]]] = {}
+    def resolve_artifacts(self) -> dict[str, dict[str, Any] | None]:
+        d: dict[str, dict[str, Any] | None] = {}
         for item in self.artifacts:
             d.update(item.resolve())
         return d
@@ -238,7 +232,7 @@ class DataResolver:
     def has_key(self, key: str):
         return self._has_group_and_key(*split_group_name(key))
 
-    def _has_group_and_key(self, group: str, key: Optional[str] = None):
+    def _has_group_and_key(self, group: str, key: str | None = None):
         try:
             definition = self.definitions[group]
         except KeyError:
@@ -277,9 +271,7 @@ class EntryDefinition:
         self.definition = definition
         self.where = where
 
-    def _resolve_wdir(
-        self, context: Context, name: str, wdir: Optional[str] = None
-    ) -> str:
+    def _resolve_wdir(self, context: Context, name: str, wdir: str | None = None) -> str:
         if not wdir:
             return self.wdir
 
@@ -340,9 +332,7 @@ class EntryDefinition:
         self.resolver.track_vars(name, tracked_data)
         return {name: resolved}
 
-    def _resolve(
-        self, context: "Context", value: Any, key: str, skip_checks: bool
-    ) -> "DictStrAny":
+    def _resolve(self, context: "Context", value: Any, key: str, skip_checks: bool) -> "DictStrAny":
         try:
             return context.resolve(
                 value,
@@ -420,10 +410,7 @@ class ForeachDefinition:
         if warn_for:
             linking_verb = "is" if len(warn_for) == 1 else "are"
             logger.warning(
-                (
-                    "%s %s already specified, "
-                    "will be overwritten for stages generated from '%s'"
-                ),
+                ("%s %s already specified, will be overwritten for stages generated from '%s'"),
                 " and ".join(warn_for),
                 linking_verb,
                 self.name,
@@ -487,9 +474,7 @@ class ForeachDefinition:
             # the no. of items to be generated which means more cloning,
             # i.e. quadratic complexity).
             generated = self._generate_name(key)
-            entry = EntryDefinition(
-                self.resolver, self.context, generated, self.template
-            )
+            entry = EntryDefinition(self.resolver, self.context, generated, self.template)
             try:
                 # optimization: skip checking for syntax errors on each foreach
                 # generated stages. We do it once when accessing template.
@@ -548,10 +533,7 @@ class MatrixDefinition:
         if warn_for:
             linking_verb = "is" if len(warn_for) == 1 else "are"
             logger.warning(
-                (
-                    "%s %s already specified, "
-                    "will be overwritten for stages generated from '%s'"
-                ),
+                ("%s %s already specified, will be overwritten for stages generated from '%s'"),
                 " and ".join(warn_for),
                 linking_verb,
                 self.name,
@@ -568,7 +550,7 @@ class MatrixDefinition:
         for combination in product(*matrix.values()):
             d: DictStrAny = {}
             fragments: list[str] = []
-            for k, (i, v) in zip(matrix.keys(), combination):
+            for k, (i, v) in zip(matrix.keys(), combination, strict=True):
                 d[k] = v
                 fragments.append(f"{k}{i}" if is_map_or_seq(v) else to_str(v))
 
@@ -605,9 +587,7 @@ class MatrixDefinition:
             # the no. of items to be generated which means more cloning,
             # i.e. quadratic complexity).
             generated = self._generate_name(key)
-            entry = EntryDefinition(
-                self.resolver, self.context, generated, self.template
-            )
+            entry = EntryDefinition(self.resolver, self.context, generated, self.template)
             try:
                 # optimization: skip checking for syntax errors on each matrix
                 # generated stages. We do it once when accessing template.
@@ -641,7 +621,7 @@ class TopDefinition:
 
 
 class ArtifactDefinition(TopDefinition):
-    def resolve(self) -> dict[str, Optional[dict[str, Any]]]:
+    def resolve(self) -> dict[str, dict[str, Any] | None]:
         try:
             check_expression(self.name)
             name = self.context.resolve(self.name)

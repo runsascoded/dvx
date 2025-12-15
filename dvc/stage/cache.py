@@ -45,12 +45,7 @@ def _can_hash(stage):
             return False
 
     for out in stage.outs:
-        if (
-            out.protocol != "local"
-            or not out.def_path
-            or out.persist
-            or not out.is_in_repo
-        ):
+        if out.protocol != "local" or not out.def_path or out.persist or not out.is_in_repo:
             return False
 
     return True
@@ -272,7 +267,7 @@ class StageCache:
             ret.append((parent_name, src_name))
         return ret
 
-    def push(self, remote: Optional[str], odb: Optional["ObjectDB"] = None):
+    def push(self, remote: str | None, odb: Optional["ObjectDB"] = None):
         try:
             dest_odb = odb or self.repo.cloud.get_remote_odb(
                 remote, "push --run-cache", hash_name="md5-dos2unix"
@@ -281,7 +276,7 @@ class StageCache:
             raise RunCacheNotSupported(e) from e
         return self.transfer(self.repo.cache.legacy, dest_odb)
 
-    def pull(self, remote: Optional[str], odb: Optional["ObjectDB"] = None):
+    def pull(self, remote: str | None, odb: Optional["ObjectDB"] = None):
         try:
             odb = odb or self.repo.cloud.get_remote_odb(
                 remote, "fetch --run-cache", hash_name="md5-dos2unix"

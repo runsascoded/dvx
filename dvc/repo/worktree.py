@@ -8,6 +8,9 @@ from dvc.log import logger
 from dvc.stage.exceptions import StageUpdateError
 
 if TYPE_CHECKING:
+    from dvc_data.hashfile.meta import Meta
+    from dvc_data.index import DataIndex, DataIndexView
+    from dvc_objects.fs.base import FileSystem
     from dvc.data_cloud import Remote
     from dvc.output import Output
     from dvc.repo import Repo
@@ -15,9 +18,6 @@ if TYPE_CHECKING:
     from dvc.repo.stage import StageInfo
     from dvc.stage import Stage
     from dvc.types import TargetType
-    from dvc_data.hashfile.meta import Meta
-    from dvc_data.index import DataIndex, DataIndexView
-    from dvc_objects.fs.base import FileSystem
 
 logger = logger.getChild(__name__)
 
@@ -36,10 +36,10 @@ def worktree_view_by_remotes(
     targets: Optional["TargetType"] = None,
     push: bool = False,
     **kwargs: Any,
-) -> Iterable[tuple[Optional[str], "IndexView"]]:
+) -> Iterable[tuple[str | None, "IndexView"]]:
     from dvc.repo.index import IndexView
 
-    def outs_filter(view: "IndexView", remote: Optional[str]):
+    def outs_filter(view: "IndexView", remote: str | None):
         def _filter(out: "Output") -> bool:
             if out.remote != remote:
                 return False
@@ -89,9 +89,7 @@ def worktree_view(
     )
 
 
-def _get_remote(
-    repo: "Repo", name: Optional[str], default: "Remote", command: str
-) -> "Remote":
+def _get_remote(repo: "Repo", name: str | None, default: "Remote", command: str) -> "Remote":
     if name in (None, default.name):
         return default
     return repo.cloud.get_remote(name, command)
@@ -100,7 +98,7 @@ def _get_remote(
 def _merge_push_meta(
     out: "Output",
     index: Union["DataIndex", "DataIndexView"],
-    remote: Optional[str] = None,
+    remote: str | None = None,
 ):
     """Merge existing output meta with newly pushed meta.
 
@@ -223,8 +221,8 @@ def _fetch_out_changes(
     remote_index: Union["DataIndex", "DataIndexView"],
     remote: "Remote",
 ):
-    from dvc.fs.callbacks import TqdmCallback
     from dvc_data.index.checkout import apply, compare
+    from dvc.fs.callbacks import TqdmCallback
 
     old, new = _get_diff_indexes(out, local_index, remote_index)
 

@@ -78,10 +78,10 @@ def push(
 ):
     from fsspec.utils import tokenize
 
-    from dvc.config import NoRemoteError
-    from dvc.utils import glob_targets
     from dvc_data.index.fetch import collect
     from dvc_data.index.push import push as ipush
+    from dvc.config import NoRemoteError
+    from dvc.utils import glob_targets
 
     from .fetch import _collect_indexes
 

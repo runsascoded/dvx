@@ -1,6 +1,6 @@
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager, nullcontext
-from typing import TYPE_CHECKING, Any, Callable, Optional, TextIO, Union
+from typing import TYPE_CHECKING, Any, Optional, TextIO, Union
 
 import colorama
 
@@ -34,9 +34,7 @@ def disable_colorama():
 
 
 class Formatter:
-    def __init__(
-        self, theme: Optional[dict] = None, defaults: Optional[dict] = None
-    ) -> None:
+    def __init__(self, theme: dict | None = None, defaults: dict | None = None) -> None:
         from collections import defaultdict
 
         theme = theme or {
@@ -46,16 +44,14 @@ class Formatter:
         }
         self.theme = defaultdict(lambda: defaults or {}, theme)
 
-    def format(self, message: str, style: Optional[str] = None, **kwargs) -> str:
+    def format(self, message: str, style: str | None = None, **kwargs) -> str:
         from dvc.utils import colorize
 
         return colorize(message, **self.theme[style])
 
 
 class Console:
-    def __init__(
-        self, formatter: Optional[Formatter] = None, enable: bool = False
-    ) -> None:
+    def __init__(self, formatter: Formatter | None = None, enable: bool = False) -> None:
         from contextvars import ContextVar
 
         self.formatter: Formatter = formatter or Formatter()
@@ -77,9 +73,9 @@ class Console:
     def error_write(
         self,
         *objects: Any,
-        style: Optional[str] = None,
-        sep: Optional[str] = None,
-        end: Optional[str] = None,
+        style: str | None = None,
+        sep: str | None = None,
+        end: str | None = None,
         styled: bool = False,
         force: bool = True,
     ) -> None:
@@ -96,14 +92,14 @@ class Console:
     def write_json(
         self,
         data: Any,
-        indent: Optional[int] = None,
-        highlight: Optional[bool] = None,
+        indent: int | None = None,
+        highlight: bool | None = None,
         stderr: bool = False,
         skip_keys: bool = False,
         ensure_ascii: bool = True,
         check_circular: bool = True,
         allow_nan: bool = True,
-        default: Optional[Callable[[Any], Any]] = None,
+        default: Callable[[Any], Any] | None = None,
         sort_keys: bool = False,
     ) -> None:
         if highlight is None:
@@ -140,17 +136,17 @@ class Console:
         sep: str = " ",
         end: str = "\n",
         stderr: bool = False,
-        style: Optional[Union[str, "Style"]] = None,
+        style: Union[str, "Style"] | None = None,
         justify: Optional["JustifyMethod"] = None,
         overflow: Optional["OverflowMethod"] = None,
-        no_wrap: Optional[bool] = None,
-        emoji: Optional[bool] = None,
-        markup: Optional[bool] = None,
-        highlight: Optional[bool] = None,
-        width: Optional[int] = None,
-        height: Optional[int] = None,
+        no_wrap: bool | None = None,
+        emoji: bool | None = None,
+        markup: bool | None = None,
+        highlight: bool | None = None,
+        width: int | None = None,
+        height: int | None = None,
         crop: bool = True,
-        soft_wrap: Optional[bool] = None,
+        soft_wrap: bool | None = None,
         new_line_start: bool = False,
     ) -> None:
         if stderr:
@@ -178,13 +174,13 @@ class Console:
     def write(
         self,
         *objects: Any,
-        style: Optional[str] = None,
-        sep: Optional[str] = None,
-        end: Optional[str] = None,
+        style: str | None = None,
+        sep: str | None = None,
+        end: str | None = None,
         stderr: bool = False,
         force: bool = False,
         styled: bool = False,
-        file: Optional[TextIO] = None,
+        file: TextIO | None = None,
     ) -> None:
         import sys
 
@@ -244,14 +240,12 @@ class Console:
     def prompt(
         self,
         text: str,
-        choices: Optional[Iterable[str]] = None,
+        choices: Iterable[str] | None = None,
         password: bool = False,
-    ) -> Optional[str]:
+    ) -> str | None:
         while True:
             try:
-                response = self.rich_console.input(
-                    text + " ", markup=False, password=password
-                )
+                response = self.rich_console.input(text + " ", markup=False, password=password)
             except EOFError:
                 return None
 
@@ -297,10 +291,10 @@ class Console:
         rich_table: bool = False,
         force: bool = True,
         pager: bool = False,
-        header_styles: Optional[Union[dict[str, "Styles"], Sequence["Styles"]]] = None,
-        row_styles: Optional[Sequence["Styles"]] = None,
-        borders: Union[bool, str] = False,
-        colalign: Optional[tuple[str, ...]] = None,
+        header_styles: dict[str, "Styles"] | Sequence["Styles"] | None = None,
+        row_styles: Sequence["Styles"] | None = None,
+        borders: bool | str = False,
+        colalign: tuple[str, ...] | None = None,
     ) -> None:
         from dvc.ui import table as t
 
@@ -369,7 +363,7 @@ if __name__ == "__main__":
 
     ui.write("No default remote set")
     ui.success("Everything is up to date.")
-    ui.warn("Run queued experiments will be removed.")
+    ui.warn("Some files will be removed.")
     ui.error("too few arguments.")
 
     ui.table([("scores.json", "0.5674")], headers=["Path", "auc"])

@@ -1,7 +1,6 @@
 import os
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Optional
 
 DEFAULT_DVC_BIN = "dvc"
 DEFAULT_DVC_REPO = os.fspath(Path(__file__).parents[3])
@@ -25,18 +24,16 @@ def pytest_generate_tests(metafunc):
 class DVCBenchConfig:
     dataset: str = "tiny"
     dvc_repo: str = DEFAULT_DVC_REPO
-    dvc_bench_repo: Optional[str] = None
+    dvc_bench_repo: str | None = None
     project_repo: str = DEFAULT_PROJECT_REPO
-    project_rev: Optional[str] = None
+    project_rev: str | None = None
     dvc_bin: str = DEFAULT_DVC_BIN
-    dvc_revs: Optional[list[str]] = None
-    dvc_install_deps: Optional[str] = None
+    dvc_revs: list[str] | None = None
+    dvc_install_deps: str | None = None
 
     def __repr__(self):
         args = ", ".join(
-            f"{f.name}={val!r}"
-            for f in fields(self)
-            if (val := getattr(self, f.name)) != f.default
+            f"{f.name}={val!r}" for f in fields(self) if (val := getattr(self, f.name)) != f.default
         )
         return f"{self.__class__.__name__}({args})"
 

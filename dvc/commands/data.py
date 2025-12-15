@@ -42,14 +42,9 @@ class CmdDataStatus(CmdBase):
             'use "dvc checkout <file>..." to discard changes',
         ),
         "untracked": (
-            (
-                'use "git add <file> ..." or '
-                '"dvc add <file>..." to commit to git or to dvc'
-            ),
+            ('use "git add <file> ..." or "dvc add <file>..." to commit to git or to dvc'),
         ),
-        "git_dirty": (
-            'there are {}changes not tracked by dvc, use "git status" to see',
-        ),
+        "git_dirty": ('there are {}changes not tracked by dvc, use "git status" to see',),
     }
 
     @staticmethod
@@ -88,11 +83,7 @@ class CmdDataStatus(CmdBase):
             if isinstance(stage_status, dict):
                 items = [
                     f"{state}: "
-                    + (
-                        " -> ".join(change.values())
-                        if isinstance(change, dict)
-                        else change
-                    )
+                    + (" -> ".join(change.values()) if isinstance(change, dict) else change)
                     for state, changes in stage_status.items()
                     for change in changes
                 ]
@@ -147,9 +138,7 @@ def add_parser(subparsers, parent_parser):
         required=True,
     )
 
-    DATA_STATUS_HELP = (
-        "Show changes between the last git commit, the dvcfiles and the workspace."
-    )
+    DATA_STATUS_HELP = "Show changes between the last git commit, the dvcfiles and the workspace."
     data_status_parser = data_subparsers.add_parser(
         "status",
         parents=[parent_parser],
@@ -161,8 +150,7 @@ def add_parser(subparsers, parent_parser):
         "targets",
         nargs="*",
         help=(
-            "Limit command scope to these tracked files/directories, "
-            ".dvc files and stage names."
+            "Limit command scope to these tracked files/directories, .dvc files and stage names."
         ),
     ).complete = completion.FILE  # type: ignore[attr-defined]
     data_status_parser.add_argument(

@@ -37,9 +37,7 @@ def prompt_to_commit(stage, changes, force=False):
     from dvc.stage.exceptions import StageCommitError
 
     if not (force or prompt.confirm(_prepare_message(stage, changes))):
-        raise StageCommitError(
-            f"unable to commit changed {stage}. Use `-f|--force` to force."
-        )
+        raise StageCommitError(f"unable to commit changed {stage}. Use `-f|--force` to force.")
 
 
 @locked
@@ -142,9 +140,7 @@ def _migrateable_dvcfiles(view: "IndexView") -> set[str]:
         assert outs_filter
         if any(outs_filter(out) for out in stage.filter_outs(filter_info)) or (
             not stage.is_import
-            and any(
-                dep.is_in_repo and dep.hash_name == "md5-dos2unix" for dep in stage.deps
-            )
+            and any(dep.is_in_repo and dep.hash_name == "md5-dos2unix" for dep in stage.deps)
         ):
             if isinstance(stage.dvcfile, ProjectFile):
                 lockfile = stage.dvcfile._lockfile.relpath

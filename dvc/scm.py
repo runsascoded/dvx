@@ -4,7 +4,7 @@ import os
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from functools import partial
-from typing import TYPE_CHECKING, Literal, Optional, Union, overload
+from typing import TYPE_CHECKING, Literal, Union, overload
 
 from funcy import group_by
 from scmrepo.base import Base  # noqa: TC002
@@ -115,9 +115,7 @@ def SCM(root_dir, *, search_parent_directories=True, no_scm=False):
 
 
 class TqdmGit(Tqdm):
-    BAR_FMT = (
-        "{desc}|{bar}|{postfix[info]}{n_fmt}/{total_fmt} [{elapsed}, {rate_fmt:>11}]"
-    )
+    BAR_FMT = "{desc}|{bar}|{postfix[info]}{n_fmt}/{total_fmt} [{elapsed}, {rate_fmt:>11}]"
 
     def __init__(self, *args, **kwargs):
         kwargs.setdefault("unit", "obj")
@@ -146,14 +144,9 @@ class TqdmGit(Tqdm):
 def clone(url: str, to_path: str, **kwargs):
     from scmrepo.exceptions import CloneError as InternalCloneError
 
-    from dvc.repo.experiments.utils import fetch_all_exps
-
     with TqdmGit(desc=f"Cloning {os.path.basename(url)}") as pbar:
         try:
-            git = Git.clone(url, to_path, progress=pbar.update_git, **kwargs)
-            if "shallow_branch" not in kwargs:
-                fetch_all_exps(git, url, progress=pbar.update_git)
-            return git
+            return Git.clone(url, to_path, progress=pbar.update_git, **kwargs)
         except InternalCloneError as exc:
             raise CloneError("SCM error") from exc
 
@@ -161,24 +154,9 @@ def clone(url: str, to_path: str, **kwargs):
 def resolve_rev(scm: Union["Git", "NoSCM"], rev: str) -> str:
     from scmrepo.exceptions import RevError as InternalRevError
 
-    from dvc.repo.experiments.utils import fix_exp_head
-
     try:
-        return scm.resolve_rev(fix_exp_head(scm, rev))
+        return scm.resolve_rev(rev)
     except InternalRevError as exc:
-        assert isinstance(scm, Git)
-        # `scm` will only resolve git branch and tag names,
-        # if rev is not a sha it may be an abbreviated experiment name
-        if not (rev == "HEAD" or rev.startswith("refs/")):
-            from dvc.repo.experiments.utils import AmbiguousExpRefInfo, resolve_name
-
-            try:
-                ref_infos = resolve_name(scm, rev).get(rev)
-            except AmbiguousExpRefInfo:
-                raise RevError(f"ambiguous Git revision '{rev}'")  # noqa: B904
-            if ref_infos:
-                return scm.get_ref(str(ref_infos))
-
         raise RevError(str(exc))  # noqa: B904
 
 
@@ -203,17 +181,14 @@ def _get_n_commits(scm: "Git", revs: list[str], num: int) -> list[str]:
 
 def iter_revs(
     scm: "Git",
-    revs: Optional[list[str]] = None,
+    revs: list[str] | None = None,
     num: int = 1,
     all_branches: bool = False,
     all_tags: bool = False,
     all_commits: bool = False,
-    all_experiments: bool = False,
-    commit_date: Optional[str] = None,
+    commit_date: str | None = None,
 ) -> Mapping[str, list[str]]:
     from scmrepo.exceptions import SCMError as _SCMError
-
-    from dvc.repo.experiments.utils import exp_commits
 
     if not any(
         [
@@ -221,7 +196,6 @@ def iter_revs(
             all_branches,
             all_tags,
             all_commits,
-            all_experiments,
             commit_date,
         ]
     ):
@@ -253,9 +227,6 @@ def iter_revs(
                     return True
 
             results.extend(filter(_time_filter, scm.list_all_commits()))
-
-    if all_experiments:
-        results.extend(exp_commits(scm))
 
     rev_resolver = partial(resolve_rev, scm)
     return group_by(rev_resolver, results)
@@ -290,7 +261,7 @@ def lfs_prefetch(fs: "FileSystem", paths: list[str]):
 
 def add_no_submodules(
     scm: "Base",
-    paths: Union[str, Iterable[str]],
+    paths: str | Iterable[str],
     **kwargs,
 ) -> None:
     """Stage paths to Git, excluding those inside submodules."""
@@ -305,10 +276,7 @@ def add_no_submodules(
 
     for p in paths:
         abs_path = os.path.abspath(p)
-        if any(
-            abs_path == root or abs_path.startswith(root + os.sep)
-            for root in submodule_roots
-        ):
+        if any(abs_path == root or abs_path.startswith(root + os.sep) for root in submodule_roots):
             skipped_paths.append(p)
         else:
             repo_paths.append(p)

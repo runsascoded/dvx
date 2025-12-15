@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from dvc.exceptions import InvalidArgumentError
 from dvc.log import logger
@@ -27,8 +27,8 @@ def load_hydra_plugins(plugins_path: str):
 
 def compose_and_dump(
     output_file: "StrPath",
-    config_dir: Optional[str],
-    config_module: Optional[str],
+    config_dir: str | None,
+    config_module: str | None,
     config_name: str,
     plugins_path: str,
     overrides: list[str],
@@ -57,9 +57,7 @@ def compose_and_dump(
     config_source = config_dir or config_module
     if not config_source:
         raise ValueError("Either `config_dir` or `config_module` should be provided.")
-    initialize_config = (
-        initialize_config_dir if config_dir else initialize_config_module
-    )
+    initialize_config = initialize_config_dir if config_dir else initialize_config_module
 
     load_hydra_plugins(plugins_path)
     with initialize_config(  # type: ignore[attr-defined]
@@ -75,9 +73,7 @@ def compose_and_dump(
         dumper(output_file, OmegaConf.to_object(cfg))
     else:
         Path(output_file).write_text(OmegaConf.to_yaml(cfg), encoding="utf-8")
-    logger.trace(
-        "Hydra composition enabled. Contents dumped to %s:\n %s", output_file, cfg
-    )
+    logger.trace("Hydra composition enabled. Contents dumped to %s:\n %s", output_file, cfg)
 
 
 def apply_overrides(path: "StrPath", overrides: list[str]) -> None:
@@ -130,7 +126,7 @@ def to_hydra_overrides(path_overrides):
 def dict_product(dicts):
     import itertools
 
-    return [dict(zip(dicts, x)) for x in itertools.product(*dicts.values())]
+    return [dict(zip(dicts, x, strict=True)) for x in itertools.product(*dicts.values())]
 
 
 def get_hydra_sweeps(path_overrides):

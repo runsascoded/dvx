@@ -1,10 +1,10 @@
 import logging
 import time
 from collections import defaultdict
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from functools import partial
 from itertools import chain
-from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Optional, Union
+from typing import TYPE_CHECKING, Any, NamedTuple, Optional, Union
 
 from funcy.debug import format_time
 
@@ -19,6 +19,10 @@ if TYPE_CHECKING:
     from pygtrie import Trie
     from typing_extensions import Self
 
+    from dvc_data.hashfile.db import HashFileDB
+    from dvc_data.hashfile.hash_info import HashInfo
+    from dvc_data.index import DataIndex, DataIndexKey, DataIndexView
+    from dvc_objects.fs.base import FileSystem
     from dvc.dependency import Dependency
     from dvc.fs.callbacks import Callback
     from dvc.output import Output
@@ -26,10 +30,6 @@ if TYPE_CHECKING:
     from dvc.repo.stage import StageInfo
     from dvc.stage import Stage
     from dvc.types import TargetType
-    from dvc_data.hashfile.db import HashFileDB
-    from dvc_data.hashfile.hash_info import HashInfo
-    from dvc_data.index import DataIndex, DataIndexKey, DataIndexView
-    from dvc_objects.fs.base import FileSystem
 
 
 logger = logger.getChild(__name__)
@@ -44,9 +44,7 @@ def log_walk(seq):
         logger.trace("%s in collecting stages from %s", duration, root)
 
 
-def collect_files(
-    repo: "Repo", onerror: Optional[Callable[[str, Exception], None]] = None
-):
+def collect_files(repo: "Repo", onerror: Callable[[str, Exception], None] | None = None):
     """Collects all of the stages present in the DVC repo.
 
     Args:
@@ -163,11 +161,7 @@ def _load_data_from_outs(index, prefix, outs):
             loaded=None if tree is None else True,
         )
 
-        if (
-            out.stage.is_import
-            and not out.stage.is_repo_import
-            and not out.stage.is_db_import
-        ):
+        if out.stage.is_import and not out.stage.is_repo_import and not out.stage.is_db_import:
             dep = out.stage.deps[0]
             entry.meta = dep.meta
             if out.hash_info:
@@ -182,9 +176,7 @@ def _load_data_from_outs(index, prefix, outs):
         index[(*prefix, ws, *key)] = entry
 
     for ws, key in parents:
-        index[(*prefix, ws, *key)] = DataIndexEntry(
-            key=key, meta=Meta(isdir=True), loaded=True
-        )
+        index[(*prefix, ws, *key)] = DataIndexEntry(key=key, meta=Meta(isdir=True), loaded=True)
 
 
 def _load_storage_from_import(storage_map, key, out):
@@ -220,9 +212,9 @@ def _load_storage_from_import(storage_map, key, out):
 
 
 def _load_storage_from_out(storage_map, key, out):
+    from dvc_data.index import FileStorage, ObjectStorage
     from dvc.cachemgr import LEGACY_HASH_NAMES
     from dvc.config import NoRemoteError
-    from dvc_data.index import FileStorage, ObjectStorage
 
     if out.cache:
         storage_map.add_cache(ObjectStorage(key, out.cache))
@@ -241,13 +233,9 @@ def _load_storage_from_out(storage_map, key, out):
                 )
             )
         else:
-            odb = (
-                remote.legacy_odb if out.hash_name in LEGACY_HASH_NAMES else remote.odb
-            )
+            odb = remote.legacy_odb if out.hash_name in LEGACY_HASH_NAMES else remote.odb
             storage_map.add_remote(
-                ObjectStorage(
-                    key, odb, index=remote.index, read_only=(not out.can_push)
-                )
+                ObjectStorage(key, odb, index=remote.index, read_only=(not out.can_push))
             )
     except NoRemoteError:
         pass
@@ -287,13 +275,13 @@ class Index:
     def __init__(
         self,
         repo: "Repo",
-        stages: Optional[list["Stage"]] = None,
-        metrics: Optional[dict[str, list[str]]] = None,
-        plots: Optional[dict[str, list[str]]] = None,
-        params: Optional[dict[str, Any]] = None,
-        artifacts: Optional[dict[str, Any]] = None,
-        datasets: Optional[dict[str, list[dict[str, Any]]]] = None,
-        datasets_lock: Optional[dict[str, list[dict[str, Any]]]] = None,
+        stages: list["Stage"] | None = None,
+        metrics: dict[str, list[str]] | None = None,
+        plots: dict[str, list[str]] | None = None,
+        params: dict[str, Any] | None = None,
+        artifacts: dict[str, Any] | None = None,
+        datasets: dict[str, list[dict[str, Any]]] | None = None,
+        datasets_lock: dict[str, list[dict[str, Any]]] | None = None,
     ) -> None:
         self.repo = repo
         self.stages = stages or []
@@ -306,7 +294,7 @@ class Index:
         self._collected_targets: dict[int, list[StageInfo]] = {}
 
     @cached_property
-    def rev(self) -> Optional[str]:
+    def rev(self) -> str | None:
         if not isinstance(self.repo.fs, LocalFileSystem):
             return self.repo.get_rev()[:7]
         return None
@@ -319,12 +307,10 @@ class Index:
     def from_repo(
         cls,
         repo: "Repo",
-        onerror: Optional[Callable[[str, Exception], None]] = None,
+        onerror: Callable[[str, Exception], None] | None = None,
     ) -> "Index":
         onerror = onerror or repo.stage_collection_error_handler
-        return cls.from_indexes(
-            repo, (idx for _, idx in collect_files(repo, onerror=onerror))
-        )
+        return cls.from_indexes(repo, (idx for _, idx in collect_files(repo, onerror=onerror)))
 
     @classmethod
     def from_file(cls, repo: "Repo", path: str) -> "Index":
@@ -339,9 +325,7 @@ class Index:
             params={path: dvcfile.params} if dvcfile.params else {},
             artifacts={path: dvcfile.artifacts} if dvcfile.artifacts else {},
             datasets={path: dvcfile.datasets} if dvcfile.datasets else {},
-            datasets_lock={path: dvcfile.datasets_lock}
-            if dvcfile.datasets_lock
-            else {},
+            datasets_lock={path: dvcfile.datasets_lock} if dvcfile.datasets_lock else {},
         )
 
     def update(self, stages: Iterable["Stage"]) -> "Self":
@@ -465,18 +449,8 @@ class Index:
 
     @cached_property
     def _plot_sources(self) -> list[str]:
-        from dvc.repo.plots import _collect_pipeline_files
-
-        sources: list[str] = []
-        for data in _collect_pipeline_files(self.repo, [], {}).values():
-            for plot_id, props in data.get("data", {}).items():
-                if isinstance(props.get("y"), dict):
-                    sources.extend(props["y"])
-                    if isinstance(props.get("x"), dict):
-                        sources.extend(props["x"])
-                else:
-                    sources.append(plot_id)
-        return sources
+        # Plots functionality has been removed
+        return []
 
     @cached_property
     def data_keys(self) -> dict[str, set["DataIndexKey"]]:
@@ -591,7 +565,7 @@ class Index:
         return by_workspace
 
     @staticmethod
-    def _hash_targets(targets: Iterable[Optional[str]], **kwargs: Any) -> int:
+    def _hash_targets(targets: Iterable[str | None], **kwargs: Any) -> int:
         return hash(
             (
                 frozenset(targets),
@@ -631,10 +605,10 @@ class Index:
         self,
         targets: Optional["TargetType"] = None,
         with_deps: bool = False,
-        remote: Optional[str] = None,
+        remote: str | None = None,
         force: bool = False,
         recursive: bool = False,
-        jobs: Optional[int] = None,
+        jobs: int | None = None,
         push: bool = False,
     ) -> "ObjectContainer":
         used: ObjectContainer = defaultdict(set)
@@ -673,10 +647,10 @@ class Index:
     def targets_view(
         self,
         targets: Optional["TargetType"],
-        stage_filter: Optional[Callable[["Stage"], bool]] = None,
-        outs_filter: Optional[Callable[["Output"], bool]] = None,
-        max_size: Optional[int] = None,
-        types: Optional[list[str]] = None,
+        stage_filter: Callable[["Stage"], bool] | None = None,
+        outs_filter: Callable[["Output"], bool] | None = None,
+        max_size: int | None = None,
+        types: list[str] | None = None,
         **kwargs: Any,
     ) -> "IndexView":
         """Return read-only view of index for the specified targets.
@@ -727,7 +701,7 @@ class IndexView:
         self,
         index: Index,
         stage_infos: Iterable["StageInfo"],
-        outs_filter: Optional[Callable[["Output"], bool]],
+        outs_filter: Callable[["Output"], bool] | None,
     ):
         self._index = index
         self._stage_infos = stage_infos
@@ -750,7 +724,7 @@ class IndexView:
         return self._index
 
     @property
-    def _filtered_outs(self) -> Iterator[tuple["Output", Optional[str]]]:
+    def _filtered_outs(self) -> Iterator[tuple["Output", str | None]]:
         for stage, filter_info in self._stage_infos:
             for out in stage.filter_outs(filter_info):
                 if not self._outs_filter or self._outs_filter(out):
@@ -778,9 +752,7 @@ class IndexView:
 
     @cached_property
     def _data_prefixes(self) -> dict[str, "_DataPrefixes"]:
-        prefixes: dict[str, _DataPrefixes] = defaultdict(
-            lambda: _DataPrefixes(set(), set())
-        )
+        prefixes: dict[str, _DataPrefixes] = defaultdict(lambda: _DataPrefixes(set(), set()))
         for out, filter_info in self._filtered_outs:
             if not out.use_cache:
                 continue
@@ -825,7 +797,7 @@ class IndexView:
             except KeyError:
                 return False
 
-        data: dict[str, Union[DataIndex, DataIndexView]] = {}
+        data: dict[str, DataIndex | DataIndexView] = {}
         for workspace, data_index in self._index.data.items():
             if self.stages:
                 data[workspace] = view(data_index, partial(key_filter, workspace))
@@ -839,7 +811,7 @@ def build_data_index(
     path: str,
     fs: "FileSystem",
     workspace: str = "repo",
-    compute_hash: Optional[bool] = False,
+    compute_hash: bool | None = False,
     callback: "Callback" = DEFAULT_CALLBACK,
 ) -> "DataIndex":
     from dvc_data.index import DataIndex, DataIndexEntry, Meta
@@ -946,10 +918,10 @@ def _get_entry_hash_name(
 def index_from_targets(
     repo: "Repo",
     targets: Optional["TargetType"] = None,
-    stage_filter: Optional[Callable[["Stage"], bool]] = None,
-    outs_filter: Optional[Callable[["Output"], bool]] = None,
-    max_size: Optional[int] = None,
-    types: Optional[list[str]] = None,
+    stage_filter: Callable[["Stage"], bool] | None = None,
+    outs_filter: Callable[["Output"], bool] | None = None,
+    max_size: int | None = None,
+    types: list[str] | None = None,
     with_deps: bool = False,
     recursive: bool = False,
     **kwargs: Any,
@@ -957,7 +929,7 @@ def index_from_targets(
     from dvc.stage.exceptions import StageFileDoesNotExistError, StageNotFound
     from dvc.utils import parse_target
 
-    index: Optional[Index] = None
+    index: Index | None = None
     if targets and all(targets) and not with_deps and not recursive:
         indexes: list[Index] = []
         try:

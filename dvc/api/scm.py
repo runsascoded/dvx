@@ -1,9 +1,7 @@
-from typing import Optional
-
 from dvc.repo import Repo
 
 
-def all_branches(repo: Optional[str] = None) -> list[str]:
+def all_branches(repo: str | None = None) -> list[str]:
     """Get all Git branches in a DVC repository.
 
     Args:
@@ -20,7 +18,7 @@ def all_branches(repo: Optional[str] = None) -> list[str]:
         return _repo.scm.list_branches()
 
 
-def all_commits(repo: Optional[str] = None) -> list[str]:
+def all_commits(repo: str | None = None) -> list[str]:
     """Get all Git commits in a DVC repository.
 
     Args:
@@ -37,7 +35,7 @@ def all_commits(repo: Optional[str] = None) -> list[str]:
         return _repo.scm.list_all_commits()
 
 
-def all_tags(repo: Optional[str] = None) -> list[str]:
+def all_tags(repo: str | None = None) -> list[str]:
     """Get all Git tags in a DVC repository.
 
     Args:

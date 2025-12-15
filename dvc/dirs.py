@@ -1,27 +1,22 @@
 import os
-from typing import Optional
 
 import platformdirs
 
 from . import env
 
-APPNAME = "dvc"
-APPAUTHOR = "iterative"
+APPNAME = "dvc"  # Keep for compatibility with .dvc/ directories
+APPAUTHOR = "dvc"
 
 
 def system_config_dir():
-    return os.getenv(env.DVC_SYSTEM_CONFIG_DIR) or platformdirs.site_config_dir(
-        APPNAME, APPAUTHOR
-    )
+    return os.getenv(env.DVC_SYSTEM_CONFIG_DIR) or platformdirs.site_config_dir(APPNAME, APPAUTHOR)
 
 
 def global_config_dir():
-    return os.getenv(env.DVC_GLOBAL_CONFIG_DIR) or platformdirs.user_config_dir(
-        APPNAME, APPAUTHOR
-    )
+    return os.getenv(env.DVC_GLOBAL_CONFIG_DIR) or platformdirs.user_config_dir(APPNAME, APPAUTHOR)
 
 
-def site_cache_dir(config_site_cache_dir: Optional[str] = None):
+def site_cache_dir(config_site_cache_dir: str | None = None):
     from platformdirs import PlatformDirs
     from platformdirs.unix import Unix
 

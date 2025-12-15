@@ -129,9 +129,7 @@ class CmdDiff(CmdBase):
                 entries = sorted(
                     entries,
                     key=lambda entry: (
-                        entry["path"]["old"]
-                        if isinstance(entry["path"], dict)
-                        else entry["path"]
+                        entry["path"]["old"] if isinstance(entry["path"], dict) else entry["path"]
                     ),
                 )
                 if not show_hash:

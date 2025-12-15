@@ -110,25 +110,19 @@ def shared_parent_parser():
     from dvc.cli.parser import get_parent_parser
 
     # Parent parser used in pull/push/status
-    parent_parser = argparse.ArgumentParser(
-        add_help=False, parents=[get_parent_parser()]
-    )
+    parent_parser = argparse.ArgumentParser(add_help=False, parents=[get_parent_parser()])
     parent_parser.add_argument(
         "-j",
         "--jobs",
         type=int,
-        help=(
-            "Number of jobs to run simultaneously. "
-            "The default value is 4 * cpu_count(). "
-        ),
+        help=("Number of jobs to run simultaneously. The default value is 4 * cpu_count(). "),
         metavar="<number>",
     )
     parent_parser.add_argument(
         "targets",
         nargs="*",
         help=(
-            "Limit command scope to these tracked files/directories, "
-            ".dvc files and stage names."
+            "Limit command scope to these tracked files/directories, .dvc files and stage names."
         ),
     ).complete = completion.DVC_FILE  # type: ignore[attr-defined]
 
@@ -136,8 +130,6 @@ def shared_parent_parser():
 
 
 def add_parser(subparsers, _parent_parser):
-    from dvc.commands.status import CmdDataStatus
-
     # Pull
     PULL_HELP = "Download tracked files or directories from remote storage."
 
@@ -339,102 +331,36 @@ def add_parser(subparsers, _parent_parser):
         dest="types",
         action="append",
         default=[],
-        help=(
-            "Only fetch data files/directories that are of a particular "
-            "type (metrics, plots)."
-        ),
+        help=("Only fetch data files/directories that are of a particular type (metrics, plots)."),
         choices=["metrics", "plots"],
     )
     fetch_parser.set_defaults(func=CmdDataFetch)
 
-    # Status
-    STATUS_HELP = "Show changed stages, compare local cache and a remote storage."
+    # Status - DVX freshness-based status
+    from dvc.commands.status import CmdStatus
+
+    STATUS_HELP = "Check freshness status of artifacts."
 
     status_parser = subparsers.add_parser(
         "status",
         parents=[shared_parent_parser()],
-        description=append_doc_link(STATUS_HELP, "status"),
+        description=STATUS_HELP,
         help=STATUS_HELP,
         conflict_handler="resolve",
         formatter_class=formatter.RawDescriptionHelpFormatter,
-    )
-    status_parser.add_argument(
-        "-q",
-        "--quiet",
-        action="store_true",
-        default=False,
-        help=(
-            "Suppresses all output."
-            " Exit with 0 if pipelines are up to date, otherwise 1."
-        ),
-    )
-    status_parser.add_argument(
-        "-c",
-        "--cloud",
-        action="store_true",
-        default=False,
-        help="Show status of a local cache compared to a remote repository.",
-    )
-    status_parser.add_argument(
-        "-r",
-        "--remote",
-        help="Remote storage to compare local cache to",
-        metavar="<name>",
-    ).complete = completion.REMOTE
-    status_parser.add_argument(
-        "-a",
-        "--all-branches",
-        action="store_true",
-        default=False,
-        help=(
-            "Show status of a local cache compared to a remote repository "
-            "for all branches."
-        ),
-    )
-    status_parser.add_argument(
-        "-T",
-        "--all-tags",
-        action="store_true",
-        default=False,
-        help=(
-            "Show status of a local cache compared to a remote repository for all tags."
-        ),
-    )
-    status_parser.add_argument(
-        "-A",
-        "--all-commits",
-        action="store_true",
-        default=False,
-        help=(
-            "Show status of a local cache compared to a remote repository "
-            "for all commits."
-        ),
     )
     status_parser.add_argument(
         "-d",
         "--with-deps",
         action="store_true",
         default=False,
-        help="Show status for all dependencies of the specified target.",
-    )
-    status_parser.add_argument(
-        "-R",
-        "--recursive",
-        action="store_true",
-        default=False,
-        help="Show status of all stages in the specified directory.",
+        help="Check upstream dependencies as well.",
     )
     status_parser.add_argument(
         "--json",
         action="store_true",
         default=False,
-        help="Show status in JSON format.",
-    )
-    status_parser.add_argument(
-        "--no-updates",
-        dest="check_updates",
-        action="store_false",
-        help="Ignore updates to imported data.",
+        help="Output results as JSON.",
     )
 
-    status_parser.set_defaults(func=CmdDataStatus)
+    status_parser.set_defaults(func=CmdStatus)

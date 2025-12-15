@@ -14,9 +14,7 @@ def imp(
         erepo["rev"] = rev
 
     if remote and remote_config and isinstance(config, str):
-        raise ValueError(
-            "Can't specify config path together with both remote and remote_config"
-        )
+        raise ValueError("Can't specify config path together with both remote and remote_config")
 
     if config is not None:
         erepo["config"] = config

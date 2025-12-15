@@ -1,5 +1,5 @@
 from collections.abc import Iterable, Mapping
-from typing import Union, no_type_check
+from typing import no_type_check
 
 
 @no_type_check
@@ -16,9 +16,7 @@ def apply_diff(src, dest):
     Container = (Mapping, list, tuple)  # noqa: N806
 
     def is_same_type(a, b):
-        return any(
-            isinstance(a, t) and isinstance(b, t) for t in [str, Mapping, Seq, bool]
-        )
+        return any(isinstance(a, t) and isinstance(b, t) for t in [str, Mapping, Seq, bool])
 
     if isinstance(src, Mapping) and isinstance(dest, Mapping):
         for key, value in src.items():
@@ -90,7 +88,7 @@ def merge_dicts(src: dict, to_update: dict) -> dict:
     return src
 
 
-def ensure_list(item: Union[Iterable[str], str, None]) -> list[str]:
+def ensure_list(item: Iterable[str] | str | None) -> list[str]:
     if item is None:
         return []
     if isinstance(item, str):

@@ -1,7 +1,7 @@
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, NamedTuple, Optional, Union
+from typing import TYPE_CHECKING, NamedTuple, Union
 
 from dvc.exceptions import (
     CacheLinkError,
@@ -46,7 +46,7 @@ PIPELINE_TRACKED_UPDATE_FMT = (
 def get_or_create_stage(
     repo: "Repo",
     target: str,
-    out: Optional[str] = None,
+    out: str | None = None,
     to_remote: bool = False,
     force: bool = False,
 ) -> StageInfo:
@@ -58,9 +58,7 @@ def get_or_create_stage(
         (out_obj,) = repo.find_outs_by_path(target, strict=False)
         stage = out_obj.stage
         if not stage.is_data_source:
-            msg = PIPELINE_TRACKED_UPDATE_FMT.format(
-                out=out, stage=stage, path=stage.relpath
-            )
+            msg = PIPELINE_TRACKED_UPDATE_FMT.format(out=out, stage=stage, path=stage.relpath)
             raise DvcException(msg)
         return StageInfo(stage, output_exists=True)
     except OutputNotFoundError:
@@ -119,9 +117,7 @@ def translate_graph_error(stages: list["Stage"]) -> Iterator[None]:
 def progress_iter(stages: dict[str, StageInfo]) -> Iterator[tuple[str, StageInfo]]:
     total = len(stages)
     desc = "Adding..."
-    with ui.progress(
-        stages.items(), total=total, desc=desc, unit="file", leave=True
-    ) as pbar:
+    with ui.progress(stages.items(), total=total, desc=desc, unit="file", leave=True) as pbar:
         if total == 1:
             pbar.bar_format = desc
             pbar.refresh()
@@ -159,9 +155,9 @@ def warn_link_failures() -> Iterator[list[str]]:
 def _add_transfer(
     stage: "Stage",
     source: str,
-    remote: Optional[str] = None,
+    remote: str | None = None,
     to_remote: bool = False,
-    jobs: Optional[int] = None,
+    jobs: int | None = None,
     force: bool = False,
 ) -> None:
     odb = None
@@ -173,7 +169,7 @@ def _add_transfer(
 
 def _add(
     stage: "Stage",
-    source: Optional[str] = None,
+    source: str | None = None,
     no_commit: bool = False,
     relink: bool = True,
 ) -> None:
@@ -194,10 +190,10 @@ def add(
     targets: Union["StrOrBytesPath", Iterator["StrOrBytesPath"]],
     no_commit: bool = False,
     glob: bool = False,
-    out: Optional[str] = None,
-    remote: Optional[str] = None,
+    out: str | None = None,
+    remote: str | None = None,
     to_remote: bool = False,
-    remote_jobs: Optional[int] = None,
+    remote_jobs: int | None = None,
     force: bool = False,
     relink: bool = True,
 ) -> list["Stage"]:

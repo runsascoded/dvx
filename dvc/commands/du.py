@@ -52,8 +52,7 @@ def add_parser(subparsers, parent_parser):
         "--config",
         type=str,
         help=(
-            "Path to a config file that will be merged with the config "
-            "in the target repository."
+            "Path to a config file that will be merged with the config in the target repository."
         ),
     )
     du_parser.add_argument(

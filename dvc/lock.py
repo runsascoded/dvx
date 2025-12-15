@@ -5,7 +5,6 @@ import os
 import time
 from abc import ABC, abstractmethod
 from datetime import timedelta
-from typing import Optional, Union
 
 import flufl.lock
 import zc.lockfile
@@ -118,8 +117,7 @@ class Lock(LockBase):
         with Tqdm(
             bar_format="{desc}",
             disable=not self._friendly,
-            desc="Waiting to acquire lock. "
-            "If DVC froze, see `hardlink_lock` in {}.".format(
+            desc="Waiting to acquire lock. If DVC froze, see `hardlink_lock` in {}.".format(
                 format_link("https://man.dvc.org/config#core")
             ),
         ) as pbar:
@@ -193,7 +191,7 @@ class HardlinkLock(flufl.lock.Lock, LockBase):
         self._retry_errnos = []
         self._friendly = kwargs.get("friendly", False)
 
-    def lock(self, timeout: Optional[Union[timedelta, int]] = None):
+    def lock(self, timeout: timedelta | int | None = None):
         try:
             if not self._wait:
                 timeout = timeout or timedelta(seconds=DEFAULT_TIMEOUT)

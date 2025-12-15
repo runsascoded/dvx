@@ -36,9 +36,7 @@ def add_parser(subparsers, parent_parser):
         help=GET_HELP,
         formatter_class=formatter.RawDescriptionHelpFormatter,
     )
-    get_parser.add_argument(
-        "url", help="See `dvc import-url -h` for full list of supported URLs."
-    )
+    get_parser.add_argument("url", help="See `dvc import-url -h` for full list of supported URLs.")
     get_parser.add_argument(
         "out", nargs="?", help="Destination path to put data to."
     ).complete = completion.DIR
@@ -46,10 +44,7 @@ def add_parser(subparsers, parent_parser):
         "-j",
         "--jobs",
         type=int,
-        help=(
-            "Number of jobs to run simultaneously. "
-            "The default value is 4 * cpu_count(). "
-        ),
+        help=("Number of jobs to run simultaneously. The default value is 4 * cpu_count(). "),
         metavar="<number>",
     )
     get_parser.add_argument(

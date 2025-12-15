@@ -1,7 +1,6 @@
 import errno
 import os
 from collections import defaultdict
-from typing import Optional
 
 from dvc.log import logger
 from dvc.repo import locked
@@ -60,9 +59,7 @@ def _diff(old, new, data_keys, with_missing=False):
         if change.typ == ADD:
             ret["added"].append({"path": _path(change.new), "hash": _hash(change.new)})
         elif change.typ == DELETE:
-            ret["deleted"].append(
-                {"path": _path(change.old), "hash": _hash(change.old)}
-            )
+            ret["deleted"].append({"path": _path(change.old), "hash": _hash(change.old)})
         elif change.typ == MODIFY:
             ret["modified"].append(
                 {
@@ -84,9 +81,7 @@ def _diff(old, new, data_keys, with_missing=False):
             and change.old.hash_info
             and not old.storage_map.cache_exists(change.old)
         ):
-            ret["not in cache"].append(
-                {"path": _path(change.old), "hash": _hash(change.old)}
-            )
+            ret["not in cache"].append({"path": _path(change.old), "hash": _hash(change.old)})
 
     return ret if any(ret.values()) else {}
 
@@ -95,8 +90,8 @@ def _diff(old, new, data_keys, with_missing=False):
 def diff(
     self,
     a_rev: str = "HEAD",
-    b_rev: Optional[str] = None,
-    targets: Optional[list[str]] = None,
+    b_rev: str | None = None,
+    targets: list[str] | None = None,
     recursive: bool = False,
 ):
     """

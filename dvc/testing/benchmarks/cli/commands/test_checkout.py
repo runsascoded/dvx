@@ -2,17 +2,15 @@ import os
 
 import pytest
 
-from dvc.fs import localfs
 from dvc_objects.fs import generic
 from dvc_objects.fs.utils import tmp_fname
+from dvc.fs import localfs
 
 
 def _skip_unsupported_link(src, dest, link_type):
     src_test_file = os.path.join(src, tmp_fname())
     dest_test_file = os.path.join(dest, tmp_fname())
-    if not generic.test_links(
-        [link_type], localfs, src_test_file, localfs, dest_test_file
-    ):
+    if not generic.test_links([link_type], localfs, src_test_file, localfs, dest_test_file):
         pytest.skip(f"{link_type} not supported")
 
 

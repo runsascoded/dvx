@@ -33,9 +33,7 @@ def init(root_dir=os.curdir, no_scm=False, force=False, subdir=False):
     """
 
     if no_scm and subdir:
-        raise InvalidArgumentError(
-            "Cannot initialize repo with `--no-scm` and `--subdir`"
-        )
+        raise InvalidArgumentError("Cannot initialize repo with `--no-scm` and `--subdir`")
 
     root_dir = os.path.abspath(root_dir)
     dvc_dir = os.path.join(root_dir, Repo.DVC_DIR)

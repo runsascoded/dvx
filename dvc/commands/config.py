@@ -20,8 +20,7 @@ def _name_type(value):
     match = re.match(NAME_REGEX, value)
     if not match:
         raise argparse.ArgumentTypeError(
-            "name argument should look like remote.name.option or "
-            "db.name.option or section.option"
+            "name argument should look like remote.name.option or db.name.option or section.option"
         )
     top = match.group("top")
     return (
@@ -42,8 +41,7 @@ class CmdConfig(CmdBaseNoRepo):
     def run(self):
         if self.args.show_origin and (self.args.value or self.args.unset):
             logger.error(
-                "--show-origin can't be used together with any of these "
-                "options: -u/--unset, value"
+                "--show-origin can't be used together with any of these options: -u/--unset, value"
             )
             return 1
 
@@ -95,9 +93,7 @@ class CmdConfig(CmdBaseNoRepo):
                 if self.args.level:
                     raise
             else:
-                prefix = self._config_file_prefix(
-                    self.args.show_origin, self.config, level
-                )
+                prefix = self._config_file_prefix(self.args.show_origin, self.config, level)
                 ui.write(prefix, conf[section][opt], sep="")
                 break
 

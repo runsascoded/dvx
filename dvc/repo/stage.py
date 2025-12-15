@@ -29,7 +29,7 @@ PROJECT_FILE = "dvc.yaml"
 
 class StageInfo(NamedTuple):
     stage: "Stage"
-    filter_info: Optional[str] = None
+    filter_info: str | None = None
 
 
 StageList = list["Stage"]
@@ -73,7 +73,7 @@ def _collect_specific_target(
     target: str,
     with_deps: bool,
     recursive: bool,
-) -> tuple[StageIter, Optional[str], Optional[str]]:
+) -> tuple[StageIter, str | None, str | None]:
     from dvc.dvcfile import is_valid_filename
 
     # Optimization: do not collect the graph for a specific target
@@ -118,7 +118,7 @@ class StageLoad:
     def add(
         self,
         single_stage: bool = False,
-        fname: Optional[str] = None,
+        fname: str | None = None,
         validate: bool = True,
         force: bool = False,
         update_lock: bool = False,
@@ -147,7 +147,7 @@ class StageLoad:
         self,
         single_stage: bool = False,
         validate: bool = True,
-        fname: Optional[str] = None,
+        fname: str | None = None,
         force: bool = False,
         **stage_data,
     ) -> Union["Stage", "PipelineStage"]:
@@ -168,9 +168,7 @@ class StageLoad:
         from dvc.stage.exceptions import InvalidStageName
         from dvc.stage.utils import is_valid_name, prepare_file_path, validate_kwargs
 
-        stage_data = validate_kwargs(
-            single_stage=single_stage, fname=fname, **stage_data
-        )
+        stage_data = validate_kwargs(single_stage=single_stage, fname=fname, **stage_data)
         if single_stage:
             stage_cls = Stage
             path = fname or prepare_file_path(stage_data)
@@ -198,9 +196,7 @@ class StageLoad:
         restore_fields(stage)
         return stage
 
-    def from_target(
-        self, target: str, accept_group: bool = True, glob: bool = False
-    ) -> StageList:
+    def from_target(self, target: str, accept_group: bool = True, glob: bool = False) -> StageList:
         """
         Returns a list of stage from the provided target.
         (see load method below for further details)
@@ -216,9 +212,7 @@ class StageLoad:
         path, name = parse_target(target)
         return self.load_one(path=path, name=name)
 
-    def _get_filepath(
-        self, path: Optional[str] = None, name: Optional[str] = None
-    ) -> str:
+    def _get_filepath(self, path: str | None = None, name: str | None = None) -> str:
         if path:
             return self.repo.fs.abspath(path)
 
@@ -238,7 +232,7 @@ class StageLoad:
     def _get_keys(
         self,
         stages: "StageLoader",
-        name: Optional[str] = None,
+        name: str | None = None,
         accept_group: bool = True,
         glob: bool = False,
     ) -> Iterable[str]:
@@ -252,8 +246,8 @@ class StageLoad:
 
     def load_all(
         self,
-        path: Optional[str] = None,
-        name: Optional[str] = None,
+        path: str | None = None,
+        name: str | None = None,
         accept_group: bool = True,
         glob: bool = False,
     ) -> StageList:
@@ -283,9 +277,7 @@ class StageLoad:
         keys = self._get_keys(stages, name, accept_group, glob)
         return [stages[key] for key in keys]
 
-    def load_one(
-        self, path: Optional[str] = None, name: Optional[str] = None
-    ) -> "Stage":
+    def load_one(self, path: str | None = None, name: str | None = None) -> "Stage":
         """Load a single stage from a file.
 
         Args:
@@ -300,17 +292,17 @@ class StageLoad:
 
         return stages[name]
 
-    def load_file(self, path: Optional[str] = None) -> StageList:
+    def load_file(self, path: str | None = None) -> StageList:
         """Load all of the stages from a file."""
         return self.load_all(path)
 
-    def load_glob(self, path: str, expr: Optional[str] = None):
+    def load_glob(self, path: str, expr: str | None = None):
         """Load stages from `path`, filtered with `expr` provided."""
         return self.load_all(path, expr, glob=True)
 
     def collect(
         self,
-        target: Optional[str] = None,
+        target: str | None = None,
         with_deps: bool = False,
         recursive: bool = False,
         graph: Optional["DiGraph"] = None,
@@ -360,7 +352,7 @@ class StageLoad:
 
     def collect_granular(
         self,
-        target: Optional[str] = None,
+        target: str | None = None,
         with_deps: bool = False,
         recursive: bool = False,
         graph: Optional["DiGraph"] = None,

@@ -3,28 +3,23 @@ build-backend = "setuptools.build_meta"
 requires = ["setuptools>=77", "setuptools_scm[toml]>=8"]
 
 [project]
-name = "dvc"
-description = "Git for data scientists - manage your code and data together"
+name = "dvx"
+description = "Minimal data version control - content-addressable storage for data files"
 readme = "README.rst"
 keywords = [
-    "ai",
-    "collaboration",
     "data-science",
     "data-version-control",
-    "developer-tools",
     "git",
-    "machine-learning",
     "reproducibility",
 ]
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-maintainers = [{ name = "Treeverse", email = "support@dvc.org" }]
 authors = [{ name = "Dmitry Petrov", email = "dmitry@dvc.org" }]
-requires-python = ">=3.9"
+maintainers = [{ name = "Ryan Williams" }]
+requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -35,7 +30,6 @@ dynamic = ["version"]
 
 dependencies = [
     "attrs>=22.2.0",
-    "celery",
     "colorama>=0.3.9",
     "configobj>=5.0.9",
     "distro>=1.3",
@@ -44,25 +38,15 @@ dependencies = [
     "dvc-data>=3.16.2,<3.17",
     "dvc-http>=2.29.0",
     "dvc-objects",
-    "dvc-render>=1.0.1,<2",
-    "dvc-studio-client>=0.21,<1",
-    "dvc-task>=0.3.0,<1",
     "flatten_dict<1,>=0.4.1",
     "flufl.lock>=8.1.0,<9",
     "fsspec>=2024.2.0",
     "funcy>=1.14",
-    "grandalf<1,>=0.7",
-    "gto>=1.6.0,<2",
-    "hydra-core>=1.1",
-    "iterative-telemetry>=0.0.7",
-    "kombu",
     "networkx>=2.5",
-    "omegaconf",
     "packaging>=19",
     "pathspec>=0.10.3",
     "platformdirs<5,>=3.1.1",
     "psutil>=5.8",
-    "pydot>=1.2.4",
     "pygtrie>=2.3.2",
     "pyparsing>=2.4.7",
     "requests>=2.22",
@@ -79,12 +63,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-all = ["dvc[azure,gdrive,gs,hdfs,oss,s3,ssh,webdav,webhdfs]"]
+all = ["dvx[azure,gdrive,gs,hdfs,oss,s3,ssh,webdav,webhdfs]"]
 azure = ["dvc-azure>=3.1.0,<4"]
-dev = ["dvc[azure,gdrive,gs,hdfs,lint,oss,s3,ssh,tests,webdav,webhdfs]"]
 gdrive = ["dvc-gdrive>=3,<4"]
 gs = ["dvc-gs>=3.0.2,<4"]
 hdfs = ["dvc-hdfs>=3,<4"]
+oss = ["dvc-oss>=3,<4"]
+s3 = ["dvc-s3>=3.2.1,<4"]
+ssh = ["dvc-ssh>=4,<5"]
+ssh_gssapi = ["dvc-ssh[gssapi]>=4,<5"]
+webdav = ["dvc-webdav>=3.0.1,<4"]
+webhdfs = ["dvc-webhdfs>=3.1,<4"]
+webhdfs_kerberos = ["dvc-webhdfs[kerberos]>=3.1,<4"]
 lint = [
     "mypy==1.19.0",
     "pandas-stubs",
@@ -98,55 +88,48 @@ lint = [
     "types-tqdm",
     "typing-extensions",
 ]
-oss = ["dvc-oss>=3,<4"]
-s3 = ["dvc-s3>=3.2.1,<4"]
-ssh = ["dvc-ssh>=4,<5"]
-ssh_gssapi = ["dvc-ssh[gssapi]>=4,<5"]
 testing = [
-  "pytest-benchmark[histogram]>=5,<6",
-  "pytest-test-utils",
-  "uv",
+    "pytest-benchmark[histogram]>=5,<6",
+    "pytest-test-utils",
+    "uv",
 ]
 tests = [
-    "dvc[testing]",
+    "dvx[testing]",
     "beautifulsoup4>=4.4",
-    "dvc-ssh",
     "filelock",
     "pytest>=7,<9",
-    "pytest-rerunfailures<17.0",
     "pytest-cov>=4.1.0",
     "pytest-docker>=1,<4",
     "pytest-mock",
+    "pytest-rerunfailures<17.0",
     "pytest-test-utils",
     "pytest-timeout>=2",
     "pytest-xdist>=3.2",
-    'pywin32>=225; sys_platform == "win32"', # optional test dependency
-    'tzdata; sys_platform == "win32"',  # for testing with celery
-    "sqlalchemy>=1,<3", # optional dependency for `import-db`
-    "pandas>=1", # optional dependency for `import-db`
+    'pywin32>=225; sys_platform == "win32"',
+    'tzdata; sys_platform == "win32"',
+    "sqlalchemy>=1,<3",
+    "pandas>=1",
 ]
-webdav = ["dvc-webdav>=3.0.1,<4"]
-webhdfs = ["dvc-webhdfs>=3.1,<4"]
-webhdfs_kerberos = ["dvc-webhdfs[kerberos]>=3.1,<4"]
+dev = ["dvx[all,lint,tests]"]
 
 [project.urls]
 Documentation = "https://dvc.org/doc"
-Issues = "https://github.com/treeverse/dvc/issues"
-Source = "https://github.com/treeverse/dvc"
+Issues = "https://github.com/runsascoded/dvx/issues"
+Source = "https://github.com/runsascoded/dvx"
 
 [project.scripts]
-dvc = "dvc.cli:main"
+dvx = "dvc.cli:main"
 
 [project.entry-points."fsspec.specs"]
-dvc = "dvc.api:DVCFileSystem"
+dvx = "dvc.api:DVCFileSystem"
 
 [project.entry-points."universal_pathlib.implementations"]
-dvc = "dvc.fs.dvc_path:DVCPath"
+dvx = "dvc.fs.dvc_path:DVCPath"
 # universal_pathlib does not support fsspec url chaining yet.
 # see https://github.com/fsspec/universal_pathlib/issues/28.
-"dvc+http" = "dvc.fs.dvc_path:DVCPath"
-"dvc+https" = "dvc.fs.dvc_path:DVCPath"
-"dvc+ssh" = "dvc.fs.dvc_path:DVCPath"
+"dvx+http" = "dvc.fs.dvc_path:DVCPath"
+"dvx+https" = "dvc.fs.dvc_path:DVCPath"
+"dvx+ssh" = "dvc.fs.dvc_path:DVCPath"
 
 [project.entry-points."pyinstaller40"]
 hook-dirs = "dvc.__pyinstaller:get_hook_dirs"
@@ -158,6 +141,8 @@ namespaces = false
 
 [tool.setuptools_scm]
 write_to = "dvc/_version.py"
+# Only match simple version tags (0.1.0), not dvc/X.Y.Z prefixed tags from upstream
+git_describe_command = ["git", "describe", "--tags", "--match", "[0-9]*"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --cov-config pyproject.toml"
@@ -224,22 +209,15 @@ warn_unused_configs = true
 ignore_missing_imports = true
 module = [
     "agate.*",
-    "celery.*",
     "configobj.*",
     "dpath.*",
     "distro",
     "dvc_http",
-    "dvc_render.*",
-    "dvc_ssh",
-    "dvc_studio_client.*",
     "flatten_dict",
     "fsspec.*",
-    "funcy.*",  # https://github.com/Suor/funcy/issues/106,
-    "grandalf.*",
+    "funcy.*",
     "ipdb",
-    "iterative_telemetry",
-    "kombu.*",
-    "networkx.*",  # https://github.com/networkx/networkx/issues/3988
+    "networkx.*",
     "pygtrie.*",
     "pyinstrument",
     "pyparsing",
@@ -269,27 +247,27 @@ exclude = ["dvc/_version.py"]
 
 [tool.ruff.lint]
 ignore = [
-    "BLE001", # blind-except (too noisy for this codebase)
-    "C901", # complex-structure (many legacy functions)
-    "E501", # line-too-long (handled by formatter)
-    "PERF203", # try-except-in-loop
-    "PERF402", # manual-list-copy
-    "PGH003", # blanket-type-ignore
-    "PLC0415", # import-outside-top-level
-    "PLR0911", # too-many-return-statements
-    "PLR0912", # too-many-branches
-    "PLR0913", # too-many-arguments
-    "PLR2004", # magic-value-comparison
-    "PLW0603", # global-statement
-    "PLW2901", # redefined-loop-name
-    "S101", # assert
-    "SIM102", # collapsible-if
-    "SIM105", # suppressible-exception
-    "SIM108", # if-else-block-instead-of-if-exp
-    "SIM117", # multiple-with-statements
-    "TRY003", # raise-vanilla-args
-    "TRY300", # try-consider-else
-    "TRY401", # verbose-log-message
+    "BLE001",
+    "C901",
+    "E501",
+    "PERF203",
+    "PERF402",
+    "PGH003",
+    "PLC0415",
+    "PLR0911",
+    "PLR0912",
+    "PLR0913",
+    "PLR2004",
+    "PLW0603",
+    "PLW2901",
+    "S101",
+    "SIM102",
+    "SIM105",
+    "SIM108",
+    "SIM117",
+    "TRY003",
+    "TRY300",
+    "TRY401",
 ]
 select = [
     "F", "E", "W", "C90", "I", "N", "UP", "YTT", "ASYNC", "S", "BLE", "B", "A", "C4", "DTZ", "T10",

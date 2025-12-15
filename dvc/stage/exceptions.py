@@ -97,8 +97,7 @@ class StageNotFound(DvcException, KeyError):  # noqa: N818
 class StageNameUnspecified(DvcException):
     def __init__(self, file):
         super().__init__(
-            "Stage name not provided."
-            f"Please specify the name as: `{file.relpath}:stage_name`"
+            f"Stage name not provided.Please specify the name as: `{file.relpath}:stage_name`"
         )
 
 

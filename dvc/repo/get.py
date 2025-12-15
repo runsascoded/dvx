@@ -1,5 +1,5 @@
 import os
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 from dvc.exceptions import DvcException
 from dvc.log import logger
@@ -54,7 +54,7 @@ def get(
         from dvc.fs import download
         from dvc.fs.data import DataFileSystem
 
-        fs: Union[DataFileSystem, DVCFileSystem]
+        fs: DataFileSystem | DVCFileSystem
         if os.path.isabs(path):
             fs = DataFileSystem(index=repo.index.data["local"])
             fs_path = fs.from_os_path(path)

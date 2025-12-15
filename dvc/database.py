@@ -1,9 +1,9 @@
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from tempfile import NamedTemporaryFile
-from typing import TYPE_CHECKING, Any, Callable, Optional, Union
+from typing import TYPE_CHECKING, Any, Union
 
 from sqlalchemy import create_engine  # type: ignore[import]
 from sqlalchemy.engine import make_url as _make_url  # type: ignore[import]
@@ -47,8 +47,8 @@ def atomic_file(file: StrOrBytesPath, mode: str = "w+b"):
 
 @dataclass
 class Serializer:
-    sql: "Union[str, Selectable]"
-    con: "Union[str, Connectable]"
+    sql: "str | Selectable"
+    con: "str | Connectable"
     chunksize: int = 10_000
 
     def to_csv(self, file: StrOrBytesPath, progress=noop):
@@ -77,7 +77,7 @@ class Serializer:
 class Client:
     engine: "Engine"
 
-    def test_connection(self, onerror: Optional[Callable[[], Any]] = None) -> None:
+    def test_connection(self, onerror: Callable[[], Any] | None = None) -> None:
         try:
             with self.engine.connect() as conn:
                 conn.exec_driver_sql("select 1")
@@ -85,15 +85,14 @@ class Client:
             if callable(onerror):
                 onerror()
             logger.exception(  # noqa: LOG007
-                "Could not connect to the database. "
-                "Check your database credentials and try again.",
+                "Could not connect to the database. Check your database credentials and try again.",
                 exc_info=False,
             )
             raise DvcException("The database returned the following error") from exc
 
     def export(
         self,
-        sql: "Union[str, Selectable]",
+        sql: "str | Selectable",
         file: StrOrBytesPath,
         format: str = "csv",  # noqa: A002
         progress=noop,

@@ -1,7 +1,7 @@
 """Exceptions raised by the dvc."""
 
 import errno
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from dvc.utils import format_link
 
@@ -71,9 +71,7 @@ class OutputNotFoundError(DvcException):
 
         self.output = output
         self.repo = repo
-        super().__init__(
-            f"Unable to find DVC file with output {relpath(self.output)!r}"
-        )
+        super().__init__(f"Unable to find DVC file with output {relpath(self.output)!r}")
 
 
 class StageNotFoundError(DvcException):
@@ -149,8 +147,7 @@ class CyclicGraphError(DvcException):
         assert isinstance(stages, list)
         stage_part = "stage" if len(stages) == 1 else "stages"
         msg = (
-            "Same item(s) are defined as both a dependency and an output "
-            "in {stage_part}: {stage}."
+            "Same item(s) are defined as both a dependency and an output in {stage_part}: {stage}."
         )
         super().__init__(
             msg.format(
@@ -162,9 +159,7 @@ class CyclicGraphError(DvcException):
 
 class ConfirmRemoveError(DvcException):
     def __init__(self, path):
-        super().__init__(
-            f"unable to remove {path!r} without a confirmation. Use `-f` to force."
-        )
+        super().__init__(f"unable to remove {path!r} without a confirmation. Use `-f` to force.")
 
 
 class InitError(DvcException):
@@ -248,11 +243,8 @@ class CheckoutError(DvcException):
         self.target_infos = target_infos
         self.result = result
         targets = [str(t) for t in target_infos]
-        m = (
-            "Checkout failed for following targets:\n{}\nIs your "
-            "cache up to date?\n{}".format(
-                "\n".join(targets), error_link("missing-files")
-            )
+        m = "Checkout failed for following targets:\n{}\nIs your cache up to date?\n{}".format(
+            "\n".join(targets), error_link("missing-files")
         )
         super().__init__(m)
 
@@ -311,9 +303,7 @@ class NoOutputOrStageError(DvcException):
     """
 
     def __init__(self, target, file):
-        super().__init__(
-            f"'{target}' does not exist as an output or a stage name in '{file}'"
-        )
+        super().__init__(f"'{target}' does not exist as an output or a stage name in '{file}'")
 
 
 class MergeError(DvcException):
@@ -348,8 +338,8 @@ class ArtifactNotFoundError(DvcException):
     def __init__(
         self,
         name: str,
-        version: Optional[str] = None,
-        stage: Optional[str] = None,
+        version: str | None = None,
+        stage: str | None = None,
     ):
         self.name = name
         self.version = version

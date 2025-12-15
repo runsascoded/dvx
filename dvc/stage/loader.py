@@ -1,15 +1,15 @@
 from collections.abc import Mapping
 from copy import deepcopy
 from itertools import chain
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from funcy import get_in, lcat, once, project
 
+from dvc_data.hashfile.meta import Meta
 from dvc import dependency, output
 from dvc.log import logger
 from dvc.parsing import FOREACH_KWD, JOIN, MATRIX_KWD, EntryNotFound
 from dvc.utils.objects import cached_property
-from dvc_data.hashfile.meta import Meta
 
 from . import PipelineStage, Stage, loads_from
 from .exceptions import StageNameUnspecified, StageNotFound
@@ -74,9 +74,7 @@ class StageLoader(Mapping):
 
             hash_name = info.pop(Output.PARAM_HASH, None)
             item.meta = Meta.from_dict(merge_file_meta_from_cloud(info))
-            item.hash_name, item.hash_info = item._compute_hash_info_from_meta(
-                hash_name
-            )
+            item.hash_name, item.hash_info = item._compute_hash_info_from_meta(hash_name)
             files = get_in(checksums, [key, path, item.PARAM_FILES], None)
             if files:
                 item.files = [merge_file_meta_from_cloud(f) for f in files]
@@ -88,9 +86,7 @@ class StageLoader(Mapping):
         assert stage_data
         assert isinstance(stage_data, dict)
 
-        path, wdir = resolve_paths(
-            dvcfile.repo.fs, dvcfile.path, stage_data.get(Stage.PARAM_WDIR)
-        )
+        path, wdir = resolve_paths(dvcfile.repo.fs, dvcfile.path, stage_data.get(Stage.PARAM_WDIR))
         stage = loads_from(PipelineStage, dvcfile.repo, path, wdir, stage_data)
         stage.name = name
         stage.desc = stage_data.get(Stage.PARAM_DESC)
@@ -108,8 +104,7 @@ class StageLoader(Mapping):
             ],
         )
         stage.outs = lcat(
-            output.load_from_pipeline(stage, data, typ=key)
-            for key, data in outs.items()
+            output.load_from_pipeline(stage, data, typ=key) for key, data in outs.items()
         )
 
         if lock_data:
@@ -166,8 +161,7 @@ class StageLoader(Mapping):
 
     def is_foreach_or_matrix_generated(self, name: str) -> bool:
         return (
-            name in self.stages_data
-            and {FOREACH_KWD, MATRIX_KWD} & self.stages_data[name].keys()
+            name in self.stages_data and {FOREACH_KWD, MATRIX_KWD} & self.stages_data[name].keys()
         )
 
 
@@ -176,7 +170,7 @@ class SingleStageLoader(Mapping):
         self,
         dvcfile: "SingleStageFile",
         stage_data: dict[Any, str],
-        stage_text: Optional[str] = None,
+        stage_text: str | None = None,
     ):
         self.dvcfile = dvcfile
         self.stage_data = stage_data or {}
@@ -184,9 +178,7 @@ class SingleStageLoader(Mapping):
 
     def __getitem__(self, item):
         if item:
-            logger.warning(
-                "Ignoring name '%s' for single stage in '%s'.", item, self.dvcfile
-            )
+            logger.warning("Ignoring name '%s' for single stage in '%s'.", item, self.dvcfile)
         # during `load`, we remove attributes from stage data, so as to
         # not duplicate, therefore, for MappingView, we need to deepcopy.
         return self.load_stage(self.dvcfile, deepcopy(self.stage_data), self.stage_text)
@@ -196,11 +188,9 @@ class SingleStageLoader(Mapping):
         cls,
         dvcfile: "SingleStageFile",
         d: dict[str, Any],
-        stage_text: Optional[str],
+        stage_text: str | None,
     ) -> Stage:
-        path, wdir = resolve_paths(
-            dvcfile.repo.fs, dvcfile.path, d.get(Stage.PARAM_WDIR)
-        )
+        path, wdir = resolve_paths(dvcfile.repo.fs, dvcfile.path, d.get(Stage.PARAM_WDIR))
         stage = loads_from(Stage, dvcfile.repo, path, wdir, d)
         stage._stage_text = stage_text
         stage.deps = dependency.loadd_from(stage, d.get(Stage.PARAM_DEPS) or [])

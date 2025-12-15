@@ -1,11 +1,9 @@
 import colorama
 
-from dvc import analytics
 from dvc.cli import formatter
 from dvc.cli.command import CmdBaseNoRepo
 from dvc.cli.utils import append_doc_link
 from dvc.log import logger
-from dvc.utils import boxify
 from dvc.utils import format_link as fmt_link
 
 logger = logger.getChild(__name__)
@@ -13,16 +11,6 @@ logger = logger.getChild(__name__)
 
 def _welcome_message():
     from dvc.ui import ui
-
-    if analytics.is_enabled():
-        ui.write(
-            boxify(
-                "DVC has enabled anonymous aggregate usage analytics.\n"
-                "Read the analytics documentation (and how to opt-out) here:\n"
-                + fmt_link("https://dvc.org/doc/user-guide/analytics"),
-                border_color="red",
-            )
-        )
 
     msg = (
         "{yellow}What's next?{nc}\n"
@@ -75,34 +63,27 @@ def add_parser(subparsers, parent_parser):
         "directory",
         nargs="?",
         default=".",
-        help=(
-            "Directory to initialize DVC in. Defaults to the current working directory."
-        ),
+        help=("Directory to initialize DVC in. Defaults to the current working directory."),
     )
     init_parser.add_argument(
         "--no-scm",
         action="store_true",
         default=False,
-        help=(
-            "Initiate DVC in directory that is not tracked by any SCM tool (e.g. Git)."
-        ),
+        help=("Initiate DVC in directory that is not tracked by any SCM tool (e.g. Git)."),
     )
     init_parser.add_argument(
         "-f",
         "--force",
         action="store_true",
         default=False,
-        help=(
-            "Overwrite existing '.dvc/' directory. This operation removes local cache."
-        ),
+        help=("Overwrite existing '.dvc/' directory. This operation removes local cache."),
     )
     init_parser.add_argument(
         "--subdir",
         action="store_true",
         default=False,
         help=(
-            "Necessary for running this command inside a subdirectory of a "
-            "parent SCM repository."
+            "Necessary for running this command inside a subdirectory of a parent SCM repository."
         ),
     )
     init_parser.set_defaults(func=CmdInit)

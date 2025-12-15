@@ -10,18 +10,6 @@ from urllib.parse import urlparse
 import voluptuous as vol
 from funcy import collecting, first, project
 
-from dvc import prompt
-from dvc.exceptions import (
-    CacheLinkError,
-    CheckoutError,
-    CollectCacheError,
-    ConfirmRemoveError,
-    DvcException,
-    MergeError,
-)
-from dvc.log import logger
-from dvc.utils import format_link
-from dvc.utils.objects import cached_property
 from dvc_data.hashfile import check as ocheck
 from dvc_data.hashfile import load as oload
 from dvc_data.hashfile.build import build
@@ -34,6 +22,17 @@ from dvc_data.hashfile.meta import Meta
 from dvc_data.hashfile.transfer import transfer as otransfer
 from dvc_data.hashfile.tree import Tree, du
 from dvc_objects.errors import ObjectFormatError
+from dvc import prompt
+from dvc.exceptions import (
+    CacheLinkError,
+    CheckoutError,
+    CollectCacheError,
+    ConfirmRemoveError,
+    DvcException,
+    MergeError,
+)
+from dvc.log import logger
+from dvc.utils.objects import cached_property
 
 from .annotations import ANNOTATION_FIELDS, ANNOTATION_SCHEMA, Annotation
 from .fs import LocalFileSystem, RemoteMissingDepsError, Schemes, get_cloud_fs
@@ -42,9 +41,9 @@ from .utils import relpath
 from .utils.fs import path_isin
 
 if TYPE_CHECKING:
-    from dvc.repo import Repo
     from dvc_data.hashfile.obj import HashFile
     from dvc_data.index import DataIndexKey
+    from dvc.repo import Repo
 
     from .ignore import CheckIgnoreResult, DvcIgnoreFilter
 
@@ -232,7 +231,7 @@ def _serialize_tree_obj_to_files(obj: Tree) -> list[dict[str, Any]]:
     )
 
 
-def _serialize_hi_to_dict(hash_info: Optional[HashInfo]) -> dict[str, Any]:
+def _serialize_hi_to_dict(hash_info: HashInfo | None) -> dict[str, Any]:
     if hash_info:
         if hash_info.name == "md5-dos2unix":
             return {"md5": hash_info.value}
@@ -323,14 +322,12 @@ class Output:
         remote=None,
         repo=None,
         fs_config=None,
-        files: Optional[list[dict[str, Any]]] = None,
+        files: list[dict[str, Any]] | None = None,
         push: bool = True,
-        hash_name: Optional[str] = DEFAULT_ALGORITHM,
+        hash_name: str | None = DEFAULT_ALGORITHM,
     ):
-        self.annot = Annotation(
-            desc=desc, type=type, labels=labels or [], meta=meta or {}
-        )
-        self.repo: Optional[Repo] = stage.repo if not repo and stage else repo
+        self.annot = Annotation(desc=desc, type=type, labels=labels or [], meta=meta or {})
+        self.repo: Repo | None = stage.repo if not repo and stage else repo
         meta_d = merge_file_meta_from_cloud(info or {})
         meta = Meta.from_dict(meta_d)
         # NOTE: when version_aware is not passed into get_cloud_fs, it will be
@@ -361,11 +358,7 @@ class Output:
         else:
             self.def_path = path
 
-        if (
-            self.repo
-            and self.fs.protocol == "local"
-            and not self.fs.isabs(self.def_path)
-        ):
+        if self.repo and self.fs.protocol == "local" and not self.fs.isabs(self.def_path):
             self.fs = self.repo.fs
 
         self._validate_output_path(path, stage)
@@ -391,22 +384,18 @@ class Output:
         self.can_push = push
 
         self.fs_path = self._parse_path(self.fs, fs_path)
-        self.obj: Optional[HashFile] = None
+        self.obj: HashFile | None = None
 
         self.remote = remote
 
         if self.fs.version_aware:
-            _, version_id = self.fs.coalesce_version(
-                self.def_path, self.meta.version_id
-            )
+            _, version_id = self.fs.coalesce_version(self.def_path, self.meta.version_id)
             self.meta.version_id = version_id
 
         self.hash_name, self.hash_info = self._compute_hash_info_from_meta(hash_name)
         self._compute_meta_hash_info_from_files()
 
-    def _compute_hash_info_from_meta(
-        self, hash_name: Optional[str]
-    ) -> tuple[str, HashInfo]:
+    def _compute_hash_info_from_meta(self, hash_name: str | None) -> tuple[str, HashInfo]:
         if self.is_in_repo:
             if hash_name is None:
                 # Legacy 2.x output, use "md5-dos2unix" but read "md5" from
@@ -527,9 +516,7 @@ class Output:
 
     @property
     def cache_path(self):
-        return self.cache.fs.unstrip_protocol(
-            self.cache.oid_to_path(self.hash_info.value)
-        )
+        return self.cache.fs.unstrip_protocol(self.cache.oid_to_path(self.hash_info.value))
 
     def get_hash(self):
         _, hash_info = self._get_hash_meta()
@@ -681,12 +668,7 @@ class Output:
 
     def save(self) -> None:
         if self.use_cache and not self.is_in_repo:
-            raise DvcException(
-                f"Saving cached external output {self!s} is not supported "
-                "since DVC 3.0. See "
-                f"{format_link('https://dvc.org/doc/user-guide/upgrade')} "
-                "for more info."
-            )
+            raise DvcException(f"Saving cached external output {self!s} is not supported.")
 
         if not self.exists:
             raise self.DoesNotExistError(self)
@@ -734,7 +716,7 @@ class Output:
         if self.isfile() and self.meta.isexec:
             self.cache.set_exec(self.fs_path)
 
-    def _checkout(self, *args, **kwargs) -> Optional[bool]:
+    def _checkout(self, *args, **kwargs) -> bool | None:
         from dvc_data.hashfile.checkout import CheckoutError as _CheckoutError
         from dvc_data.hashfile.checkout import LinkError, PromptError
 
@@ -756,9 +738,7 @@ class Output:
         assert self.hash_info
 
         if self.use_cache:
-            granular = (
-                self.is_dir_checksum and filter_info and filter_info != self.fs_path
-            )
+            granular = self.is_dir_checksum and filter_info and filter_info != self.fs_path
             hardlink = relink and next(iter(self.cache.cache_types), None) == "hardlink"
             if granular:
                 obj = self._commit_granular_dir(filter_info, hardlink=hardlink)
@@ -885,8 +865,7 @@ class Output:
             if obj:
                 assert isinstance(obj, Tree)
                 ret[self.PARAM_FILES] = [
-                    split_file_meta_from_cloud(f)
-                    for f in _serialize_tree_obj_to_files(obj)
+                    split_file_meta_from_cloud(f) for f in _serialize_tree_obj_to_files(obj)
                 ]
         return ret
 
@@ -905,14 +884,10 @@ class Output:
             return
 
         if not istextfile(self.fs_path, self.fs):
-            raise DvcException(
-                f"binary file '{self.fs_path}' cannot be used as metrics."
-            )
+            raise DvcException(f"binary file '{self.fs_path}' cannot be used as metrics.")
 
-    def get_obj(
-        self, filter_info: Optional[str] = None, **kwargs
-    ) -> Optional["HashFile"]:
-        obj: Optional[HashFile] = None
+    def get_obj(self, filter_info: str | None = None, **kwargs) -> Optional["HashFile"]:
+        obj: HashFile | None = None
         if self.obj:
             obj = self.obj
         elif self.files:
@@ -941,10 +916,10 @@ class Output:
         force: bool = False,
         progress_callback: "Callback" = DEFAULT_CALLBACK,
         relink: bool = False,
-        filter_info: Optional[str] = None,
+        filter_info: str | None = None,
         allow_missing: bool = False,
         **kwargs,
-    ) -> Optional[tuple[bool, Optional[bool]]]:
+    ) -> tuple[bool, bool | None] | None:
         # callback passed act as a aggregate callback.
         # do not let checkout to call set_size and change progressbar.
         class CallbackProxy(Callback):
@@ -1015,15 +990,11 @@ class Output:
         except self.DoesNotExistError:
             self.ignore()
 
-    def transfer(
-        self, source, odb=None, jobs=None, update=False, no_progress_bar=False
-    ):
+    def transfer(self, source, odb=None, jobs=None, update=False, no_progress_bar=False):
         if odb is None:
             odb = self.cache
 
-        cls, config, from_info = get_cloud_fs(
-            self.repo.config if self.repo else {}, url=source
-        )
+        cls, config, from_info = get_cloud_fs(self.repo.config if self.repo else {}, url=source)
         from_fs = cls(**config)
 
         # When running import-url --to-remote / add --to-remote/-o ... we
@@ -1078,9 +1049,7 @@ class Output:
 
     def unprotect(self):
         if self.exists and self.use_cache:
-            with TqdmCallback(
-                size=self.meta.nfiles or -1, desc=f"Unprotecting {self}"
-            ) as callback:
+            with TqdmCallback(size=self.meta.nfiles or -1, desc=f"Unprotecting {self}") as callback:
                 self.cache.unprotect(self.fs_path, callback=callback)
 
     def get_dir_cache(self, **kwargs) -> Optional["Tree"]:
@@ -1132,8 +1101,7 @@ class Output:
             )
             if not force and not prompt.confirm(msg.format(self.fs_path)):
                 raise CollectCacheError(  # noqa: B904
-                    "unable to fully collect used cache"
-                    f" without cache for directory '{self}'"
+                    f"unable to fully collect used cache without cache for directory '{self}'"
                 )
             return None
 
@@ -1145,9 +1113,7 @@ class Output:
             return obj.filter(prefix)
         return obj
 
-    def get_used_objs(
-        self, **kwargs
-    ) -> dict[Optional["HashFileDB"], set["HashInfo"]]:
+    def get_used_objs(self, **kwargs) -> dict[Optional["HashFileDB"], set["HashInfo"]]:
         """Return filtered set of used object IDs for this out."""
         from dvc.cachemgr import LEGACY_HASH_NAMES
 
@@ -1176,7 +1142,7 @@ class Output:
             logger.warning(msg)
             return {}
 
-        obj: Optional[HashFile]
+        obj: HashFile | None
         if self.is_dir_checksum:
             obj = self._collect_used_dir_cache(**kwargs)
         else:
@@ -1189,14 +1155,10 @@ class Output:
 
         if self.remote:
             assert self.repo
-            remote_odb = self.repo.cloud.get_remote_odb(
-                name=self.remote, hash_name=self.hash_name
-            )
+            remote_odb = self.repo.cloud.get_remote_odb(name=self.remote, hash_name=self.hash_name)
             other_odb = self.repo.cloud.get_remote_odb(
                 name=self.remote,
-                hash_name=(
-                    "md5" if self.hash_name in LEGACY_HASH_NAMES else "md5-dos2unix"
-                ),
+                hash_name=("md5" if self.hash_name in LEGACY_HASH_NAMES else "md5-dos2unix"),
             )
             return {remote_odb: self._named_obj_ids(obj), other_odb: set()}
         return {None: self._named_obj_ids(obj)}
@@ -1360,13 +1322,11 @@ class Output:
         return meta, new
 
     def add(
-        self, path: Optional[str] = None, no_commit: bool = False, relink: bool = True
+        self, path: str | None = None, no_commit: bool = False, relink: bool = True
     ) -> Optional["HashFile"]:
         path = path or self.fs_path
         if self.hash_info and not self.is_dir_checksum and self.fs_path != path:
-            raise DvcException(
-                f"Cannot modify '{self}' which is being tracked as a file"
-            )
+            raise DvcException(f"Cannot modify '{self}' which is being tracked as a file")
 
         assert self.repo
         self.update_legacy_hash_name()
@@ -1431,9 +1391,7 @@ class Output:
             )
 
         if relink:
-            with CheckoutCallback(
-                desc=f"Checking out {path}", unit="files"
-            ) as callback:
+            with CheckoutCallback(desc=f"Checking out {path}", unit="files") as callback:
                 self._checkout(
                     path,
                     self.fs,
@@ -1472,12 +1430,8 @@ class Output:
 
     def _get_versioned_meta(
         self,
-    ) -> Optional[
-        tuple["HashInfo", Optional["Meta"], Optional[Union["HashFile", "Tree"]]]
-    ]:
-        if self.files is not None or (
-            self.meta is not None and self.meta.version_id is not None
-        ):
+    ) -> tuple["HashInfo", Optional["Meta"], Union["HashFile", "Tree"] | None] | None:
+        if self.files is not None or (self.meta is not None and self.meta.version_id is not None):
             old_obj = self.obj if self.obj is not None else self.get_obj()
             return self.hash_info, self.meta, old_obj
         return None
@@ -1486,7 +1440,7 @@ class Output:
         self,
         old_hi: "HashInfo",
         old_meta: Optional["Meta"],
-        old_obj: Optional[Union["HashFile", "Tree"]],
+        old_obj: Union["HashFile", "Tree"] | None,
     ):
         """Merge version meta for files which are unchanged from other."""
         if not self.hash_info:
@@ -1499,7 +1453,7 @@ class Output:
         return None
 
     def _merge_dir_version_meta(
-        self, old_hi: "HashInfo", old_obj: Optional[Union["HashFile", "Tree"]]
+        self, old_hi: "HashInfo", old_obj: Union["HashFile", "Tree"] | None
     ):
         from dvc_data.hashfile.tree import update_meta
 
