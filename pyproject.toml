@@ -67,10 +67,11 @@ Homepage = "https://github.com/runsascoded/dvx"
 Repository = "https://github.com/runsascoded/dvx"
 
 [tool.setuptools]
+package-dir = {"" = "src"}
 packages = ["dvx"]
 
 [tool.setuptools_scm]
-write_to = "dvx/_version.py"
+write_to = "src/dvx/_version.py"
 
 [tool.ruff]
 line-length = 100
