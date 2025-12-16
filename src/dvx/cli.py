@@ -226,75 +226,436 @@ def checkout(targets, force, recursive, relink):
 
 
 # =============================================================================
-# Status
+# Status - check freshness of artifacts
 # =============================================================================
+
+
+def _expand_targets(targets):
+    """Expand targets: directories become all .dvc files under them, files remain as-is."""
+    from pathlib import Path
+
+    expanded = []
+    for target in targets:
+        p = Path(target)
+        if p.is_dir():
+            # Recursively find all .dvc files under this directory
+            expanded.extend(sorted(p.glob("**/*.dvc")))
+        else:
+            expanded.append(p)
+    return expanded
+
+
+def _check_one_target(target, with_deps=True):
+    """Check freshness of a single target. Returns dict with status info."""
+    from pathlib import Path
+
+    from dvx.run.dvc_files import is_output_fresh, read_dvc_file
+
+    target = Path(target)
+
+    # Handle both .dvc path and output path
+    if target.suffix == ".dvc":
+        dvc_path = target
+        output_path = Path(str(target)[:-4])  # Strip .dvc suffix
+    else:
+        output_path = target
+        dvc_path = Path(str(target) + ".dvc")
+
+    info = read_dvc_file(dvc_path)
+    if info is None:
+        return {
+            "path": str(target),
+            "status": "error",
+            "reason": "dvc file not found or invalid",
+        }
+
+    fresh, reason = is_output_fresh(output_path, check_deps=with_deps, info=info)
+
+    if fresh:
+        return {"path": str(target), "status": "fresh", "reason": None}
+    elif "missing" in reason:
+        return {"path": str(target), "status": "missing", "reason": reason}
+    else:
+        return {"path": str(target), "status": "stale", "reason": reason}
 
 
 @cli.command()
 @click.argument("targets", nargs=-1)
-@click.option("-c", "--cloud", is_flag=True, help="Check status against remote storage.")
-@click.option("-r", "--remote", help="Remote storage to check against.")
-@click.option("-a", "--all-branches", is_flag=True, help="Check all branches.")
-@click.option("-A", "--all-commits", is_flag=True, help="Check all commits.")
-@click.option("-T", "--all-tags", is_flag=True, help="Check all tags.")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
-def status(targets, cloud, remote, all_branches, all_commits, all_tags, as_json):
-    """Show status of tracked files."""
-    import json
+@click.option("-d", "--with-deps", is_flag=True, default=True, help="Check upstream dependencies.")
+@click.option("-j", "--jobs", type=int, default=None, help="Number of parallel workers.")
+@click.option("-v", "--verbose", is_flag=True, help="Show all files including fresh.")
+@click.option("--json", "as_json", is_flag=True, help="Output results as JSON.")
+def status(targets, with_deps, jobs, verbose, as_json):
+    """Check freshness status of artifacts.
+
+    By default, only shows stale/missing files (like git status).
+    Use -v/--verbose to show all files including fresh ones.
+
+    Examples:
+        dvx status                   # Check all .dvc files
+        dvx status output.dvc        # Check specific target
+        dvx status data/             # Check all .dvc files under data/
+        dvx status -j 4              # Use 4 parallel workers
+        dvx status --json            # Output as JSON
+    """
+    import json as json_module
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from functools import partial
+    from pathlib import Path
+
+    # Find targets - expand directories to .dvc files
+    if targets:
+        target_list = _expand_targets(targets)
+    else:
+        # Default: all .dvc files in current directory tree (excluding .dvc/ directory)
+        target_list = [
+            p for p in Path(".").glob("**/*.dvc") if p.is_file() and ".dvc/" not in str(p)
+        ]
+
+    if not target_list:
+        click.echo("No .dvc files found")
+        return
+
+    results = []
+    check_fn = partial(_check_one_target, with_deps=with_deps)
+
+    if jobs is None or jobs == 1:
+        # Sequential
+        for target in target_list:
+            results.append(check_fn(target))
+    else:
+        # Parallel
+        with ThreadPoolExecutor(max_workers=jobs) as executor:
+            futures = {executor.submit(check_fn, t): t for t in target_list}
+            for future in as_completed(futures):
+                results.append(future.result())
+
+    results.sort(key=lambda r: r["path"])
+    stale_count = sum(1 for r in results if r["status"] == "stale")
+    missing_count = sum(1 for r in results if r["status"] == "missing")
+    fresh_count = sum(1 for r in results if r["status"] == "fresh")
+    error_count = sum(1 for r in results if r["status"] == "error")
+
+    if as_json:
+        click.echo(json_module.dumps(results, indent=2))
+    else:
+        # By default, only show non-fresh files (like git status)
+        for r in results:
+            if r["status"] == "fresh" and not verbose:
+                continue
+            icon = {"fresh": "✓", "stale": "✗", "missing": "?", "error": "!"}.get(
+                r["status"], "?"
+            )
+            line = f"{icon} {r['path']}"
+            if r.get("reason"):
+                line += f" ({r['reason']})"
+            click.echo(line)
+
+        # Summary line
+        click.echo(f"\nFresh: {fresh_count}, Stale: {stale_count}")
+
+
+# =============================================================================
+# Diff - content diff for DVC-tracked files
+# =============================================================================
+
+
+def _normalize_path(path: str) -> tuple[str, str]:
+    """Normalize path to (data_path, dvc_path) tuple."""
+    if path.endswith(os.sep):
+        path = path[:-1]
+    if path.endswith(".dvc"):
+        dvc_path = path
+        data_path = path[:-4]
+    else:
+        data_path = path
+        dvc_path = path + ".dvc"
+    return data_path, dvc_path
+
+
+def _get_cache_path_for_ref(dvc_path: str, ref: str | None) -> str | None:
+    """Get cache path for a .dvc file at a specific git ref."""
+    import subprocess
+
+    import yaml
 
     try:
-        with Repo() as repo:
-            st = repo.status(
-                targets=list(targets) if targets else None,
-                cloud=cloud,
-                remote=remote,
-                all_branches=all_branches,
-                all_tags=all_tags,
-                all_commits=all_commits,
+        if ref:
+            # Read .dvc file content directly from git
+            result = subprocess.run(
+                ["git", "show", f"{ref}:{dvc_path}"],
+                capture_output=True,
+                text=True,
+                check=False,
             )
-            if as_json:
-                click.echo(json.dumps(st, indent=2))
-            elif not st:
-                click.echo("No changes.")
-            else:
-                click.echo(json.dumps(st, indent=2))
-    except Exception as e:
-        raise click.ClickException(str(e)) from e
+            if result.returncode != 0:
+                return None
+
+            loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+            dvc_content = yaml.load(result.stdout, Loader=loader)  # noqa: S506
+            outs = dvc_content.get("outs", [])
+            if not outs:
+                return None
+
+            md5 = outs[0].get("md5", "")
+            if not md5:
+                return None
+
+            # For directories, md5 ends with .dir - strip for prefix, keep for suffix
+            md5_base = md5.replace(".dir", "")
+            suffix = ".dir" if md5.endswith(".dir") else ""
+
+            # Find .dvc directory
+            from dvc.repo import Repo as DVCRepo
+
+            root_dir = DVCRepo.find_root()
+            cache_path = os.path.join(
+                root_dir, ".dvc", "cache", "files", "md5", md5_base[:2], md5_base[2:] + suffix
+            )
+            return cache_path
+        else:
+            # Read from current working tree using our cache module
+            from dvx.cache import get_cache_path
+
+            return get_cache_path(dvc_path, absolute=True)
+    except Exception:
+        return None
 
 
-# =============================================================================
-# Diff
-# =============================================================================
+def _run_diff(
+    path1: str | None,
+    path2: str | None,
+    color: bool | None = None,
+    unified: int | None = None,
+    ignore_whitespace: bool = False,
+) -> int:
+    """Run diff on two paths."""
+    import subprocess
+
+    args = ["diff"]
+
+    if ignore_whitespace:
+        args.append("-w")
+    if unified is not None:
+        args.extend(["-U", str(unified)])
+    if color is True:
+        args.append("--color=always")
+    elif color is False:
+        args.append("--color=never")
+
+    args.append(path1 or "/dev/null")
+    args.append(path2 or "/dev/null")
+
+    result = subprocess.run(args, check=False)
+    return result.returncode
+
+
+def _run_pipeline_diff(
+    path1: str | None,
+    path2: str | None,
+    cmds: list[str],
+    color: bool | None = None,
+    unified: int | None = None,
+    ignore_whitespace: bool = False,
+    verbose: bool = False,
+    shell: bool = True,
+    shell_executable: str | None = None,
+    both: bool = False,
+) -> int:
+    """Run diff with preprocessing pipeline using dffs."""
+    try:
+        from dffs import join_pipelines
+    except ImportError:
+        click.echo(
+            "Pipeline diffing requires the 'dffs' package. "
+            "Install with: pip install dffs",
+            err=True,
+        )
+        return 1
+
+    diff_args = []
+    if ignore_whitespace:
+        diff_args.append("-w")
+    if unified is not None:
+        diff_args.extend(["-U", str(unified)])
+    if color is True:
+        diff_args.append("--color=always")
+    elif color is False:
+        diff_args.append("--color=never")
+
+    cmd, *sub_cmds = cmds
+
+    if path1 is None:
+        cmds1 = ["cat /dev/null"]
+    else:
+        cmds1 = [f"{cmd} {path1}", *sub_cmds]
+
+    if path2 is None:
+        cmds2 = ["cat /dev/null"]
+    else:
+        cmds2 = [f"{cmd} {path2}", *sub_cmds]
+
+    return join_pipelines(
+        base_cmd=["diff", *diff_args],
+        cmds1=cmds1,
+        cmds2=cmds2,
+        verbose=verbose,
+        shell=shell,
+        executable=shell_executable,
+        both=both,
+    )
 
 
 @cli.command()
-@click.argument("a_rev", required=False)
-@click.argument("b_rev", required=False)
-@click.option("-t", "--targets", multiple=True, help="Specific files to diff.")
-@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
-def diff(a_rev, b_rev, targets, as_json):
-    """Show changes between revisions or workspace.
+@click.option("-b", "--both", is_flag=True, help="Merge stderr into stdout in pipeline commands.")
+@click.option("-c/-C", "--color/--no-color", default=None, help="Force or prevent colorized output.")
+@click.option("-r", "--refspec", help="<commit1>..<commit2> or <commit> (compare to worktree).")
+@click.option("-R", "--ref", help="Shorthand for -r <ref>^..<ref> (compare commit to parent).")
+@click.option("-e", "--shell-executable", help="Shell to use for executing commands.")
+@click.option("-S", "--no-shell", is_flag=True, help="Don't use shell for subprocess execution.")
+@click.option("-s", "--summary", is_flag=True, help="Show summary of changes (files and hashes) instead of content diff.")
+@click.option("-U", "--unified", type=int, help="Number of lines of context.")
+@click.option("-v", "--verbose", is_flag=True, help="Log intermediate commands to stderr.")
+@click.option("-w", "--ignore-whitespace", is_flag=True, help="Ignore whitespace differences.")
+@click.option("-x", "--exec-cmd", "exec_cmds", multiple=True, help="Command to execute before diffing.")
+@click.argument("args", nargs=-1, metavar="[cmd...] <path>")
+@click.pass_context
+def diff(
+    ctx,
+    both,
+    color,
+    refspec,
+    ref,
+    shell_executable,
+    no_shell,
+    summary,
+    unified,
+    verbose,
+    ignore_whitespace,
+    exec_cmds,
+    args,
+):
+    """Diff DVC-tracked files between commits.
+
+    By default, shows actual content differences. Use -s/--summary to show
+    a summary of which files changed (with hashes) instead.
 
     Examples:
-        dvx diff              # workspace vs HEAD
-        dvx diff HEAD~1       # HEAD~1 vs workspace
-        dvx diff HEAD~1 HEAD  # HEAD~1 vs HEAD
-    """
-    import json
 
-    try:
-        with Repo() as repo:
-            d = repo.diff(
-                a_rev=a_rev,
-                b_rev=b_rev,
-                targets=list(targets) if targets else None,
-            )
-            if as_json or any(d.values()):
-                click.echo(json.dumps(d, indent=2))
-            else:
-                click.echo("No changes.")
-    except Exception as e:
-        raise click.ClickException(str(e)) from e
+    \b
+      dvx diff data.csv
+        Show content diff of data.csv between HEAD and worktree.
+
+    \b
+      dvx diff -r HEAD^..HEAD data.csv
+        Show content diff between previous and current commit.
+
+    \b
+      dvx diff -s
+        Show summary of all changed files with hashes.
+
+    \b
+      dvx diff -R abc123 wc -l data.csv
+        Compare line count of data.csv at commit abc123 vs its parent.
+    """
+    import json as json_module
+
+    # Handle summary mode (shows file/hash changes via DVC)
+    if summary:
+        # Parse refspec for summary mode
+        if refspec and ref:
+            raise click.UsageError("Specify -r/--refspec or -R/--ref, not both")
+
+        if ref:
+            a_rev = f"{ref}^"
+            b_rev = ref
+        elif refspec and ".." in refspec:
+            a_rev, b_rev = refspec.split("..", 1)
+        elif refspec:
+            a_rev = refspec
+            b_rev = None
+        else:
+            a_rev = None
+            b_rev = None
+
+        try:
+            with Repo() as repo:
+                d = repo.diff(
+                    a_rev=a_rev,
+                    b_rev=b_rev,
+                    targets=list(args) if args else None,
+                )
+                if any(d.values()):
+                    click.echo(json_module.dumps(d, indent=2))
+                else:
+                    click.echo("No changes.")
+        except Exception as e:
+            raise click.ClickException(str(e)) from e
+        return
+
+    # Content diff mode - need a target path
+    remaining = list(exec_cmds) + list(args)
+
+    if not remaining:
+        raise click.UsageError("Must specify [cmd...] <path> (or use -s/--summary)")
+
+    *cmds, target = remaining
+    data_path, dvc_path = _normalize_path(target)
+
+    # Parse refspec
+    if refspec and ref:
+        raise click.UsageError("Specify -r/--refspec or -R/--ref, not both")
+
+    if ref:
+        refspec = f"{ref}^..{ref}"
+    elif not refspec:
+        refspec = "HEAD"
+
+    # Split refspec into before/after
+    if ".." in refspec:
+        before, after = refspec.split("..", 1)
+    else:
+        before = refspec
+        after = None  # Compare to working tree
+
+    # Get cache paths
+    path1 = _get_cache_path_for_ref(dvc_path, before)
+    if after is None:
+        # Compare to working tree - use the actual file if it exists
+        if os.path.exists(data_path):
+            path2 = data_path
+        else:
+            path2 = _get_cache_path_for_ref(dvc_path, None)
+    else:
+        path2 = _get_cache_path_for_ref(dvc_path, after)
+
+    if path1 is None and path2 is None:
+        raise click.ClickException(f"Could not find {dvc_path} at either revision")
+
+    # Run diff
+    if cmds:
+        returncode = _run_pipeline_diff(
+            path1,
+            path2,
+            cmds,
+            color=color,
+            unified=unified,
+            ignore_whitespace=ignore_whitespace,
+            verbose=verbose,
+            shell=not no_shell,
+            shell_executable=shell_executable,
+            both=both,
+        )
+    else:
+        returncode = _run_diff(
+            path1,
+            path2,
+            color=color,
+            unified=unified,
+            ignore_whitespace=ignore_whitespace,
+        )
+
+    ctx.exit(returncode)
 
 
 # =============================================================================

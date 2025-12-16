@@ -218,8 +218,8 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
 
 def write_dvc_file(
     output_path: Path,
-    md5: str,
-    size: int,
+    md5: str | None = None,
+    size: int | None = None,
     cmd: str | None = None,
     code_ref: str | None = None,
     deps: dict[str, str] | None = None,
@@ -231,8 +231,8 @@ def write_dvc_file(
 
     Args:
         output_path: Path to the output file/directory
-        md5: MD5 hash of the output
-        size: Size in bytes
+        md5: MD5 hash of the output (omitted from file if None - placeholder mode)
+        size: Size in bytes (omitted from file if None - placeholder mode)
         cmd: Command that was run (provenance)
         code_ref: Git SHA when computation was run (provenance)
         deps: {dep_path: md5} of inputs (provenance)
@@ -256,28 +256,23 @@ def write_dvc_file(
     # Path in .dvc file should be relative to the .dvc file location (just the filename)
     relative_path = output_path.name
 
-    # For directories, add .dir suffix to hash (DVC convention)
-    hash_value = f"{md5}.dir" if is_dir else md5
+    # Build out_entry, omitting md5/size if None (placeholder for prep phase)
+    out_entry = {}
+    if md5 is not None:
+        # For directories, add .dir suffix to hash (DVC convention)
+        out_entry["md5"] = f"{md5}.dir" if is_dir else md5
+    if size is not None:
+        out_entry["size"] = size
 
-    out_entry = {
-        "md5": hash_value,
-        "size": size,
-        "path": relative_path,
-    }
-
-    # Add nfiles for directories
+    # Add nfiles for directories (if we have the info)
     if is_dir:
         if nfiles is None and output_path.exists():
             # Count files in directory
             nfiles = sum(1 for f in output_path.rglob("*") if f.is_file())
         if nfiles is not None:
-            # Insert nfiles after size (for nicer ordering)
-            out_entry = {
-                "md5": hash_value,
-                "size": size,
-                "nfiles": nfiles,
-                "path": relative_path,
-            }
+            out_entry["nfiles"] = nfiles
+
+    out_entry["path"] = relative_path
 
     data = {"outs": [out_entry]}
 
@@ -405,3 +400,108 @@ def get_dvc_file_path(output_path: Path) -> Path:
         Path to the .dvc file (may not exist)
     """
     return Path(str(output_path) + ".dvc")
+
+
+def find_parent_dvc_dir(file_path: Path) -> tuple[Path, str] | None:
+    """Find a DVC-tracked parent directory containing a file.
+
+    Walks up the directory tree looking for a directory with a .dvc file.
+
+    Args:
+        file_path: Path to a file (must be a file, not directory)
+
+    Returns:
+        Tuple of (parent_dir_path, relative_path_from_parent) if found, None otherwise
+    """
+    path = Path(file_path)
+    if not path.is_absolute():
+        path = path.resolve()
+
+    # Track relative path components as we walk up
+    rel_parts = [path.name]
+    current = path.parent
+
+    while current != current.parent:  # Stop at filesystem root
+        dvc_path = get_dvc_file_path(current)
+        if dvc_path.exists():
+            # Found a .dvc file for this directory
+            info = read_dvc_file(current)
+            if info and info.is_dir:
+                # Return the directory path and relative path to the file
+                relpath = "/".join(reversed(rel_parts))
+                return current, relpath
+
+        # Walk up one level
+        rel_parts.append(current.name)
+        current = current.parent
+
+    return None
+
+
+def read_dir_manifest(dir_md5: str, cache_dir: Path | None = None) -> dict[str, str]:
+    """Read a DVC directory manifest and return file hashes.
+
+    DVC stores directory contents as a JSON manifest in the cache with .dir suffix.
+
+    Args:
+        dir_md5: MD5 hash of the directory (without .dir suffix)
+        cache_dir: Path to .dvc/cache/files/md5 directory (auto-detected if None)
+
+    Returns:
+        Dict mapping relative paths to their MD5 hashes
+    """
+    import json
+
+    if cache_dir is None:
+        # Auto-detect cache directory by walking up from cwd
+        cwd = Path.cwd()
+        for parent in [cwd, *cwd.parents]:
+            potential_cache = parent / ".dvc" / "cache" / "files" / "md5"
+            if potential_cache.exists():
+                cache_dir = potential_cache
+                break
+        if cache_dir is None:
+            return {}
+
+    # DVC cache structure: .dvc/cache/files/md5/{first2}/{rest}.dir
+    manifest_path = cache_dir / dir_md5[:2] / f"{dir_md5[2:]}.dir"
+    if not manifest_path.exists():
+        return {}
+
+    with open(manifest_path) as f:
+        entries = json.load(f)
+
+    # Convert [{md5: ..., relpath: ...}, ...] to {relpath: md5}
+    return {entry["relpath"]: entry["md5"] for entry in entries}
+
+
+def get_file_hash_from_dir(
+    file_path: Path,
+    cache_dir: Path | None = None,
+) -> tuple[str, Path] | None:
+    """Get the MD5 hash of a file inside a DVC-tracked directory.
+
+    Walks up the directory tree to find a parent .dvc-tracked directory,
+    then reads the directory manifest to get the file's hash.
+
+    Args:
+        file_path: Path to the file
+        cache_dir: Path to .dvc/cache/files/md5 directory (auto-detected if None)
+
+    Returns:
+        Tuple of (md5_hash, parent_dir_path) if found, None otherwise
+    """
+    result = find_parent_dvc_dir(file_path)
+    if result is None:
+        return None
+
+    parent_dir, relpath = result
+    info = read_dvc_file(parent_dir)
+    if info is None or not info.md5:
+        return None
+
+    manifest = read_dir_manifest(info.md5, cache_dir)
+    if relpath not in manifest:
+        return None
+
+    return manifest[relpath], parent_dir

@@ -239,4 +239,4 @@ def test_diff_help(runner):
     """Test diff command help."""
     result = runner.invoke(cli, ["diff", "--help"])
     assert result.exit_code == 0
-    assert "Show changes between revisions" in result.output
+    assert "Diff DVC-tracked files between commits" in result.output

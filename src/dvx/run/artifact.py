@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
 from dvx.run.dvc_files import (
+    get_file_hash_from_dir,
     get_git_head_sha,
     read_dvc_file,
     write_dvc_file,
@@ -156,16 +157,32 @@ class Artifact:
     def from_dvc(cls, path: str | Path) -> Artifact | None:
         """Load an Artifact from its .dvc file.
 
+        Supports both direct .dvc files and files inside DVC-tracked directories.
+        For files inside tracked directories, walks up the tree to find the parent
+        .dvc file and looks up the file hash from the directory manifest.
+
         Args:
             path: Path to the artifact (not the .dvc file)
 
         Returns:
-            Artifact with all metadata populated, or None if no .dvc file
+            Artifact with all metadata populated, or None if no .dvc file found
         """
         path = Path(path)
         info = read_dvc_file(path)
+
         if info is None:
-            return None
+            # No direct .dvc file - check if this is a file inside a tracked directory
+            result = get_file_hash_from_dir(path)
+            if result is None:
+                return None
+
+            file_hash, _parent_dir = result
+            # Return artifact with just the file hash (no computation - that's on the parent)
+            return cls(
+                path=str(path),
+                md5=file_hash,
+                size=None,  # Size not stored in directory manifests
+            )
 
         computation = None
         if info.cmd or info.deps:
@@ -193,6 +210,10 @@ class Artifact:
         executing the computation. The output hash will be computed
         from the current file if it exists.
 
+        If the file doesn't exist yet, a placeholder .dvc file is created
+        without md5/size fields. This signals "output doesn't exist yet"
+        for the two-phase prep/run workflow.
+
         Args:
             capture_code_ref: Whether to capture current git HEAD as code_ref
 
@@ -208,10 +229,8 @@ class Artifact:
             md5 = compute_md5(path)
             size = compute_file_size(path)
 
-        # If still no hash, use placeholder (file will be created during run)
-        if md5 is None:
-            md5 = ""
-            size = 0
+        # If still no hash, leave as None - write_dvc_file will omit these fields
+        # to signal output doesn't exist yet (placeholder for prep phase)
 
         # Get computation metadata
         cmd = None
@@ -343,25 +362,76 @@ def write_all_dvc(artifacts: list[Artifact], capture_code_ref: bool = True) -> l
     ]
 
 
+def _run_one_artifact(
+    artifact: Artifact,
+    force: bool,
+    update_dvc: bool = True,
+) -> tuple[Artifact, bool, str | None]:
+    """Run computation for a single artifact.
+
+    Args:
+        artifact: The artifact to compute
+        force: Force recomputation even if fresh
+        update_dvc: Whether to update .dvc file after computation
+
+    Returns:
+        Tuple of (artifact, success, error_msg)
+    """
+    import subprocess
+
+    from dvx.run.dvc_files import is_output_fresh
+
+    if not artifact.computation:
+        return artifact, True, None  # Leaf node, nothing to compute
+
+    path = Path(artifact.path)
+
+    # Check if already fresh
+    if not force:
+        fresh, _reason = is_output_fresh(path)
+        if fresh:
+            return artifact, True, None
+
+    # Execute computation
+    cmd = artifact.computation.cmd
+    result = subprocess.run(cmd, check=False, shell=True, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        return artifact, False, f"Command: {cmd}\nStderr: {result.stderr}"
+
+    # Update artifact with computed hash and optionally write .dvc file
+    if path.exists():
+        artifact.md5 = compute_md5(path)
+        artifact.size = compute_file_size(path)
+        if update_dvc:
+            artifact.write_dvc()
+
+    return artifact, True, None
+
+
 def materialize(
     artifacts: list[Artifact],
-    parallel: int = 1,  # noqa: ARG001
+    parallel: int = 1,
     force: bool = False,
+    update_dvc: bool = True,
 ) -> list[Artifact]:
     """Execute computations for all stale artifacts.
 
     This is the "run" phase - executes pending computations and
-    updates .dvc files with output hashes.
+    optionally updates .dvc files with output hashes.
 
     Args:
         artifacts: List of artifacts to materialize
-        parallel: Number of parallel workers (default: 1)
+        parallel: Number of parallel workers (default: 1, use -1 for CPU count)
         force: Force recomputation even if fresh (default: False)
+        update_dvc: Whether to update .dvc files after computation (default: True)
 
     Returns:
         List of artifacts that were computed
     """
-    from dvx.run.dvc_files import is_output_fresh
+    import os
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from functools import partial
 
     # Collect all artifacts in dependency order
     all_artifacts = []
@@ -373,42 +443,43 @@ def materialize(
                 seen.add(a.path)
                 all_artifacts.append(a)
 
+    # Filter to only computable artifacts
+    computable = [a for a in all_artifacts if a.computation]
+
+    if not computable:
+        return []
+
+    # Determine worker count
+    if parallel == -1:
+        parallel = os.cpu_count() or 1
+    parallel = max(1, parallel)
+
     computed = []
+    errors = []
 
-    # TODO: Implement parallel execution
-    for artifact in all_artifacts:
-        if not artifact.computation:
-            continue  # Leaf node, nothing to compute
+    run_fn = partial(_run_one_artifact, force=force, update_dvc=update_dvc)
 
-        path = Path(artifact.path)
+    if parallel == 1:
+        # Sequential execution
+        for artifact in computable:
+            artifact, success, error = run_fn(artifact)
+            if success and artifact.md5:
+                computed.append(artifact)
+            elif not success:
+                errors.append((artifact, error))
+    else:
+        # Parallel execution
+        with ThreadPoolExecutor(max_workers=parallel) as executor:
+            futures = {executor.submit(run_fn, artifact): artifact for artifact in computable}
+            for future in as_completed(futures):
+                artifact, success, error = future.result()
+                if success and artifact.md5:
+                    computed.append(artifact)
+                elif not success:
+                    errors.append((artifact, error))
 
-        # Check if already fresh
-        if not force:
-            fresh, _reason = is_output_fresh(path)
-            if fresh:
-                continue
-
-        # Write .dvc file first (prep)
-        artifact.write_dvc()
-
-        # Execute computation
-        import subprocess
-
-        cmd = artifact.computation.cmd
-        result = subprocess.run(cmd, check=False, shell=True, capture_output=True, text=True)
-
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"Computation failed for {artifact.path}:\nCommand: {cmd}\nStderr: {result.stderr}"
-            )
-
-        # Update artifact with computed hash
-        if path.exists():
-            artifact.md5 = compute_md5(path)
-            artifact.size = compute_file_size(path)
-            # Rewrite .dvc file with actual hash
-            artifact.write_dvc()
-
-        computed.append(artifact)
+    if errors:
+        error_msgs = "\n".join(f"  {a.path}: {err}" for a, err in errors)
+        raise RuntimeError(f"Computation failed for {len(errors)} artifact(s):\n{error_msgs}")
 
     return computed
