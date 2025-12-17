@@ -55,14 +55,21 @@ The `dvx-wrapper` branch now has:
 - `dvx diff <path>` - actual content diff
 - `-s/--summary` - file/hash changes (like old behavior)
 - `-r/--refspec` and `-R/--ref` for commit ranges
-- `-x/--exec-cmd` for preprocessing pipeline (requires `dffs` package)
+- `-x/--exec-cmd` for preprocessing pipeline via `dffs`
 - `-U/--unified`, `-w/--ignore-whitespace`, `-c/--color` options
 
+### 8. Improved Diff (from latest e/main) ✓
+- `CacheStatus` enum and `CacheResult` dataclass for better error handling
+- Distinguishes "not tracked" from "cache missing" (suggests `dvc pull`)
+- Support for diffing files inside DVC-tracked directories
+- Directory diff support - compares manifest changes with file sizes
+- `_find_parent_dvc_file()` to locate parent .dvc for files in tracked dirs
+- `_diff_directory()` for directory manifest comparison
+
+### 9. dffs as Required Dependency ✓
+- Moved `dffs>=0.0.7` from optional to required in `pyproject.toml`
+
 ## Remaining / Future Work
-
-### Additional Features (from EC2 work)
-
-*To be added as Ryan provides more context from EC2 node work.*
 
 ### Testing
 
@@ -72,5 +79,5 @@ The `dvx-wrapper` branch now has:
 
 ## Dependencies
 
-- `dffs` package (optional, for content diff with preprocessing)
+- `dffs>=0.0.7` (required, for content diff with preprocessing)
 - `pyyaml` with CSafeLoader (already using)

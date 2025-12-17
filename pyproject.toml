@@ -27,6 +27,7 @@ dynamic = ["version"]
 
 dependencies = [
     "click>=8.0",
+    "dffs>=0.0.7",
     "dvc>=3.50",
 ]
 

@@ -360,6 +360,30 @@ def status(targets, with_deps, jobs, verbose, as_json):
 # =============================================================================
 
 
+from dataclasses import dataclass
+from enum import Enum
+
+
+class CacheStatus(Enum):
+    """Status of cache lookup for a .dvc file."""
+    OK = "ok"                    # Cache file exists
+    NOT_TRACKED = "not_tracked"  # .dvc file doesn't exist at this revision
+    CACHE_MISSING = "cache_missing"  # .dvc file exists but cache file is missing
+
+
+@dataclass
+class CacheResult:
+    """Result of looking up a cache path."""
+    status: CacheStatus
+    path: str | None = None
+    md5: str | None = None
+    error: str | None = None
+
+    @property
+    def exists(self) -> bool:
+        return self.status == CacheStatus.OK
+
+
 def _normalize_path(path: str) -> tuple[str, str]:
     """Normalize path to (data_path, dvc_path) tuple."""
     if path.endswith(os.sep):
@@ -373,13 +397,67 @@ def _normalize_path(path: str) -> tuple[str, str]:
     return data_path, dvc_path
 
 
-def _get_cache_path_for_ref(dvc_path: str, ref: str | None) -> str | None:
-    """Get cache path for a .dvc file at a specific git ref."""
+def _find_parent_dvc_file(path: str) -> tuple[str, str] | None:
+    """Find the parent .dvc file for a path inside a DVC-tracked directory.
+
+    Returns (parent_dvc_path, relpath_within_dir) or None if not found.
+    """
+    parts = path.split(os.sep)
+    for i in range(len(parts) - 1, 0, -1):
+        parent = os.sep.join(parts[:i])
+        parent_dvc = parent + ".dvc"
+        if os.path.exists(parent_dvc):
+            rel = os.sep.join(parts[i:])
+            return (parent_dvc, rel)
+    return None
+
+
+def _get_file_md5_from_manifest(manifest_path: str, rel: str) -> str | None:
+    """Get the MD5 hash of a file from a directory manifest."""
+    import json
+
+    if not os.path.exists(manifest_path):
+        return None
+    try:
+        with open(manifest_path) as f:
+            entries = json.load(f)
+        for entry in entries:
+            if entry.get("relpath") == rel:
+                return entry.get("md5")
+        return None
+    except (json.JSONDecodeError, KeyError):
+        return None
+
+
+def _find_dvc_root() -> str:
+    """Find the root directory of the DVC repository."""
+    from dvc.repo import Repo as DVCRepo
+
+    return DVCRepo.find_root()
+
+
+def _get_cache_path_for_ref(
+    dvc_path: str,
+    ref: str | None,
+    file_in_dir: str | None = None,
+) -> CacheResult:
+    """Get cache path for a .dvc file at a specific git ref.
+
+    If file_in_dir is provided, dvc_path should be a directory .dvc file and
+    this will return the cache path for the specific file within that directory.
+
+    Returns a CacheResult with:
+    - status=OK if cache file exists
+    - status=NOT_TRACKED if .dvc file doesn't exist at this ref
+    - status=CACHE_MISSING if .dvc file exists but cache is missing
+    """
     import subprocess
 
     import yaml
 
     try:
+        root_dir = _find_dvc_root()
+
         if ref:
             # Read .dvc file content directly from git
             result = subprocess.run(
@@ -387,39 +465,113 @@ def _get_cache_path_for_ref(dvc_path: str, ref: str | None) -> str | None:
                 capture_output=True,
                 text=True,
                 check=False,
+                cwd=root_dir,
             )
             if result.returncode != 0:
-                return None
+                return CacheResult(CacheStatus.NOT_TRACKED, error=f"{dvc_path} not tracked at {ref}")
 
             loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
             dvc_content = yaml.load(result.stdout, Loader=loader)  # noqa: S506
             outs = dvc_content.get("outs", [])
             if not outs:
-                return None
+                return CacheResult(CacheStatus.NOT_TRACKED, error=f"No outputs in {dvc_path} at {ref}")
 
             md5 = outs[0].get("md5", "")
             if not md5:
-                return None
+                return CacheResult(CacheStatus.NOT_TRACKED, error=f"No md5 hash in {dvc_path} at {ref}")
 
             # For directories, md5 ends with .dir - strip for prefix, keep for suffix
             md5_base = md5.replace(".dir", "")
             suffix = ".dir" if md5.endswith(".dir") else ""
-
-            # Find .dvc directory
-            from dvc.repo import Repo as DVCRepo
-
-            root_dir = DVCRepo.find_root()
             cache_path = os.path.join(
                 root_dir, ".dvc", "cache", "files", "md5", md5_base[:2], md5_base[2:] + suffix
             )
-            return cache_path
-        else:
-            # Read from current working tree using our cache module
-            from dvx.cache import get_cache_path
 
-            return get_cache_path(dvc_path, absolute=True)
-    except Exception:
-        return None
+            # If looking for a file within a directory, look it up in the manifest
+            if file_in_dir and suffix == ".dir":
+                if not os.path.exists(cache_path):
+                    return CacheResult(
+                        CacheStatus.CACHE_MISSING,
+                        md5=md5,
+                        error=f"Directory manifest missing from cache: {md5}",
+                    )
+                file_md5 = _get_file_md5_from_manifest(cache_path, file_in_dir)
+                if file_md5:
+                    file_cache_path = os.path.join(
+                        root_dir, ".dvc", "cache", "files", "md5", file_md5[:2], file_md5[2:]
+                    )
+                    if os.path.exists(file_cache_path):
+                        return CacheResult(CacheStatus.OK, path=file_cache_path, md5=file_md5)
+                    return CacheResult(
+                        CacheStatus.CACHE_MISSING,
+                        md5=file_md5,
+                        error=f"File missing from cache: {file_md5}",
+                    )
+                return CacheResult(
+                    CacheStatus.NOT_TRACKED,
+                    error=f"{file_in_dir} not found in directory manifest",
+                )
+
+            # Check if cache file exists
+            if os.path.exists(cache_path):
+                return CacheResult(CacheStatus.OK, path=cache_path, md5=md5)
+            return CacheResult(CacheStatus.CACHE_MISSING, md5=md5, error=f"Cache file missing: {md5}")
+        else:
+            # Read from current working tree
+            if not os.path.exists(dvc_path):
+                return CacheResult(CacheStatus.NOT_TRACKED, error=f"{dvc_path} does not exist")
+
+            loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+            with open(dvc_path) as f:
+                dvc_content = yaml.load(f, Loader=loader)  # noqa: S506
+
+            outs = dvc_content.get("outs", [])
+            if not outs:
+                return CacheResult(CacheStatus.NOT_TRACKED, error=f"No outputs in {dvc_path}")
+
+            md5 = outs[0].get("md5", "")
+            if not md5:
+                return CacheResult(CacheStatus.NOT_TRACKED, error=f"No md5 hash in {dvc_path}")
+
+            # For directories, md5 ends with .dir
+            md5_base = md5.replace(".dir", "")
+            suffix = ".dir" if md5.endswith(".dir") else ""
+            cache_path = os.path.join(
+                root_dir, ".dvc", "cache", "files", "md5", md5_base[:2], md5_base[2:] + suffix
+            )
+
+            # If looking for a file within a directory
+            if file_in_dir and suffix == ".dir":
+                if not os.path.exists(cache_path):
+                    return CacheResult(
+                        CacheStatus.CACHE_MISSING,
+                        md5=md5,
+                        error=f"Directory manifest missing from cache: {md5}",
+                    )
+                file_md5 = _get_file_md5_from_manifest(cache_path, file_in_dir)
+                if file_md5:
+                    file_cache_path = os.path.join(
+                        root_dir, ".dvc", "cache", "files", "md5", file_md5[:2], file_md5[2:]
+                    )
+                    if os.path.exists(file_cache_path):
+                        return CacheResult(CacheStatus.OK, path=file_cache_path, md5=file_md5)
+                    return CacheResult(
+                        CacheStatus.CACHE_MISSING,
+                        md5=file_md5,
+                        error=f"File missing from cache: {file_md5}",
+                    )
+                return CacheResult(
+                    CacheStatus.NOT_TRACKED,
+                    error=f"{file_in_dir} not found in directory manifest",
+                )
+
+            # Check if cache file exists
+            if os.path.exists(cache_path):
+                return CacheResult(CacheStatus.OK, path=cache_path, md5=md5)
+            return CacheResult(CacheStatus.CACHE_MISSING, md5=md5, error=f"Cache file missing: {md5}")
+
+    except Exception as e:
+        return CacheResult(CacheStatus.NOT_TRACKED, error=str(e))
 
 
 def _run_diff(
@@ -463,15 +615,7 @@ def _run_pipeline_diff(
     both: bool = False,
 ) -> int:
     """Run diff with preprocessing pipeline using dffs."""
-    try:
-        from dffs import join_pipelines
-    except ImportError:
-        click.echo(
-            "Pipeline diffing requires the 'dffs' package. "
-            "Install with: pip install dffs",
-            err=True,
-        )
-        return 1
+    from dffs import join_pipelines
 
     diff_args = []
     if ignore_whitespace:
@@ -504,6 +648,56 @@ def _run_pipeline_diff(
         executable=shell_executable,
         both=both,
     )
+
+
+def _diff_directory(path1: str | None, path2: str | None, data_path: str, after: str | None) -> int:
+    """Compare directory contents by MD5 hash.
+
+    Shows which files changed between two versions of a directory.
+    """
+    import json
+    from hashlib import md5
+
+    dir_json1: dict[str, tuple[str, int]] = {}  # {relpath: (md5, size)}
+    dir_json2: dict[str, tuple[str, int]] = {}
+
+    if path1 and os.path.exists(path1):
+        with open(path1) as f:
+            obj = json.load(f)
+            dir_json1 = {e["relpath"]: (e["md5"], e.get("size", 0)) for e in obj}
+
+    if path2:
+        if path2 == data_path and after is None and os.path.isdir(path2):
+            # Working tree directory - compute hashes
+            for root, _dirs, files in os.walk(path2):
+                for filename in files:
+                    filepath = os.path.join(root, filename)
+                    relpath = os.path.relpath(filepath, path2)
+                    # Compute file hash
+                    hasher = md5()
+                    with open(filepath, "rb") as f:
+                        for chunk in iter(lambda: f.read(8192), b""):
+                            hasher.update(chunk)
+                    size = os.path.getsize(filepath)
+                    dir_json2[relpath] = (hasher.hexdigest(), size)
+        elif os.path.exists(path2):
+            with open(path2) as f:
+                dir_json2 = {e["relpath"]: (e["md5"], e.get("size", 0)) for e in json.load(f)}
+
+    # Compare and print differences
+    all_paths = sorted(set(dir_json1) | set(dir_json2))
+    has_diff = False
+    for relpath in all_paths:
+        entry1 = dir_json1.get(relpath)
+        entry2 = dir_json2.get(relpath)
+        if entry1 != entry2:
+            has_diff = True
+            md5_1, size1 = entry1 if entry1 else (None, 0)
+            md5_2, size2 = entry2 if entry2 else (None, 0)
+            # Format: relpath md5_before md5_after size_before size_after
+            click.echo(f"{relpath}\t{md5_1 or '-'}\t{md5_2 or '-'}\t{size1}\t{size2}")
+
+    return 1 if has_diff else 0
 
 
 @cli.command()
@@ -618,19 +812,57 @@ def diff(
         before = refspec
         after = None  # Compare to working tree
 
-    # Get cache paths
-    path1 = _get_cache_path_for_ref(dvc_path, before)
+    # Check if this is a file inside a DVC-tracked directory
+    parent_dvc_info = _find_parent_dvc_file(data_path)
+
+    # Get cache paths with better error handling
+    result1 = _get_cache_path_for_ref(dvc_path, before)
+    if result1.status == CacheStatus.NOT_TRACKED and parent_dvc_info:
+        # Try looking up as file inside directory
+        parent_dvc, rel = parent_dvc_info
+        result1 = _get_cache_path_for_ref(parent_dvc, before, file_in_dir=rel)
+
     if after is None:
         # Compare to working tree - use the actual file if it exists
         if os.path.exists(data_path):
             path2 = data_path
+            result2 = None  # Using actual file, not cache
         else:
-            path2 = _get_cache_path_for_ref(dvc_path, None)
+            result2 = _get_cache_path_for_ref(dvc_path, None)
+            if result2.status == CacheStatus.NOT_TRACKED and parent_dvc_info:
+                parent_dvc, rel = parent_dvc_info
+                result2 = _get_cache_path_for_ref(parent_dvc, None, file_in_dir=rel)
+            path2 = result2.path if result2 and result2.exists else None
     else:
-        path2 = _get_cache_path_for_ref(dvc_path, after)
+        result2 = _get_cache_path_for_ref(dvc_path, after)
+        if result2.status == CacheStatus.NOT_TRACKED and parent_dvc_info:
+            parent_dvc, rel = parent_dvc_info
+            result2 = _get_cache_path_for_ref(parent_dvc, after, file_in_dir=rel)
+        path2 = result2.path if result2.exists else None
 
-    if path1 is None and path2 is None:
+    # Check for cache missing errors (distinct from "file doesn't exist at revision")
+    if result1.status == CacheStatus.CACHE_MISSING:
+        raise click.ClickException(
+            f"Cache missing for '{before}': {result1.error}\n"
+            "Run 'dvc pull' to fetch from remote."
+        )
+    if result2 is not None and result2.status == CacheStatus.CACHE_MISSING:
+        after_ref = after or "working tree"
+        raise click.ClickException(
+            f"Cache missing for '{after_ref}': {result2.error}\n"
+            "Run 'dvc pull' to fetch from remote."
+        )
+
+    # Extract path1 (None means file doesn't exist at that revision - legitimate add/delete)
+    path1 = result1.path if result1.exists else None
+
+    if result1.status == CacheStatus.NOT_TRACKED and (result2 is None or result2.status == CacheStatus.NOT_TRACKED):
         raise click.ClickException(f"Could not find {dvc_path} at either revision")
+
+    # Check if it's a directory (cache paths for dirs end with .dir)
+    is_dir = (path1 and path1.endswith(".dir")) or (path2 and path2.endswith(".dir"))
+    if is_dir:
+        ctx.exit(_diff_directory(path1, path2, data_path, after))
 
     # Run diff
     if cmds:
