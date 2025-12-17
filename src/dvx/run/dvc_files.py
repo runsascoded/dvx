@@ -263,6 +263,8 @@ def write_dvc_file(
         out_entry["md5"] = f"{md5}.dir" if is_dir else md5
     if size is not None:
         out_entry["size"] = size
+    # Always specify hash: md5 to use new-style cache (not legacy md5-dos2unix)
+    out_entry["hash"] = "md5"
 
     # Add nfiles for directories (if we have the info)
     if is_dir:

@@ -650,52 +650,112 @@ def _run_pipeline_diff(
     )
 
 
-def _diff_directory(path1: str | None, path2: str | None, data_path: str, after: str | None) -> int:
-    """Compare directory contents by MD5 hash.
+def _compute_dir_manifest(dir_path: str) -> dict[str, tuple[str, int]]:
+    """Compute MD5 hashes and sizes for all files in a directory."""
+    import hashlib
 
-    Shows which files changed between two versions of a directory.
+    manifest = {}
+    dir_path = os.path.abspath(dir_path)
+    for root, _dirs, files in os.walk(dir_path):
+        for filename in files:
+            filepath = os.path.join(root, filename)
+            rel = os.path.relpath(filepath, dir_path)
+            try:
+                hasher = hashlib.md5()  # noqa: S324
+                with open(filepath, "rb") as f:
+                    for chunk in iter(lambda: f.read(8192), b""):
+                        hasher.update(chunk)
+                size = os.path.getsize(filepath)
+                manifest[rel] = (hasher.hexdigest(), size)
+            except OSError:
+                pass  # Skip files we can't read
+    return manifest
+
+
+def _get_cache_file_size(md5: str) -> int | None:
+    """Get size of a file in the cache by its MD5 hash."""
+    try:
+        root_dir = _find_dvc_root()
+        cache_path = os.path.join(root_dir, ".dvc", "cache", "files", "md5", md5[:2], md5[2:])
+        if os.path.exists(cache_path):
+            return os.path.getsize(cache_path)
+    except Exception:
+        pass
+    return None
+
+
+def _diff_directory(path1: str | None, path2: str | None, data_path: str, after: str | None) -> int:
+    """Compare directory manifests.
+
+    DVC stores directory contents as JSON manifests in the cache.
+    This function diffs those manifests to show which files changed.
     """
     import json
-    from hashlib import md5
 
-    dir_json1: dict[str, tuple[str, int]] = {}  # {relpath: (md5, size)}
-    dir_json2: dict[str, tuple[str, int]] = {}
+    def load_manifest(path: str | None) -> dict[str, tuple[str, int | None]] | None:
+        """Load directory manifest, returning {relpath: (md5, size)} dict."""
+        if not path or not os.path.exists(path):
+            return {}
+        # Skip if it's a directory (working tree) - we only read manifest files
+        if os.path.isdir(path):
+            return None  # Signal that we can't read this as manifest
+        try:
+            with open(path) as f:
+                entries = json.load(f)
+                # Look up sizes from cache for each file
+                result = {}
+                for e in entries:
+                    md5 = e["md5"]
+                    size = _get_cache_file_size(md5)
+                    result[e["relpath"]] = (md5, size)
+                return result
+        except (json.JSONDecodeError, KeyError):
+            return {}
 
-    if path1 and os.path.exists(path1):
-        with open(path1) as f:
-            obj = json.load(f)
-            dir_json1 = {e["relpath"]: (e["md5"], e.get("size", 0)) for e in obj}
+    manifest1 = load_manifest(path1)
+    manifest2 = load_manifest(path2)
 
-    if path2:
-        if path2 == data_path and after is None and os.path.isdir(path2):
-            # Working tree directory - compute hashes
-            for root, _dirs, files in os.walk(path2):
-                for filename in files:
-                    filepath = os.path.join(root, filename)
-                    relpath = os.path.relpath(filepath, path2)
-                    # Compute file hash
-                    hasher = md5()
-                    with open(filepath, "rb") as f:
-                        for chunk in iter(lambda: f.read(8192), b""):
-                            hasher.update(chunk)
-                    size = os.path.getsize(filepath)
-                    dir_json2[relpath] = (hasher.hexdigest(), size)
-        elif os.path.exists(path2):
-            with open(path2) as f:
-                dir_json2 = {e["relpath"]: (e["md5"], e.get("size", 0)) for e in json.load(f)}
+    # If one side is a working tree directory, compute hashes for it
+    if manifest2 is None and path2 and os.path.isdir(path2):
+        manifest2 = _compute_dir_manifest(path2)
 
-    # Compare and print differences
-    all_paths = sorted(set(dir_json1) | set(dir_json2))
+    if manifest1 is None and path1 and os.path.isdir(path1):
+        manifest1 = _compute_dir_manifest(path1)
+
+    # Handle empty manifests
+    manifest1 = manifest1 or {}
+    manifest2 = manifest2 or {}
+
+    # Compare manifests - output diff-style with full paths relative to data_path
+    all_paths = sorted(set(manifest1) | set(manifest2))
+    if not all_paths:
+        return 0
+
     has_diff = False
-    for relpath in all_paths:
-        entry1 = dir_json1.get(relpath)
-        entry2 = dir_json2.get(relpath)
-        if entry1 != entry2:
+
+    for rel in all_paths:
+        entry1 = manifest1.get(rel)  # (md5, size) or None
+        entry2 = manifest2.get(rel)  # (md5, size) or None
+        full_path = os.path.join(data_path, rel)
+
+        if entry1 is None:
+            # Added
+            md5_2, size_2 = entry2
+            click.secho(f"+ {full_path}  {md5_2}  {size_2 if size_2 is not None else '?'}", fg="green")
             has_diff = True
-            md5_1, size1 = entry1 if entry1 else (None, 0)
-            md5_2, size2 = entry2 if entry2 else (None, 0)
-            # Format: relpath md5_before md5_after size_before size_after
-            click.echo(f"{relpath}\t{md5_1 or '-'}\t{md5_2 or '-'}\t{size1}\t{size2}")
+        elif entry2 is None:
+            # Removed
+            md5_1, size_1 = entry1
+            click.secho(f"- {full_path}  {md5_1}  {size_1 if size_1 is not None else '?'}", fg="red")
+            has_diff = True
+        else:
+            md5_1, size_1 = entry1
+            md5_2, size_2 = entry2
+            if md5_1 != md5_2:
+                # Modified - show both old and new
+                click.secho(f"- {full_path}  {md5_1}  {size_1 if size_1 is not None else '?'}", fg="red")
+                click.secho(f"+ {full_path}  {md5_2}  {size_2 if size_2 is not None else '?'}", fg="green")
+                has_diff = True
 
     return 1 if has_diff else 0
 

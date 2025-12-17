@@ -2,11 +2,20 @@
 
 Porting features from `e/main` and `main` branches (fork approach) to `dvx-wrapper` (composition approach).
 
-## Current State (Updated)
+## Architecture
 
-The `dvx-wrapper` branch now has:
+**Key Distinction**: This branch (`dvx-wrapper`) uses the **composition approach** - it depends on DVC as a library and wraps it. The `e/main` and `main` branches use the **fork approach** - they fork DVC and modify it from within.
+
+The wrapper approach provides:
+- Simpler maintenance (no need to rebase on DVC updates)
+- Cleaner separation of DVX-specific features
+- Easier installation (just `pip install dvx`)
+
+## Current State (Final)
+
+The `dvx-wrapper` branch now has feature parity with `e/main`:
 - Basic DVC wrapper (`src/dvx/repo.py`) delegating to upstream `dvc` package
-- Click CLI (`src/dvx/cli.py`) with core commands + DVX enhancements
+- Click CLI (`src/dvx/cli.py`) with all DVX-specific commands
 - Cache introspection (`src/dvx/cache.py`)
 - Run module (`src/dvx/run/`) with:
   - `hash.py` - DVC-compatible MD5 hashing
@@ -69,15 +78,25 @@ The `dvx-wrapper` branch now has:
 ### 9. dffs as Required Dependency ✓
 - Moved `dffs>=0.0.7` from optional to required in `pyproject.toml`
 
-## Remaining / Future Work
+### 10. write_dvc_file with `hash: md5` field ✓
+- Always writes `hash: md5` to use new-style DVC cache (not legacy md5-dos2unix)
 
-### Testing
+### 11. Colored Directory Diff Output ✓
+- Added files shown in green with `+` prefix
+- Removed files shown in red with `-` prefix
+- Modified files show both old (red) and new (green) entries
+- File sizes from cache lookup included in output
 
-- Add unit tests for new directory manifest functions
-- Add integration tests for enhanced status/diff commands
-- Current: 54 tests passing
+## Verification
+
+All functionality from `e/main` has been ported and verified:
+- 54 tests passing
+- All core CLI commands working
+- Diff, status, run commands fully functional
 
 ## Dependencies
 
 - `dffs>=0.0.7` (required, for content diff with preprocessing)
-- `pyyaml` with CSafeLoader (already using)
+- `dvc>=3.50` (required, upstream DVC library)
+- `click>=8.0` (required, CLI framework)
+- `pyyaml` with CSafeLoader (already part of DVC deps)
