@@ -466,7 +466,12 @@ def read_dir_manifest(dir_md5: str, cache_dir: Path | None = None) -> dict[str, 
             return {}
 
     # DVC cache structure: .dvc/cache/files/md5/{first2}/{rest}.dir
-    manifest_path = cache_dir / dir_md5[:2] / f"{dir_md5[2:]}.dir"
+    # Handle both cases: hash with or without .dir suffix
+    if dir_md5.endswith(".dir"):
+        hash_base = dir_md5[:-4]  # Strip .dir
+    else:
+        hash_base = dir_md5
+    manifest_path = cache_dir / hash_base[:2] / f"{hash_base[2:]}.dir"
     if not manifest_path.exists():
         return {}
 

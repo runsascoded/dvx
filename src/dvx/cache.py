@@ -37,6 +37,74 @@ def _load_dvc_file(target: str, rev: str | None = None) -> dict[str, Any]:
             return yaml.safe_load(f)
 
 
+def _get_file_in_dir_hash(target: str, rev: str | None = None) -> str | None:
+    """Get the hash of a file inside a DVC-tracked directory.
+
+    Args:
+        target: Path to a file inside a tracked directory
+        rev: Git revision (e.g., HEAD, branch name, commit hash)
+
+    Returns:
+        MD5 hash string if found, None otherwise
+    """
+    import subprocess
+    from pathlib import Path
+
+    from dvx.run.dvc_files import find_parent_dvc_dir, read_dir_manifest
+
+    target_path = Path(target)
+
+    # For revision lookups, we need to find the parent .dvc file in git
+    if rev:
+        # Walk up the path looking for a .dvc file in the git revision
+        parts = target_path.parts
+        for i in range(len(parts) - 1, 0, -1):
+            parent_path = Path(*parts[:i])
+            parent_dvc = str(parent_path) + ".dvc"
+            try:
+                result = subprocess.run(
+                    ["git", "show", f"{rev}:{parent_dvc}"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                # Found a .dvc file - parse it
+                import yaml
+                dvc_data = yaml.safe_load(result.stdout)
+                relpath = str(Path(*parts[i:]))
+                break
+            except subprocess.CalledProcessError:
+                continue
+        else:
+            return None
+    else:
+        # Current filesystem lookup
+        result = find_parent_dvc_dir(target_path)
+        if result is None:
+            return None
+
+        parent_dir, relpath = result
+
+        # Get the parent directory's .dvc file hash
+        parent_dvc = str(parent_dir) + ".dvc"
+        try:
+            dvc_data = _load_dvc_file(parent_dvc, rev)
+        except (FileNotFoundError, Exception):
+            return None
+
+    outs = dvc_data.get("outs", [])
+    if not outs:
+        return None
+
+    dir_hash = outs[0].get("md5")
+    if not dir_hash or not dir_hash.endswith(".dir"):
+        return None
+
+    # Read the directory manifest from cache
+    manifest = read_dir_manifest(dir_hash)
+    return manifest.get(relpath)
+
+
 def _get_output_info(target: str, rev: str | None = None) -> tuple[str, int | None, bool]:
     """Get hash info from a .dvc file.
 
@@ -68,7 +136,8 @@ def get_hash(target: str, rev: str | None = None) -> str:
     """Get the MD5 hash for a DVC-tracked file.
 
     Args:
-        target: Path to .dvc file or tracked file (adds .dvc if needed)
+        target: Path to .dvc file or tracked file (adds .dvc if needed),
+                or a file inside a DVC-tracked directory
         rev: Git revision (e.g., HEAD, branch name, commit hash)
 
     Returns:
@@ -79,9 +148,23 @@ def get_hash(target: str, rev: str | None = None) -> str:
         "d8e8fca2dc0f896fd7cb4cb0031ba249"
         >>> get_hash("data.txt", rev="HEAD~1")
         "abc123..."
+        >>> get_hash("tracked_dir/file.txt")  # file inside tracked dir
+        "def456..."
     """
-    md5, _, _ = _get_output_info(target, rev)
-    return md5
+    # First try direct .dvc file lookup
+    import subprocess
+    try:
+        md5, _, _ = _get_output_info(target, rev)
+        return md5
+    except (FileNotFoundError, ValueError, subprocess.CalledProcessError):
+        pass
+
+    # Try file-inside-directory lookup
+    md5 = _get_file_in_dir_hash(target, rev)
+    if md5:
+        return md5
+
+    raise FileNotFoundError(f"No .dvc file found for {target}")
 
 
 def get_cache_path(
@@ -93,7 +176,8 @@ def get_cache_path(
     """Get the cache path for a DVC-tracked file.
 
     Args:
-        target: Path to .dvc file or tracked file (adds .dvc if needed)
+        target: Path to .dvc file or tracked file (adds .dvc if needed),
+                or a file inside a DVC-tracked directory
         rev: Git revision (e.g., HEAD, branch name, commit hash)
         remote: If specified, return remote storage URL instead of local path
         absolute: If True, return absolute path (default is relative)
@@ -106,8 +190,24 @@ def get_cache_path(
         ".dvc/cache/files/md5/d8/e8fca2dc0f896fd7cb4cb0031ba249"
         >>> get_cache_path("data.txt", remote="myremote")
         "s3://bucket/cache/files/md5/d8/e8fca2dc0f896fd7cb4cb0031ba249"
+        >>> get_cache_path("tracked_dir/file.txt")  # file inside tracked dir
+        ".dvc/cache/files/md5/de/f456..."
     """
-    md5, _, is_dir = _get_output_info(target, rev)
+    # Try direct .dvc file lookup first
+    import subprocess
+    md5 = None
+    is_dir = False
+    try:
+        md5, _, is_dir = _get_output_info(target, rev)
+    except (FileNotFoundError, ValueError, subprocess.CalledProcessError):
+        pass
+
+    # If not found, try file-inside-directory lookup
+    if md5 is None:
+        md5 = _get_file_in_dir_hash(target, rev)
+        if md5 is None:
+            raise FileNotFoundError(f"No .dvc file found for {target}")
+        is_dir = False  # Files inside directories are never directories themselves
 
     if remote:
         # Get remote URL using DVC's API
