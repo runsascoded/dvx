@@ -249,7 +249,14 @@ def _check_one_target(target, with_deps=True, detailed=False):
     """Check freshness of a single target. Returns dict with status info."""
     from pathlib import Path
 
-    from dvx.run.dvc_files import get_freshness_details, is_output_fresh, read_dvc_file
+    from dvx.run.dvc_files import (
+        find_parent_dvc_dir,
+        get_freshness_details,
+        is_output_fresh,
+        read_dir_manifest,
+        read_dvc_file,
+    )
+    from dvx.run.hash import compute_md5
 
     target = Path(target)
 
@@ -263,6 +270,66 @@ def _check_one_target(target, with_deps=True, detailed=False):
 
     info = read_dvc_file(dvc_path)
     if info is None:
+        # Check if this is a file inside a tracked directory
+        parent_result = find_parent_dvc_dir(target)
+        if parent_result is not None:
+            parent_dir, relpath = parent_result
+            parent_info = read_dvc_file(parent_dir)
+            if parent_info and parent_info.md5:
+                # Look up expected hash from manifest
+                manifest = read_dir_manifest(parent_info.md5)
+                expected_hash = manifest.get(relpath)
+                if expected_hash:
+                    # Check if file exists and compute its hash
+                    if not target.exists():
+                        result = {
+                            "path": str(target),
+                            "status": "missing",
+                            "reason": f"file missing (inside tracked dir {parent_dir.name}/)",
+                        }
+                        if detailed:
+                            result["output_expected"] = expected_hash
+                            result["parent_dir"] = str(parent_dir)
+                        return result
+
+                    try:
+                        actual_hash = compute_md5(target)
+                    except Exception as e:
+                        return {
+                            "path": str(target),
+                            "status": "error",
+                            "reason": f"hash error: {e}",
+                        }
+
+                    if actual_hash == expected_hash:
+                        result = {
+                            "path": str(target),
+                            "status": "fresh",
+                            "reason": None,
+                        }
+                        if detailed:
+                            result["output_expected"] = expected_hash
+                            result["output_actual"] = actual_hash
+                            result["parent_dir"] = str(parent_dir)
+                        return result
+                    else:
+                        result = {
+                            "path": str(target),
+                            "status": "stale",
+                            "reason": f"hash mismatch (inside tracked dir {parent_dir.name}/)",
+                        }
+                        if detailed:
+                            result["output_expected"] = expected_hash
+                            result["output_actual"] = actual_hash
+                            result["parent_dir"] = str(parent_dir)
+                        return result
+                else:
+                    return {
+                        "path": str(target),
+                        "status": "error",
+                        "reason": f"file not in manifest of tracked dir {parent_dir.name}/",
+                    }
+
         return {
             "path": str(target),
             "status": "error",
