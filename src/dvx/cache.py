@@ -1,7 +1,72 @@
 """DVX cache utilities for inspecting DVC-tracked files."""
 
 import os
+import re
 from typing import Any
+
+
+def is_md5_hash(value: str) -> bool:
+    """Check if a string looks like an MD5 hash.
+
+    Args:
+        value: String to check
+
+    Returns:
+        True if value is 32 hex chars (optionally with .dir suffix)
+    """
+    # MD5 hash: 32 hex characters, optionally followed by .dir
+    return bool(re.match(r"^[a-f0-9]{32}(\.dir)?$", value.lower()))
+
+
+def get_cache_path_from_hash(
+    md5: str,
+    remote: str | None = None,
+    absolute: bool = False,
+) -> str:
+    """Get the cache path for a given MD5 hash.
+
+    Args:
+        md5: MD5 hash (32 hex chars, optionally with .dir suffix)
+        remote: If specified, return remote storage URL instead of local path
+        absolute: If True, return absolute path (default is relative)
+
+    Returns:
+        Local cache path or remote URL
+
+    Examples:
+        >>> get_cache_path_from_hash("d8e8fca2dc0f896fd7cb4cb0031ba249")
+        ".dvc/cache/files/md5/d8/e8fca2dc0f896fd7cb4cb0031ba249"
+    """
+    is_dir = md5.endswith(".dir")
+
+    if remote:
+        from dvc.repo import Repo as DVCRepo
+
+        with DVCRepo() as repo:
+            remote_odb = repo.cloud.get_remote_odb(name=remote)
+            path = remote_odb.oid_to_path(md5)
+            url = remote_odb.fs.unstrip_protocol(path)
+            return url
+    else:
+        from dvc.repo import Repo as DVCRepo
+
+        try:
+            root = DVCRepo.find_root()
+        except Exception:
+            root = "."
+
+        cache_dir = os.path.join(root, ".dvc", "cache", "files", "md5")
+        hash_value = md5[:-4] if is_dir else md5  # Strip .dir suffix
+        cache_path = os.path.join(cache_dir, hash_value[:2], hash_value[2:])
+        if is_dir:
+            cache_path += ".dir"
+
+        if absolute:
+            cache_path = os.path.abspath(cache_path)
+        else:
+            cache_path = os.path.relpath(cache_path)
+
+        return cache_path
 
 
 def _load_dvc_file(target: str, rev: str | None = None) -> dict[str, Any]:
@@ -137,7 +202,7 @@ def get_hash(target: str, rev: str | None = None) -> str:
 
     Args:
         target: Path to .dvc file or tracked file (adds .dvc if needed),
-                or a file inside a DVC-tracked directory
+                a file inside a DVC-tracked directory, or an MD5 hash
         rev: Git revision (e.g., HEAD, branch name, commit hash)
 
     Returns:
@@ -150,7 +215,13 @@ def get_hash(target: str, rev: str | None = None) -> str:
         "abc123..."
         >>> get_hash("tracked_dir/file.txt")  # file inside tracked dir
         "def456..."
+        >>> get_hash("d8e8fca2dc0f896fd7cb4cb0031ba249")  # already a hash
+        "d8e8fca2dc0f896fd7cb4cb0031ba249"
     """
+    # If target is already a hash, return it
+    if is_md5_hash(target):
+        return target
+
     # First try direct .dvc file lookup
     import subprocess
     try:
@@ -173,11 +244,11 @@ def get_cache_path(
     remote: str | None = None,
     absolute: bool = False,
 ) -> str:
-    """Get the cache path for a DVC-tracked file.
+    """Get the cache path for a DVC-tracked file or hash.
 
     Args:
         target: Path to .dvc file or tracked file (adds .dvc if needed),
-                or a file inside a DVC-tracked directory
+                a file inside a DVC-tracked directory, or an MD5 hash
         rev: Git revision (e.g., HEAD, branch name, commit hash)
         remote: If specified, return remote storage URL instead of local path
         absolute: If True, return absolute path (default is relative)
@@ -192,7 +263,13 @@ def get_cache_path(
         "s3://bucket/cache/files/md5/d8/e8fca2dc0f896fd7cb4cb0031ba249"
         >>> get_cache_path("tracked_dir/file.txt")  # file inside tracked dir
         ".dvc/cache/files/md5/de/f456..."
+        >>> get_cache_path("d8e8fca2dc0f896fd7cb4cb0031ba249")  # direct hash
+        ".dvc/cache/files/md5/d8/e8fca2dc0f896fd7cb4cb0031ba249"
     """
+    # Check if target is a direct MD5 hash
+    if is_md5_hash(target):
+        return get_cache_path_from_hash(target, remote=remote, absolute=absolute)
+
     # Try direct .dvc file lookup first
     import subprocess
     md5 = None
@@ -209,37 +286,4 @@ def get_cache_path(
             raise FileNotFoundError(f"No .dvc file found for {target}")
         is_dir = False  # Files inside directories are never directories themselves
 
-    if remote:
-        # Get remote URL using DVC's API
-        from dvc.repo import Repo as DVCRepo
-
-        with DVCRepo() as repo:
-            remote_odb = repo.cloud.get_remote_odb(name=remote)
-            # For directories, the hash already ends with .dir
-            path = remote_odb.oid_to_path(md5)
-            url = remote_odb.fs.unstrip_protocol(path)
-            return url
-    else:
-        # Construct local cache path
-        # DVC 3.x cache structure: .dvc/cache/files/md5/XX/XXXXX...
-        # For directories: .dvc/cache/files/md5/XX/XXXXX....dir
-        from dvc.repo import Repo as DVCRepo
-
-        try:
-            root = DVCRepo.find_root()
-        except Exception:
-            root = "."
-
-        cache_dir = os.path.join(root, ".dvc", "cache", "files", "md5")
-        # Hash prefix is first 2 chars, rest is the file
-        hash_value = md5.rstrip(".dir") if is_dir else md5
-        cache_path = os.path.join(cache_dir, hash_value[:2], hash_value[2:])
-        if is_dir:
-            cache_path += ".dir"
-
-        if absolute:
-            cache_path = os.path.abspath(cache_path)
-        else:
-            cache_path = os.path.relpath(cache_path)
-
-        return cache_path
+    return get_cache_path_from_hash(md5, remote=remote, absolute=absolute)

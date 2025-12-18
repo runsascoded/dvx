@@ -1229,13 +1229,18 @@ def cache_dir(value, unset):
 def cache_path(target, rev, remote, absolute):
     """Get the cache path for a DVC-tracked file.
 
-    TARGET is a .dvc file or path to a tracked file (adds .dvc if needed).
+    TARGET can be:
+    - a .dvc file or path to a tracked file (adds .dvc if needed)
+    - a file inside a DVC-tracked directory
+    - an MD5 hash (32 hex chars) to get path directly
 
     Examples:
         dvx cache path data.txt.dvc
         dvx cache path data.txt
         dvx cache path data.txt --remote myremote
         dvx cache path data.txt -r HEAD~1
+        dvx cache path tracked_dir/file.txt
+        dvx cache path d8e8fca2dc0f896fd7cb4cb0031ba249
     """
     from dvx.cache import get_cache_path
 
@@ -1252,12 +1257,15 @@ def cache_path(target, rev, remote, absolute):
 def cache_md5(target, rev):
     """Get the MD5 hash for a DVC-tracked file.
 
-    TARGET is a .dvc file or path to a tracked file (adds .dvc if needed).
+    TARGET can be:
+    - a .dvc file or path to a tracked file (adds .dvc if needed)
+    - a file inside a DVC-tracked directory
 
     Examples:
         dvx cache md5 data.txt.dvc
         dvx cache md5 data.txt
         dvx cache md5 data.txt -r HEAD~1
+        dvx cache md5 tracked_dir/file.txt
     """
     from dvx.cache import get_hash
 
@@ -1279,12 +1287,17 @@ def cache_md5(target, rev):
 def cat(target, rev):
     """Display contents of a DVC-tracked file from cache.
 
-    TARGET is a .dvc file or path to a tracked file (adds .dvc if needed).
+    TARGET can be:
+    - a .dvc file or path to a tracked file (adds .dvc if needed)
+    - a file inside a DVC-tracked directory
+    - an MD5 hash (32 hex chars) to read directly from cache
 
     Examples:
         dvx cat data.txt.dvc
         dvx cat data.txt
         dvx cat data.txt -r HEAD~1
+        dvx cat tracked_dir/file.txt
+        dvx cat d8e8fca2dc0f896fd7cb4cb0031ba249
     """
     from dvx.cache import get_cache_path
 
