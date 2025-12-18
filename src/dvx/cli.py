@@ -346,6 +346,8 @@ def _check_one_target(target, with_deps=True, detailed=False):
         }
         if details.output_expected:
             result["output_expected"] = details.output_expected
+        if details.output_expected_commit:
+            result["output_expected_commit"] = details.output_expected_commit
         if details.output_actual:
             result["output_actual"] = details.output_actual
         if details.changed_deps:

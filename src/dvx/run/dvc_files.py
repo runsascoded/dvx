@@ -82,6 +82,37 @@ def get_git_blob_sha(path: str, ref: str = "HEAD", repo_path: Path | None = None
         return None
 
 
+def find_hash_commit(
+    hash_value: str,
+    file_path: str,
+    repo_path: Path | None = None,
+) -> str | None:
+    """Find the commit that introduced a specific hash string in a file.
+
+    Uses `git log -S` to find commits that added/removed the hash string.
+
+    Args:
+        hash_value: The hash string to search for
+        file_path: Path to the file to search in
+        repo_path: Path to git repository (default: current directory)
+
+    Returns:
+        Short commit SHA (e.g., "e7e0bbf") or None if not found
+    """
+    try:
+        result = subprocess.run(
+            ["git", "log", "-S", hash_value, "--format=%h", "-1", "--", file_path],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        sha = result.stdout.strip()
+        return sha if sha else None
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
 def has_file_changed_since(
     path: str,
     since_ref: str,
@@ -397,9 +428,11 @@ class FreshnessDetails:
     """Detailed information about artifact freshness."""
     fresh: bool
     reason: str
-    output_expected: str | None = None  # Expected hash from .dvc
-    output_actual: str | None = None    # Actual hash on disk
-    changed_deps: dict[str, dict[str, str]] | None = None  # {path: {expected, actual}}
+    output_expected: str | None = None         # Expected hash from .dvc
+    output_expected_commit: str | None = None  # Commit that set this expected hash
+    output_actual: str | None = None           # Actual hash on disk
+    # {path: {expected, expected_commit, actual}}
+    changed_deps: dict[str, dict[str, str | None]] | None = None
 
 
 def get_freshness_details(
@@ -472,7 +505,7 @@ def get_freshness_details(
 
             dep = Path(dep_path)
             if not dep.exists():
-                changed_deps[dep_path] = {"expected": recorded_md5, "actual": "(missing)"}
+                changed_deps[dep_path] = {"expected": recorded_md5, "expected_commit": None, "actual": "(missing)"}
                 continue
 
             # Compute current hash
@@ -481,24 +514,34 @@ def get_freshness_details(
                 try:
                     current_dep_md5, _, _ = get_artifact_hash_cached(dep, compute_md5)
                 except (FileNotFoundError, ValueError):
-                    changed_deps[dep_path] = {"expected": recorded_md5, "actual": "(error)"}
+                    changed_deps[dep_path] = {"expected": recorded_md5, "expected_commit": None, "actual": "(error)"}
                     continue
             else:
                 try:
                     current_dep_md5 = compute_md5(dep)
                 except (FileNotFoundError, ValueError):
-                    changed_deps[dep_path] = {"expected": recorded_md5, "actual": "(error)"}
+                    changed_deps[dep_path] = {"expected": recorded_md5, "expected_commit": None, "actual": "(error)"}
                     continue
 
             if current_dep_md5 != recorded_md5:
-                changed_deps[dep_path] = {"expected": recorded_md5, "actual": current_dep_md5}
+                changed_deps[dep_path] = {"expected": recorded_md5, "expected_commit": None, "actual": current_dep_md5}
 
         if changed_deps:
+            # Look up commits that introduced each expected hash
+            dvc_file_path = str(path) + ".dvc"
+            for dep_path_key, dep_info in changed_deps.items():
+                if dep_info["expected"] and dep_info["expected"] not in ("(missing)", "(error)"):
+                    commit = find_hash_commit(dep_info["expected"], dvc_file_path)
+                    dep_info["expected_commit"] = commit
+
             first_dep = next(iter(changed_deps))
+            # Also look up commit for output expected hash
+            output_expected_commit = find_hash_commit(info.md5, dvc_file_path) if info.md5 else None
             return FreshnessDetails(
                 fresh=False,
                 reason=f"dep changed: {first_dep}",
                 output_expected=info.md5,
+                output_expected_commit=output_expected_commit,
                 output_actual=current_md5,
                 changed_deps=changed_deps,
             )
