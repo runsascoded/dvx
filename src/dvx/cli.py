@@ -245,11 +245,11 @@ def _expand_targets(targets):
     return expanded
 
 
-def _check_one_target(target, with_deps=True):
+def _check_one_target(target, with_deps=True, detailed=False):
     """Check freshness of a single target. Returns dict with status info."""
     from pathlib import Path
 
-    from dvx.run.dvc_files import is_output_fresh, read_dvc_file
+    from dvx.run.dvc_files import get_freshness_details, is_output_fresh, read_dvc_file
 
     target = Path(target)
 
@@ -269,14 +269,31 @@ def _check_one_target(target, with_deps=True):
             "reason": "dvc file not found or invalid",
         }
 
-    fresh, reason = is_output_fresh(output_path, check_deps=with_deps, info=info)
-
-    if fresh:
-        return {"path": str(target), "status": "fresh", "reason": None}
-    elif "missing" in reason:
-        return {"path": str(target), "status": "missing", "reason": reason}
+    if detailed:
+        # Use detailed freshness check for structured output
+        details = get_freshness_details(output_path, check_deps=with_deps, info=info)
+        result = {
+            "path": str(target),
+            "status": "fresh" if details.fresh else ("missing" if "missing" in details.reason else "stale"),
+            "reason": details.reason if not details.fresh else None,
+        }
+        if details.output_expected:
+            result["output_expected"] = details.output_expected
+        if details.output_actual:
+            result["output_actual"] = details.output_actual
+        if details.changed_deps:
+            result["changed_deps"] = details.changed_deps
+        return result
     else:
-        return {"path": str(target), "status": "stale", "reason": reason}
+        # Simple freshness check
+        fresh, reason = is_output_fresh(output_path, check_deps=with_deps, info=info)
+
+        if fresh:
+            return {"path": str(target), "status": "fresh", "reason": None}
+        elif "missing" in reason:
+            return {"path": str(target), "status": "missing", "reason": reason}
+        else:
+            return {"path": str(target), "status": "stale", "reason": reason}
 
 
 @cli.command()
@@ -285,11 +302,13 @@ def _check_one_target(target, with_deps=True):
 @click.option("-j", "--jobs", type=int, default=None, help="Number of parallel workers.")
 @click.option("-v", "--verbose", is_flag=True, help="Show all files including fresh.")
 @click.option("--json", "as_json", is_flag=True, help="Output results as JSON.")
-def status(targets, with_deps, jobs, verbose, as_json):
+@click.option("-y", "--yaml", "as_yaml", is_flag=True, help="Output detailed results as YAML (includes before/after hashes).")
+def status(targets, with_deps, jobs, verbose, as_json, as_yaml):
     """Check freshness status of artifacts.
 
     By default, only shows stale/missing files (like git status).
     Use -v/--verbose to show all files including fresh ones.
+    Use -y/--yaml for detailed output with before/after hashes for changed deps.
 
     Examples:
         dvx status                   # Check all .dvc files
@@ -297,6 +316,7 @@ def status(targets, with_deps, jobs, verbose, as_json):
         dvx status data/             # Check all .dvc files under data/
         dvx status -j 4              # Use 4 parallel workers
         dvx status --json            # Output as JSON
+        dvx status -y                # Detailed YAML with hashes
     """
     import json as json_module
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -316,8 +336,10 @@ def status(targets, with_deps, jobs, verbose, as_json):
         click.echo("No .dvc files found")
         return
 
+    # Use detailed mode for YAML output
+    detailed = as_yaml
     results = []
-    check_fn = partial(_check_one_target, with_deps=with_deps)
+    check_fn = partial(_check_one_target, with_deps=with_deps, detailed=detailed)
 
     if jobs is None or jobs == 1:
         # Sequential
@@ -336,7 +358,19 @@ def status(targets, with_deps, jobs, verbose, as_json):
     fresh_count = sum(1 for r in results if r["status"] == "fresh")
     error_count = sum(1 for r in results if r["status"] == "error")
 
-    if as_json:
+    if as_yaml:
+        import yaml
+        # Filter to non-fresh unless verbose
+        if not verbose:
+            results = [r for r in results if r["status"] != "fresh"]
+        # Convert to dict keyed by path for nicer YAML
+        yaml_data = {}
+        for r in results:
+            path = r.pop("path")
+            # Remove None values for cleaner output
+            yaml_data[path] = {k: v for k, v in r.items() if v is not None}
+        click.echo(yaml.dump(yaml_data, default_flow_style=False, sort_keys=False))
+    elif as_json:
         click.echo(json_module.dumps(results, indent=2))
     else:
         # By default, only show non-fresh files (like git status)

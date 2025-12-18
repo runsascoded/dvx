@@ -392,6 +392,120 @@ def is_output_fresh(
     return True, "up-to-date"
 
 
+@dataclass
+class FreshnessDetails:
+    """Detailed information about artifact freshness."""
+    fresh: bool
+    reason: str
+    output_expected: str | None = None  # Expected hash from .dvc
+    output_actual: str | None = None    # Actual hash on disk
+    changed_deps: dict[str, dict[str, str]] | None = None  # {path: {expected, actual}}
+
+
+def get_freshness_details(
+    output_path: Path,
+    check_deps: bool = True,
+    check_code_ref: bool = True,
+    use_mtime_cache: bool = True,
+    info: DVCFileInfo | None = None,
+) -> FreshnessDetails:
+    """Get detailed freshness info including before/after hashes.
+
+    Similar to is_output_fresh, but returns structured details about
+    what changed, useful for debugging and structured output.
+
+    Args:
+        output_path: Path to the output file/directory
+        check_deps: Whether to verify dependencies (default: True)
+        check_code_ref: Whether to use code_ref for dep checking (default: True)
+        use_mtime_cache: Whether to use mtime cache for output hash (default: True)
+        info: Pre-parsed DVCFileInfo (avoids re-reading .dvc file if already parsed)
+
+    Returns:
+        FreshnessDetails with structured info about freshness status
+    """
+    if info is None:
+        info = read_dvc_file(output_path)
+    if info is None:
+        return FreshnessDetails(fresh=False, reason="no .dvc file")
+
+    path = Path(output_path)
+    if not path.exists():
+        return FreshnessDetails(
+            fresh=False,
+            reason="output missing",
+            output_expected=info.md5,
+        )
+
+    # Check output hash (with mtime cache optimization)
+    if use_mtime_cache:
+        from dvx.run.status import get_artifact_hash_cached
+        try:
+            current_md5, _, _ = get_artifact_hash_cached(path, compute_md5)
+        except (FileNotFoundError, ValueError) as e:
+            return FreshnessDetails(fresh=False, reason=f"hash error: {e}")
+    else:
+        try:
+            current_md5 = compute_md5(path)
+        except (FileNotFoundError, ValueError) as e:
+            return FreshnessDetails(fresh=False, reason=f"hash error: {e}")
+
+    if current_md5 != info.md5:
+        return FreshnessDetails(
+            fresh=False,
+            reason="output hash mismatch",
+            output_expected=info.md5,
+            output_actual=current_md5,
+        )
+
+    # Check dependencies if requested
+    if check_deps and info.deps:
+        changed_deps = {}
+
+        for dep_path, recorded_md5 in info.deps.items():
+            # Try git comparison first if we have code_ref
+            if check_code_ref and info.code_ref:
+                git_result = has_file_changed_since(dep_path, info.code_ref)
+                if git_result is False:
+                    continue  # Git says unchanged
+                # git_result is True or None - need to check further
+
+            dep = Path(dep_path)
+            if not dep.exists():
+                changed_deps[dep_path] = {"expected": recorded_md5, "actual": "(missing)"}
+                continue
+
+            # Compute current hash
+            if use_mtime_cache:
+                from dvx.run.status import get_artifact_hash_cached
+                try:
+                    current_dep_md5, _, _ = get_artifact_hash_cached(dep, compute_md5)
+                except (FileNotFoundError, ValueError):
+                    changed_deps[dep_path] = {"expected": recorded_md5, "actual": "(error)"}
+                    continue
+            else:
+                try:
+                    current_dep_md5 = compute_md5(dep)
+                except (FileNotFoundError, ValueError):
+                    changed_deps[dep_path] = {"expected": recorded_md5, "actual": "(error)"}
+                    continue
+
+            if current_dep_md5 != recorded_md5:
+                changed_deps[dep_path] = {"expected": recorded_md5, "actual": current_dep_md5}
+
+        if changed_deps:
+            first_dep = next(iter(changed_deps))
+            return FreshnessDetails(
+                fresh=False,
+                reason=f"dep changed: {first_dep}",
+                output_expected=info.md5,
+                output_actual=current_md5,
+                changed_deps=changed_deps,
+            )
+
+    return FreshnessDetails(fresh=True, reason="up-to-date")
+
+
 def get_dvc_file_path(output_path: Path) -> Path:
     """Get the .dvc file path for an output.
 
