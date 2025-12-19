@@ -36,6 +36,40 @@ import yaml
 from dvx.run.hash import compute_md5
 
 
+# Cache for git blob SHAs (keyed by (repo_path, ref))
+_blob_cache: dict[tuple[str | None, str], dict[str, str]] = {}
+
+
+def _get_blob_cache(ref: str = "HEAD", repo_path: Path | None = None) -> dict[str, str]:
+    """Get or build the blob SHA cache for a git ref.
+
+    Uses `git ls-tree -r` to get all blob SHAs in one call, which is
+    ~50x faster than individual `git rev-parse` calls per file.
+    """
+    cache_key = (str(repo_path) if repo_path else None, ref)
+    if cache_key in _blob_cache:
+        return _blob_cache[cache_key]
+
+    blob_map = {}
+    try:
+        result = subprocess.run(
+            ["git", "ls-tree", "-r", "--format=%(objectname) %(path)", ref],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        for line in result.stdout.strip().split('\n'):
+            if line:
+                sha, path = line.split(' ', 1)
+                blob_map[path] = sha
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+
+    _blob_cache[cache_key] = blob_map
+    return blob_map
+
+
 def get_git_head_sha(repo_path: Path | None = None) -> str | None:
     """Get the current HEAD commit SHA.
 
@@ -69,6 +103,14 @@ def get_git_blob_sha(path: str, ref: str = "HEAD", repo_path: Path | None = None
     Returns:
         Blob SHA string, or None if file doesn't exist at that ref
     """
+    # Use batched cache for common refs (HEAD, commit SHAs)
+    # This is ~50x faster than individual git rev-parse calls
+    is_sha_like = ref.isalnum() and len(ref) in (7, 8, 12, 40)  # short or full SHA
+    if ref == "HEAD" or is_sha_like:
+        blob_map = _get_blob_cache(ref, repo_path)
+        return blob_map.get(path)
+
+    # Individual lookup for other refs
     try:
         result = subprocess.run(
             ["git", "rev-parse", f"{ref}:{path}"],
