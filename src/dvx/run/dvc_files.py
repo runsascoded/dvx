@@ -372,22 +372,24 @@ def write_dvc_file(
 def is_output_fresh(
     output_path: Path,
     check_deps: bool = True,
-    check_code_ref: bool = True,
+    check_code_ref: bool = True,  # noqa: ARG001 (deprecated, kept for compat)
     use_mtime_cache: bool = True,
     info: DVCFileInfo | None = None,
 ) -> tuple[bool, str]:
     """Check if output is fresh (up-to-date with its .dvc file and deps).
 
-    Freshness is determined by:
-    1. Output file exists
-    2. Output hash matches .dvc file (uses mtime cache to avoid redundant hashing)
-    3. Dependencies haven't changed since code_ref (via git blob comparison)
-    4. For untracked deps, fall back to hash comparison
+    Freshness has two components:
+    1. Data fresh: output hash matches .dvc file (uses mtime cache to avoid redundant hashing)
+    2. Deps fresh: recorded dep hashes match dep's .dvc expected hashes
+
+    Note: Dep checking compares our recorded dep hash against the dep's .dvc file,
+    NOT against the dep's actual data. This mirrors git's model - each .dvc file
+    declares what it expects, with no transitivity.
 
     Args:
         output_path: Path to the output file/directory
         check_deps: Whether to verify dependencies (default: True)
-        check_code_ref: Whether to use code_ref for dep checking (default: True)
+        check_code_ref: Deprecated, kept for backward compatibility
         use_mtime_cache: Whether to use mtime cache for output hash (default: True)
         info: Pre-parsed DVCFileInfo (avoids re-reading .dvc file if already parsed)
 
@@ -418,48 +420,24 @@ def is_output_fresh(
             return False, f"hash error: {e}"
 
     if current_md5 != info.md5:
-        return False, f"output hash mismatch ({info.md5[:8]}... vs {current_md5[:8]}...)"
+        return False, f"data changed ({info.md5[:8]}... vs {current_md5[:8]}...)"
 
     # Check dependencies if requested
+    # Compare recorded dep hashes against dep's .dvc file (not actual data)
     if check_deps and info.deps:
-        # First, try fast git blob comparison if we have code_ref
-        if check_code_ref and info.code_ref:
-            git_changed, changed_paths = have_deps_changed_since(info.deps, info.code_ref)
-            if git_changed:
-                return False, f"dep changed (git): {changed_paths[0]}"
-
-        # For deps not in git (or if no code_ref), fall back to hash comparison
         for dep_path, recorded_md5 in info.deps.items():
-            # Skip if we already checked via git and it was unchanged
-            if check_code_ref and info.code_ref:
-                git_result = has_file_changed_since(dep_path, info.code_ref)
-                if git_result is False:
-                    # Git says unchanged, trust it
-                    continue
-                if git_result is True:
-                    # Already caught above, but just in case
-                    return False, f"dep changed: {dep_path}"
-                # git_result is None - file not in git, check hash
-
             dep = Path(dep_path)
-            if not dep.exists():
-                return False, f"dep missing: {dep_path}"
+            # Try to read dep's .dvc file
+            dep_info = read_dvc_file(dep)
+            if dep_info is None:
+                # No .dvc file - dep might be a raw file, check if it exists
+                if not dep.exists():
+                    return False, f"dep missing: {dep_path}"
+                # Raw file exists but no .dvc - can't verify hash, assume ok
+                continue
 
-            # Use mtime cache for dep hash too
-            if use_mtime_cache:
-                from dvx.run.status import get_artifact_hash_cached
-
-                try:
-                    current_dep_md5, _, _ = get_artifact_hash_cached(dep, compute_md5)
-                except (FileNotFoundError, ValueError) as e:
-                    return False, f"dep hash error ({dep_path}): {e}"
-            else:
-                try:
-                    current_dep_md5 = compute_md5(dep)
-                except (FileNotFoundError, ValueError) as e:
-                    return False, f"dep hash error ({dep_path}): {e}"
-
-            if current_dep_md5 != recorded_md5:
+            # Compare our recorded hash against dep's .dvc expected hash
+            if dep_info.md5 != recorded_md5:
                 return False, f"dep changed: {dep_path}"
 
     return True, "up-to-date"
@@ -480,7 +458,7 @@ class FreshnessDetails:
 def get_freshness_details(
     output_path: Path,
     check_deps: bool = True,
-    check_code_ref: bool = True,
+    check_code_ref: bool = True,  # noqa: ARG001 (deprecated, kept for compat)
     use_mtime_cache: bool = True,
     info: DVCFileInfo | None = None,
 ) -> FreshnessDetails:
@@ -489,10 +467,14 @@ def get_freshness_details(
     Similar to is_output_fresh, but returns structured details about
     what changed, useful for debugging and structured output.
 
+    Freshness has two components:
+    1. Data fresh: output hash matches .dvc file
+    2. Deps fresh: recorded dep hashes match dep's .dvc expected hashes
+
     Args:
         output_path: Path to the output file/directory
         check_deps: Whether to verify dependencies (default: True)
-        check_code_ref: Whether to use code_ref for dep checking (default: True)
+        check_code_ref: Deprecated, kept for backward compatibility
         use_mtime_cache: Whether to use mtime cache for output hash (default: True)
         info: Pre-parsed DVCFileInfo (avoids re-reading .dvc file if already parsed)
 
@@ -534,47 +516,32 @@ def get_freshness_details(
         )
 
     # Check dependencies if requested
+    # Compare recorded dep hashes against dep's .dvc file (not actual data)
     if check_deps and info.deps:
         changed_deps = {}
 
         for dep_path, recorded_md5 in info.deps.items():
-            # Try git comparison first if we have code_ref
-            if check_code_ref and info.code_ref:
-                git_result = has_file_changed_since(dep_path, info.code_ref)
-                if git_result is False:
-                    continue  # Git says unchanged
-                # git_result is True or None - need to check further
-
             dep = Path(dep_path)
-            if not dep.exists():
-                changed_deps[dep_path] = {"expected": recorded_md5, "expected_commit": None, "actual": "(missing)"}
+            # Try to read dep's .dvc file
+            dep_info = read_dvc_file(dep)
+            if dep_info is None:
+                # No .dvc file - dep might be a raw file, check if it exists
+                if not dep.exists():
+                    changed_deps[dep_path] = {"expected": recorded_md5, "expected_commit": None, "actual": "(missing)"}
+                # Raw file exists but no .dvc - can't verify hash, assume ok
                 continue
 
-            # Compute current hash
-            if use_mtime_cache:
-                from dvx.run.status import get_artifact_hash_cached
-                try:
-                    current_dep_md5, _, _ = get_artifact_hash_cached(dep, compute_md5)
-                except (FileNotFoundError, ValueError):
-                    changed_deps[dep_path] = {"expected": recorded_md5, "expected_commit": None, "actual": "(error)"}
-                    continue
-            else:
-                try:
-                    current_dep_md5 = compute_md5(dep)
-                except (FileNotFoundError, ValueError):
-                    changed_deps[dep_path] = {"expected": recorded_md5, "expected_commit": None, "actual": "(error)"}
-                    continue
-
-            if current_dep_md5 != recorded_md5:
-                changed_deps[dep_path] = {"expected": recorded_md5, "expected_commit": None, "actual": current_dep_md5}
+            # Compare our recorded hash against dep's .dvc expected hash
+            if dep_info.md5 != recorded_md5:
+                changed_deps[dep_path] = {"expected": recorded_md5, "expected_commit": None, "actual": dep_info.md5}
 
         if changed_deps:
             # Look up commits that introduced each expected hash
             dvc_file_path = str(path) + ".dvc"
-            for dep_path_key, dep_info in changed_deps.items():
-                if dep_info["expected"] and dep_info["expected"] not in ("(missing)", "(error)"):
-                    commit = find_hash_commit(dep_info["expected"], dvc_file_path)
-                    dep_info["expected_commit"] = commit
+            for dep_path_key, dep_details in changed_deps.items():
+                if dep_details["expected"] and dep_details["expected"] not in ("(missing)", "(error)"):
+                    commit = find_hash_commit(dep_details["expected"], dvc_file_path)
+                    dep_details["expected_commit"] = commit
 
             first_dep = next(iter(changed_deps))
             # Also look up commit for output expected hash
