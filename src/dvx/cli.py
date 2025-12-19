@@ -66,57 +66,21 @@ def init(no_scm, force):
 
 @cli.command()
 @click.argument("targets", nargs=-1, required=True)
-@click.option("-f", "--force", is_flag=True, help="Override local file or folder if exists.")
-@click.option("--glob", is_flag=True, help="Enable globbing for targets.")
-@click.option("-L", "--lockfree", is_flag=True, help="Use lock-free add (safe for parallel calls).")
-@click.option("--no-commit", is_flag=True, help="Don't put files/directories into cache.")
-@click.option("-o", "--out", metavar="<path>", help="Destination path to put files to.")
-@click.option("-r", "--remote", metavar="<name>", help="Remote storage to upload to.")
-@click.option("--to-remote", is_flag=True, help="Upload directly to remote storage.")
-def add(targets, force, glob, lockfree, no_commit, out, remote, to_remote):
+@click.option("-f", "--force", is_flag=True, help="Override existing cache entry.")
+def add(targets, force):
     """Track file(s) or directory(ies) with DVX.
 
     Creates .dvc files and adds data to the cache.
-
-    Use -L/--lockfree for parallel-safe adds (no DVC global lock).
+    Safe for parallel execution (no global locking).
     """
-    # Validation
-    if to_remote or out:
-        if len(targets) != 1:
-            raise click.ClickException("--to-remote/--out can't be used with multiple targets")
-        if glob:
-            raise click.ClickException("--glob can't be used with --to-remote/--out")
-        if no_commit:
-            raise click.ClickException("--no-commit can't be used with --to-remote/--out")
-        if lockfree:
-            raise click.ClickException("--lockfree can't be used with --to-remote/--out")
-    else:
-        if remote:
-            raise click.ClickException("--remote can't be used without --to-remote")
+    from dvx.cache import add_to_cache
 
-    if lockfree:
-        from dvx.cache import add_to_cache
-
-        for target in targets:
-            try:
-                md5, size, is_dir = add_to_cache(target, force=force)
-                click.echo(f"Added {target} ({md5[:8]}...)")
-            except Exception as e:
-                raise click.ClickException(f"Failed to add {target}: {e}") from e
-    else:
+    for target in targets:
         try:
-            with Repo() as repo:
-                repo.add(
-                    list(targets),
-                    no_commit=no_commit,
-                    glob=glob,
-                    out=out,
-                    remote=remote,
-                    to_remote=to_remote,
-                    force=force,
-                )
+            md5, size, is_dir = add_to_cache(target, force=force)
+            click.echo(f"Added {target} ({md5[:8]}...)")
         except Exception as e:
-            raise click.ClickException(str(e)) from e
+            raise click.ClickException(f"Failed to add {target}: {e}") from e
 
 
 # =============================================================================
