@@ -13,25 +13,26 @@ The wrapper approach provides:
 
 ## Current State (Final)
 
-The `dvx-wrapper` branch now has feature parity with `e/main`:
+The `dvx-wrapper` branch now has feature parity with `e/main` plus additional enhancements:
 - Basic DVC wrapper (`src/dvx/repo.py`) delegating to upstream `dvc` package
 - Click CLI (`src/dvx/cli.py`) with all DVX-specific commands
-- Cache introspection (`src/dvx/cache.py`)
+- Cache introspection (`src/dvx/cache.py`) with lock-free parallel add
 - Run module (`src/dvx/run/`) with:
   - `hash.py` - DVC-compatible MD5 hashing
-  - `status.py` - SQLite mtime cache for hash caching
-  - `dvc_files.py` - .dvc file read/write with computation blocks, git blob comparison, directory manifest support
+  - `status.py` - SQLite mtime cache for hash caching (handles directories correctly)
+  - `dvc_files.py` - .dvc file read/write, simplified dep checking, batched git lookups
   - `artifact.py` - Artifact/Computation dataclasses, `delayed` decorator, `materialize()` with parallel execution
   - `executor.py` - Parallel execution engine
 - Test suite (54 tests)
+- Performance: status on 1900+ files in <1 second
 
 ## Completed Features
 
-### 1. Fast Git-Based Dependency Checking ✓
-- `get_git_blob_sha()` - get git blob SHA for file at ref
-- `has_file_changed_since()` - check if file changed via git blob comparison
-- `have_deps_changed_since()` - check if any deps changed since commit
-- `is_output_fresh()` uses git blob comparison when `code_ref` is available
+### 1. Simplified Dependency Checking ✓
+- Compares recorded dep hash against dep's `.dvc` file (not actual data)
+- Mirrors git's model: each `.dvc` declares expectations, no transitivity
+- `is_output_fresh()` distinguishes "data changed" vs "dep changed"
+- Git blob helpers available but not used for dep freshness (kept for other uses)
 
 ### 2. Directory Manifest Support ✓
 - `find_parent_dvc_dir()` - walk up tree to find parent .dvc-tracked directory
@@ -86,6 +87,18 @@ The `dvx-wrapper` branch now has feature parity with `e/main`:
 - Removed files shown in red with `-` prefix
 - Modified files show both old (red) and new (green) entries
 - File sizes from cache lookup included in output
+
+### 12. Lock-Free Parallel Add ✓
+- `add_to_cache()` uses atomic file writes (temp file + `os.replace`)
+- No file locking required - safe to run multiple `dvx add` in parallel
+- Preserves and updates `meta.computation` section when adding
+- Updates dep hashes to match current dep `.dvc` files
+
+### 13. Performance Optimizations ✓
+- **Batched git lookups**: `git ls-tree -r` gets all blob SHAs in one call (~35x faster)
+- **Directory mtime cache**: Uses max file mtime (not dir mtime) for accurate invalidation
+- **SQLite mtime cache**: Avoids redundant hash computation when mtime unchanged
+- Status check on 1900+ files completes in <1 second
 
 ## Verification
 

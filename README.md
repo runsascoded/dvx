@@ -31,7 +31,7 @@ pip install dvx[all]
 # Initialize
 dvx init
 
-# Track files
+# Track files (parallel-safe, lock-free)
 dvx add data/
 dvx add model.pkl
 
@@ -44,8 +44,11 @@ dvx push
 # Pull from remote
 dvx pull
 
-# Check status
+# Check status (shows data vs dep freshness)
 dvx status
+dvx status -v          # also show fresh files
+dvx status --json      # JSON output
+dvx status -j4 data/   # parallel checking
 ```
 
 ### Python API
@@ -77,7 +80,7 @@ DVX exposes these DVC commands:
 | `pull` | Download data from remote storage |
 | `fetch` | Download data to cache (no checkout) |
 | `checkout` | Restore data files from cache |
-| `status` | Show status of tracked files |
+| `status` | Show freshness of tracked files (data & deps) |
 | `diff` | Show changes between revisions |
 | `gc` | Garbage collect unused cache |
 | `remove` | Stop tracking file(s) |
@@ -102,6 +105,31 @@ DVX intentionally excludes:
 - **Stages** (`dvc stage`)
 
 If you need these features, use DVC directly.
+
+## Freshness Model
+
+DVX tracks two types of freshness for each artifact:
+
+1. **Data freshness**: Does the actual data match the hash in the `.dvc` file?
+2. **Dep freshness**: Do recorded dependency hashes match the deps' `.dvc` files?
+
+This mirrors git's model - each `.dvc` file declares what it expects, with no transitivity. If a dependency's data differs from its own `.dvc` file, that's a separate issue for that dependency.
+
+```bash
+$ dvx status s3/output/
+✗ s3/output/result.parquet.dvc (data changed (abc123... vs def456...))
+✗ s3/output/summary.json.dvc (dep changed: s3/input/data.parquet)
+✓ s3/output/metadata.json.dvc (up-to-date)
+```
+
+## Performance
+
+DVX is optimized for large repos:
+
+- **Mtime caching**: Skips hash computation when file mtime unchanged (SQLite-backed)
+- **Batched git lookups**: Uses `git ls-tree -r` for all blob SHAs in one call
+- **Lock-free adds**: Parallel-safe cache operations via atomic file writes
+- **Parallel status**: Check many files concurrently with `-j/--jobs`
 
 ## Compatibility
 
