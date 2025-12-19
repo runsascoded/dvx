@@ -219,11 +219,24 @@ def get_artifact_hash_cached(
     db = get_status_db()
     path_str = str(path)
 
-    # Get current mtime
+    # Get current mtime and size
     try:
-        stat = path.stat()
-        current_mtime = stat.st_mtime
-        current_size = stat.st_size if path.is_file() else None
+        if path.is_file():
+            stat = path.stat()
+            current_mtime = stat.st_mtime
+            current_size = stat.st_size
+        elif path.is_dir():
+            # For directories, use max mtime of all files (not dir mtime, which
+            # only changes when files are added/removed, not when contents change)
+            current_mtime = 0.0
+            current_size = 0
+            for f in path.rglob("*"):
+                if f.is_file():
+                    fstat = f.stat()
+                    current_mtime = max(current_mtime, fstat.st_mtime)
+                    current_size += fstat.st_size
+        else:
+            return None, 0, False
     except FileNotFoundError:
         return None, 0, False
 
@@ -235,11 +248,6 @@ def get_artifact_hash_cached(
 
     # Cache miss - compute hash
     hash_value = compute_hash_fn(path)
-
-    # Get size (for directories, need to compute)
-    if current_size is None:
-        # Directory - sum file sizes
-        current_size = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
     # Update cache
     db.set(path_str, mtime=current_mtime, hash_value=hash_value, size=current_size)
