@@ -287,3 +287,141 @@ def get_cache_path(
         is_dir = False  # Files inside directories are never directories themselves
 
     return get_cache_path_from_hash(md5, remote=remote, absolute=absolute)
+
+
+def add_to_cache(
+    target: str,
+    force: bool = False,
+) -> tuple[str, int, bool]:
+    """Add a file or directory to DVC cache without global locking.
+
+    This is a lock-free alternative to `dvc add` that can be safely called
+    in parallel for independent files.
+
+    Args:
+        target: Path to file or directory to add
+        force: Overwrite existing cache entry if present
+
+    Returns:
+        Tuple of (md5_hash, size, is_dir)
+    """
+    import hashlib
+    import json
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    import yaml
+
+    from dvc.repo import Repo as DVCRepo
+
+    target_path = Path(target)
+    if not target_path.exists():
+        raise FileNotFoundError(f"{target} not found")
+
+    # Get cache directory
+    try:
+        root = DVCRepo.find_root()
+    except Exception:
+        root = "."
+    cache_dir = Path(root) / ".dvc" / "cache" / "files" / "md5"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    is_dir = target_path.is_dir()
+
+    if is_dir:
+        # For directories, compute manifest and hash
+        entries = []
+        total_size = 0
+        for subfile in sorted(target_path.rglob("*")):
+            if subfile.is_file():
+                rel_path = subfile.relative_to(target_path)
+                rel_path_str = str(rel_path).replace("\\", "/")
+                file_hash = _hash_single_file(subfile)
+                file_size = subfile.stat().st_size
+                entries.append({
+                    "md5": file_hash,
+                    "relpath": rel_path_str,
+                })
+                total_size += file_size
+                # Also cache individual files
+                _cache_file(subfile, file_hash, cache_dir, force)
+
+        # Sort entries by relpath (DVC convention)
+        entries.sort(key=lambda e: e["relpath"])
+
+        # Hash the manifest
+        json_str = json.dumps(entries, separators=(", ", ": "))
+        manifest_hash = hashlib.md5(json_str.encode()).hexdigest()  # noqa: S324
+        dir_hash = manifest_hash + ".dir"
+
+        # Write manifest to cache
+        manifest_cache_path = cache_dir / manifest_hash[:2] / (manifest_hash[2:] + ".dir")
+        manifest_cache_path.parent.mkdir(parents=True, exist_ok=True)
+        if force or not manifest_cache_path.exists():
+            with tempfile.NamedTemporaryFile(
+                mode="w", dir=manifest_cache_path.parent, delete=False, suffix=".tmp"
+            ) as tmp:
+                json.dump(entries, tmp, separators=(", ", ": "))
+                tmp_path = tmp.name
+            os.replace(tmp_path, manifest_cache_path)
+
+        md5 = dir_hash
+        size = total_size
+    else:
+        # For files, compute hash and cache
+        md5 = _hash_single_file(target_path)
+        size = target_path.stat().st_size
+        _cache_file(target_path, md5, cache_dir, force)
+
+    # Write .dvc file
+    dvc_path = Path(str(target) + ".dvc")
+    dvc_content = {
+        "hash": "md5",
+        "outs": [{
+            "md5": md5,
+            "size": size,
+            "path": target_path.name,
+        }],
+    }
+    # Atomic write
+    with tempfile.NamedTemporaryFile(
+        mode="w", dir=dvc_path.parent, delete=False, suffix=".tmp"
+    ) as tmp:
+        yaml.dump(dvc_content, tmp, default_flow_style=False, sort_keys=False)
+        tmp_path = tmp.name
+    os.replace(tmp_path, dvc_path)
+
+    return md5, size, is_dir
+
+
+def _hash_single_file(file_path) -> str:
+    """Compute MD5 hash of a single file."""
+    import hashlib
+    md5 = hashlib.md5()  # noqa: S324
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            md5.update(chunk)
+    return md5.hexdigest()
+
+
+def _cache_file(file_path, file_hash: str, cache_dir, force: bool = False):
+    """Copy a file to DVC cache atomically."""
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    cache_path = cache_dir / file_hash[:2] / file_hash[2:]
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not force and cache_path.exists():
+        return  # Already cached
+
+    # Atomic copy: write to temp file, then rename
+    with tempfile.NamedTemporaryFile(
+        dir=cache_path.parent, delete=False, suffix=".tmp"
+    ) as tmp:
+        tmp_path = Path(tmp.name)
+
+    shutil.copy2(file_path, tmp_path)
+    os.replace(tmp_path, cache_path)
