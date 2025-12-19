@@ -374,16 +374,51 @@ def add_to_cache(
         size = target_path.stat().st_size
         _cache_file(target_path, md5, cache_dir, force)
 
-    # Write .dvc file
+    # Write .dvc file, preserving existing metadata
     dvc_path = Path(str(target) + ".dvc")
+
+    # Load existing .dvc file to preserve meta section
+    existing_meta = None
+    if dvc_path.exists():
+        try:
+            with open(dvc_path) as f:
+                existing = yaml.safe_load(f)
+                if existing and "meta" in existing:
+                    existing_meta = existing["meta"]
+        except Exception:
+            pass  # If we can't read it, start fresh
+
     dvc_content = {
-        "hash": "md5",
         "outs": [{
             "md5": md5,
             "size": size,
+            "hash": "md5",
             "path": target_path.name,
         }],
     }
+
+    # Preserve existing meta section, updating dep hashes
+    if existing_meta:
+        # Update computation deps with current hashes
+        if "computation" in existing_meta and "deps" in existing_meta["computation"]:
+            deps = existing_meta["computation"]["deps"]
+            updated_deps = {}
+            for dep_path in deps:
+                dep_file = Path(dep_path)
+                if dep_file.exists():
+                    updated_deps[dep_path] = _hash_single_file(dep_file)
+                elif Path(dep_path + ".dvc").exists():
+                    # Dep is a DVC-tracked file, get its hash from .dvc file
+                    try:
+                        hash_val = get_hash(dep_path)
+                        updated_deps[dep_path] = hash_val
+                    except Exception:
+                        updated_deps[dep_path] = deps[dep_path]  # Keep old hash
+                else:
+                    updated_deps[dep_path] = deps[dep_path]  # Keep old hash
+            existing_meta["computation"]["deps"] = updated_deps
+        dvc_content["meta"] = existing_meta
+
     # Atomic write
     with tempfile.NamedTemporaryFile(
         mode="w", dir=dvc_path.parent, delete=False, suffix=".tmp"
