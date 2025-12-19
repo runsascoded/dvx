@@ -231,17 +231,34 @@ def checkout(targets, force, recursive, relink):
 
 
 def _expand_targets(targets):
-    """Expand targets: directories become all .dvc files under them, files remain as-is."""
+    """Expand targets: directories become all .dvc files under them, files get .dvc added if needed."""
     from pathlib import Path
 
     expanded = []
     for target in targets:
         p = Path(target)
-        if p.is_dir():
-            # Recursively find all .dvc files under this directory
-            expanded.extend(sorted(p.glob("**/*.dvc")))
-        else:
+        if p.suffix == ".dvc":
+            # Already a .dvc file
             expanded.append(p)
+        elif p.is_dir():
+            # First check if this directory is itself a tracked output (has .dvc file)
+            dvc_path = Path(str(p) + ".dvc")
+            if dvc_path.exists():
+                expanded.append(dvc_path)
+            else:
+                # Recursively find all .dvc files under this directory
+                expanded.extend(sorted(p.glob("**/*.dvc")))
+        else:
+            # Try adding .dvc extension
+            dvc_path = Path(str(p) + ".dvc")
+            if dvc_path.exists():
+                expanded.append(dvc_path)
+            elif p.exists():
+                # Path exists but no .dvc - could be a file inside a tracked dir
+                expanded.append(p)
+            else:
+                # Neither exists - try .dvc version anyway (will error later with useful message)
+                expanded.append(dvc_path)
     return expanded
 
 
