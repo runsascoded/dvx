@@ -397,9 +397,30 @@ def add_to_cache(
         }],
     }
 
-    # Preserve existing meta section (deps unchanged - they record provenance)
+    # Preserve existing meta section, but update dep hashes to current values
+    # The output was just regenerated, so deps should reflect what was actually used
     if existing_meta:
         dvc_content["meta"] = existing_meta
+        # Update dep hashes from current .dvc files
+        if "computation" in existing_meta and "deps" in existing_meta["computation"]:
+            deps = existing_meta["computation"]["deps"]
+            updated_deps = {}
+            for dep_path in deps.keys():
+                dep_dvc = Path(dep_path + ".dvc")
+                if dep_dvc.exists():
+                    try:
+                        with open(dep_dvc) as f:
+                            dep_data = yaml.safe_load(f)
+                            if dep_data and "outs" in dep_data:
+                                dep_md5 = dep_data["outs"][0].get("md5")
+                                if dep_md5:
+                                    updated_deps[dep_path] = dep_md5
+                                    continue
+                    except Exception:
+                        pass
+                # Fall back to existing hash if we can't get current
+                updated_deps[dep_path] = deps[dep_path]
+            existing_meta["computation"]["deps"] = updated_deps
 
     # Atomic write
     with tempfile.NamedTemporaryFile(
