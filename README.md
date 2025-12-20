@@ -34,6 +34,7 @@ dvx init
 # Track files (parallel-safe, lock-free)
 dvx add data/
 dvx add model.pkl
+dvx add -r output.parquet  # auto-add stale deps first
 
 # Configure remote
 dvx remote add -d myremote s3://mybucket/dvc
@@ -120,6 +121,25 @@ $ dvx status s3/output/
 ✗ s3/output/result.parquet.dvc (data changed (abc123... vs def456...))
 ✗ s3/output/summary.json.dvc (dep changed: s3/input/data.parquet)
 ✓ s3/output/metadata.json.dvc (up-to-date)
+```
+
+### Provenance Tracking
+
+When adding an output with deps, DVX ensures accurate provenance:
+
+- **Deps must be fresh**: `dvx add` errors if any dep's file hash differs from its `.dvc` hash
+- **Recursive add**: Use `dvx add -r` to auto-add stale deps first (depth-first)
+- **Accurate recording**: Recorded dep hashes always match what was actually used
+
+```bash
+$ dvx add output.parquet
+Error: Cannot add output.parquet: 1 stale dep(s):
+  input.parquet: .dvc=abc123... file=def456...
+Run `dvx add` on deps first, or use --recursive
+
+$ dvx add -r output.parquet  # adds input.parquet first, then output.parquet
+Added input.parquet (def456...)
+Added output.parquet (xyz789...)
 ```
 
 ## Performance

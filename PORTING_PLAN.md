@@ -94,6 +94,13 @@ The `dvx-wrapper` branch now has feature parity with `e/main` plus additional en
 - Preserves and updates `meta.computation` section when adding
 - Updates dep hashes to match current dep `.dvc` files
 
+### 14. Stale Dep Detection and Recursive Add ✓
+- `dvx add` verifies deps are fresh before recording dep hashes
+- Compares each dep's file hash to its `.dvc` hash
+- Errors if deps are stale (file ≠ .dvc), preventing provenance bugs
+- `--recursive` flag auto-adds stale deps depth-first before adding output
+- Ensures recorded dep hashes always accurately reflect what was used
+
 ### 13. Performance Optimizations ✓
 - **Batched git lookups**: `git ls-tree -r` gets all blob SHAs in one call (~35x faster)
 - **Directory mtime cache**: Uses max file mtime (not dir mtime) for accurate invalidation
