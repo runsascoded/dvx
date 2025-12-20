@@ -397,26 +397,8 @@ def add_to_cache(
         }],
     }
 
-    # Preserve existing meta section, updating dep hashes
+    # Preserve existing meta section (deps unchanged - they record provenance)
     if existing_meta:
-        # Update computation deps with current hashes
-        if "computation" in existing_meta and "deps" in existing_meta["computation"]:
-            deps = existing_meta["computation"]["deps"]
-            updated_deps = {}
-            for dep_path in deps:
-                dep_file = Path(dep_path)
-                if dep_file.exists():
-                    updated_deps[dep_path] = _hash_single_file(dep_file)
-                elif Path(dep_path + ".dvc").exists():
-                    # Dep is a DVC-tracked file, get its hash from .dvc file
-                    try:
-                        hash_val = get_hash(dep_path)
-                        updated_deps[dep_path] = hash_val
-                    except Exception:
-                        updated_deps[dep_path] = deps[dep_path]  # Keep old hash
-                else:
-                    updated_deps[dep_path] = deps[dep_path]  # Keep old hash
-            existing_meta["computation"]["deps"] = updated_deps
         dvc_content["meta"] = existing_meta
 
     # Atomic write
