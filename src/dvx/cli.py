@@ -712,6 +712,7 @@ def _run_pipeline_diff(
     shell: bool = True,
     shell_executable: str | None = None,
     both: bool = False,
+    pipefail: bool = False,
 ) -> int:
     """Run diff with preprocessing pipeline using dffs."""
     from dffs import join_pipelines
@@ -746,6 +747,7 @@ def _run_pipeline_diff(
         shell=shell,
         executable=shell_executable,
         both=both,
+        pipefail=pipefail,
     )
 
 
@@ -862,6 +864,7 @@ def _diff_directory(path1: str | None, path2: str | None, data_path: str, after:
 @cli.command()
 @click.option("-b", "--both", is_flag=True, help="Merge stderr into stdout in pipeline commands.")
 @click.option("-c/-C", "--color/--no-color", default=None, help="Force or prevent colorized output.")
+@click.option("-P", "--pipefail", is_flag=True, help="Check all pipeline commands for errors (like bash's `set -o pipefail`); default only checks last command.")
 @click.option("-r", "--refspec", help="<commit1>..<commit2> or <commit> (compare to worktree).")
 @click.option("-R", "--ref", help="Shorthand for -r <ref>^..<ref> (compare commit to parent).")
 @click.option("-e", "--shell-executable", help="Shell to use for executing commands.")
@@ -877,6 +880,7 @@ def diff(
     ctx,
     both,
     color,
+    pipefail,
     refspec,
     ref,
     shell_executable,
@@ -1036,6 +1040,7 @@ def diff(
             shell=not no_shell,
             shell_executable=shell_executable,
             both=both,
+            pipefail=pipefail,
         )
     else:
         returncode = _run_diff(
