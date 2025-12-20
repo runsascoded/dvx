@@ -67,17 +67,21 @@ def init(no_scm, force):
 @cli.command()
 @click.argument("targets", nargs=-1, required=True)
 @click.option("-f", "--force", is_flag=True, help="Override existing cache entry.")
-def add(targets, force):
+@click.option("-r", "--recursive", is_flag=True, help="Auto-add stale deps first (depth-first).")
+def add(targets, force, recursive):
     """Track file(s) or directory(ies) with DVX.
 
     Creates .dvc files and adds data to the cache.
     Safe for parallel execution (no global locking).
+
+    If deps are stale (file hash != .dvc hash), errors by default.
+    Use --recursive to auto-add stale deps first.
     """
     from dvx.cache import add_to_cache
 
     for target in targets:
         try:
-            md5, size, is_dir = add_to_cache(target, force=force)
+            md5, size, is_dir = add_to_cache(target, force=force, recursive=recursive)
             click.echo(f"Added {target} ({md5[:8]}...)")
         except Exception as e:
             raise click.ClickException(f"Failed to add {target}: {e}") from e

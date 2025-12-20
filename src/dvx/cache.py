@@ -292,6 +292,7 @@ def get_cache_path(
 def add_to_cache(
     target: str,
     force: bool = False,
+    recursive: bool = False,
 ) -> tuple[str, int, bool]:
     """Add a file or directory to DVC cache without global locking.
 
@@ -301,9 +302,13 @@ def add_to_cache(
     Args:
         target: Path to file or directory to add
         force: Overwrite existing cache entry if present
+        recursive: If True, auto-add stale deps first; if False, error on stale deps
 
     Returns:
         Tuple of (md5_hash, size, is_dir)
+
+    Raises:
+        ValueError: If deps are stale and recursive=False
     """
     import hashlib
     import json
@@ -401,25 +406,60 @@ def add_to_cache(
     # The output was just regenerated, so deps should reflect what was actually used
     if existing_meta:
         dvc_content["meta"] = existing_meta
-        # Update dep hashes from current .dvc files
+        # Update dep hashes from current .dvc files, validating they're fresh
         if "computation" in existing_meta and "deps" in existing_meta["computation"]:
             deps = existing_meta["computation"]["deps"]
             updated_deps = {}
+            stale_deps = []
+
             for dep_path in deps.keys():
+                dep_file = Path(dep_path)
                 dep_dvc = Path(dep_path + ".dvc")
+
+                # Get the .dvc hash
+                dvc_hash = None
                 if dep_dvc.exists():
                     try:
                         with open(dep_dvc) as f:
                             dep_data = yaml.safe_load(f)
                             if dep_data and "outs" in dep_data:
-                                dep_md5 = dep_data["outs"][0].get("md5")
-                                if dep_md5:
-                                    updated_deps[dep_path] = dep_md5
-                                    continue
+                                dvc_hash = dep_data["outs"][0].get("md5")
                     except Exception:
                         pass
-                # Fall back to existing hash if we can't get current
-                updated_deps[dep_path] = deps[dep_path]
+
+                # Get the actual file hash
+                file_hash = None
+                if dep_file.exists():
+                    file_hash = _hash_single_file(dep_file)
+
+                # Check freshness: file hash must match .dvc hash
+                if dvc_hash and file_hash and dvc_hash != file_hash:
+                    stale_deps.append((dep_path, dvc_hash, file_hash))
+                elif dvc_hash:
+                    updated_deps[dep_path] = dvc_hash
+                else:
+                    # Fall back to existing hash if we can't get current
+                    updated_deps[dep_path] = deps[dep_path]
+
+            # Handle stale deps
+            if stale_deps:
+                if recursive:
+                    # Auto-add stale deps first (depth-first)
+                    for dep_path, _dvc_hash, _file_hash in stale_deps:
+                        add_to_cache(dep_path, force=force, recursive=recursive)
+                    # Re-read the now-updated .dvc hashes
+                    for dep_path, _dvc_hash, file_hash in stale_deps:
+                        updated_deps[dep_path] = file_hash
+                else:
+                    stale_msg = "\n".join(
+                        f"  {p}: .dvc={dh[:8]}... file={fh[:8]}..."
+                        for p, dh, fh in stale_deps
+                    )
+                    raise ValueError(
+                        f"Cannot add {target}: {len(stale_deps)} stale dep(s):\n{stale_msg}\n"
+                        f"Run `dvx add` on deps first, or use --recursive"
+                    )
+
             existing_meta["computation"]["deps"] = updated_deps
 
     # Atomic write

@@ -146,19 +146,17 @@ def test_get_hash_directory(tmp_path):
     assert get_hash("data_dir") == "abc123def456.dir"
 
 
-def test_add_to_cache_preserves_dep_hashes(tmp_path):
-    """Test that add_to_cache preserves existing dep hashes (doesn't update them).
+def test_add_to_cache_updates_dep_hashes_when_fresh(tmp_path):
+    """Test that add_to_cache updates dep hashes from current .dvc files.
 
-    This is critical for provenance tracking: when re-adding an output file,
-    the recorded dep hashes should NOT be updated to match current dep .dvc files.
-    The dep hashes record what deps were used to produce the output, which only
-    changes when the computation actually runs.
+    When an output is (re)generated, the dep hashes recorded should reflect
+    what was actually used - the current state of deps. This updates the
+    provenance to match reality.
 
-    Bug this tests for: previously add_to_cache() would read current dep .dvc
-    hashes and update recorded deps, making the .dvc file falsely claim the
-    output was produced from deps it wasn't actually computed from.
+    The key constraint: deps must be fresh (file hash == .dvc hash) before
+    adding. This ensures the recorded dep hashes are accurate.
     """
-    from dvx.cache import add_to_cache
+    from dvx.cache import add_to_cache, _hash_single_file
 
     os.chdir(tmp_path)
 
@@ -168,11 +166,15 @@ def test_add_to_cache_preserves_dep_hashes(tmp_path):
     cache_dir = dvc_dir / "cache" / "files" / "md5"
     cache_dir.mkdir(parents=True)
 
-    # Create a dependency .dvc file with some hash
+    # Create a dependency FILE first
+    dep_file = tmp_path / "input.txt"
+    dep_file.write_text("input data v2\n")
+    new_dep_hash = _hash_single_file(dep_file)
+
+    # Create a dependency .dvc file matching the file (fresh state)
     dep_dvc = tmp_path / "input.txt.dvc"
-    original_dep_hash = "aaa111bbb222ccc333ddd444eee55566"
     dep_content = {
-        "outs": [{"md5": original_dep_hash, "size": 10, "path": "input.txt"}]
+        "outs": [{"md5": new_dep_hash, "size": 14, "hash": "md5", "path": "input.txt"}]
     }
     with open(dep_dvc, "w") as f:
         yaml.dump(dep_content, f)
@@ -181,29 +183,22 @@ def test_add_to_cache_preserves_dep_hashes(tmp_path):
     output_file = tmp_path / "output.txt"
     output_file.write_text("original output\n")
 
-    # Create output .dvc file with meta.computation.deps pointing to the dep
-    # with the ORIGINAL dep hash
+    # Create output .dvc file with meta.computation.deps pointing to OLD dep hash
     output_dvc = tmp_path / "output.txt.dvc"
+    old_dep_hash = "aaa111bbb222ccc333ddd444eee55566"
     output_content = {
         "outs": [{"md5": "old_output_hash_placeholder", "size": 16, "path": "output.txt"}],
         "meta": {
             "computation": {
                 "cmd": "cat input.txt > output.txt",
-                "deps": {"input.txt": original_dep_hash},
+                "deps": {"input.txt": old_dep_hash},
             }
         },
     }
     with open(output_dvc, "w") as f:
         yaml.dump(output_content, f)
 
-    # Now simulate the dep being updated (new .dvc file with different hash)
-    new_dep_hash = "fff666ggg777hhh888iii999jjj00011"
-    dep_content["outs"][0]["md5"] = new_dep_hash
-    with open(dep_dvc, "w") as f:
-        yaml.dump(dep_content, f)
-
-    # Run add_to_cache on the output (without regenerating it)
-    # This should update the output hash but NOT the dep hash
+    # Run add_to_cache - deps are fresh, so this should update dep hashes
     md5, size, is_dir = add_to_cache("output.txt")
 
     # Read back the .dvc file
@@ -214,10 +209,137 @@ def test_add_to_cache_preserves_dep_hashes(tmp_path):
     assert result["outs"][0]["md5"] == md5
     assert result["outs"][0]["size"] == size
 
-    # CRITICAL: dep hash should be UNCHANGED (original, not new)
-    # This is the bug we're testing for - add_to_cache should NOT update dep hashes
+    # Dep hash should be UPDATED to match current .dvc file
     recorded_dep_hash = result["meta"]["computation"]["deps"]["input.txt"]
-    assert recorded_dep_hash == original_dep_hash, (
-        f"add_to_cache incorrectly updated dep hash from {original_dep_hash} to {recorded_dep_hash}. "
-        "Dep hashes record provenance and should only change when computation runs."
+    assert recorded_dep_hash == new_dep_hash, (
+        f"Expected dep hash to be updated to {new_dep_hash}, got {recorded_dep_hash}. "
+        "add_to_cache should update dep hashes from current .dvc files when deps are fresh."
+    )
+
+
+def test_add_to_cache_errors_on_stale_deps(tmp_path):
+    """Test that add_to_cache errors when deps are stale (file != .dvc).
+
+    If a dep file has been modified but not added, adding an output would
+    record incorrect provenance - the output was built from the modified file,
+    but we'd record the old .dvc hash.
+
+    Instead, we should error and require deps to be fresh before adding.
+    """
+    from dvx.cache import add_to_cache, _hash_single_file
+
+    os.chdir(tmp_path)
+
+    # Create .dvc directory structure
+    dvc_dir = tmp_path / ".dvc"
+    dvc_dir.mkdir()
+    cache_dir = dvc_dir / "cache" / "files" / "md5"
+    cache_dir.mkdir(parents=True)
+
+    # Create a dependency FILE
+    dep_file = tmp_path / "input.txt"
+    dep_file.write_text("input data v2\n")
+    file_hash = _hash_single_file(dep_file)
+
+    # Create a dependency .dvc file with DIFFERENT hash (stale state)
+    dep_dvc = tmp_path / "input.txt.dvc"
+    stale_dvc_hash = "aaa111bbb222ccc333ddd444eee55566"
+    dep_content = {
+        "outs": [{"md5": stale_dvc_hash, "size": 10, "hash": "md5", "path": "input.txt"}]
+    }
+    with open(dep_dvc, "w") as f:
+        yaml.dump(dep_content, f)
+
+    assert file_hash != stale_dvc_hash, "Test setup: hashes should differ"
+
+    # Create output file
+    output_file = tmp_path / "output.txt"
+    output_file.write_text("output\n")
+
+    # Create output .dvc file with dep
+    output_dvc = tmp_path / "output.txt.dvc"
+    output_content = {
+        "outs": [{"md5": "placeholder", "size": 7, "path": "output.txt"}],
+        "meta": {
+            "computation": {
+                "cmd": "cat input.txt > output.txt",
+                "deps": {"input.txt": stale_dvc_hash},
+            }
+        },
+    }
+    with open(output_dvc, "w") as f:
+        yaml.dump(output_content, f)
+
+    # Run add_to_cache - should ERROR because dep is stale
+    with pytest.raises(ValueError) as exc_info:
+        add_to_cache("output.txt")
+
+    assert "stale dep" in str(exc_info.value).lower()
+    assert "input.txt" in str(exc_info.value)
+
+
+def test_add_to_cache_recursive_adds_stale_deps(tmp_path):
+    """Test that add_to_cache with recursive=True auto-adds stale deps first.
+
+    When recursive=True, stale deps should be added (depth-first) before
+    adding the output. This ensures consistent state across the DAG.
+    """
+    from dvx.cache import add_to_cache, _hash_single_file
+
+    os.chdir(tmp_path)
+
+    # Create .dvc directory structure
+    dvc_dir = tmp_path / ".dvc"
+    dvc_dir.mkdir()
+    cache_dir = dvc_dir / "cache" / "files" / "md5"
+    cache_dir.mkdir(parents=True)
+
+    # Create a dependency FILE
+    dep_file = tmp_path / "input.txt"
+    dep_file.write_text("input data v2\n")
+    new_file_hash = _hash_single_file(dep_file)
+
+    # Create a dependency .dvc file with DIFFERENT hash (stale state)
+    dep_dvc = tmp_path / "input.txt.dvc"
+    old_dvc_hash = "aaa111bbb222ccc333ddd444eee55566"
+    dep_content = {
+        "outs": [{"md5": old_dvc_hash, "size": 10, "hash": "md5", "path": "input.txt"}]
+    }
+    with open(dep_dvc, "w") as f:
+        yaml.dump(dep_content, f)
+
+    # Create output file
+    output_file = tmp_path / "output.txt"
+    output_file.write_text("output\n")
+
+    # Create output .dvc file with dep pointing to old hash
+    output_dvc = tmp_path / "output.txt.dvc"
+    output_content = {
+        "outs": [{"md5": "placeholder", "size": 7, "path": "output.txt"}],
+        "meta": {
+            "computation": {
+                "cmd": "cat input.txt > output.txt",
+                "deps": {"input.txt": old_dvc_hash},
+            }
+        },
+    }
+    with open(output_dvc, "w") as f:
+        yaml.dump(output_content, f)
+
+    # Run add_to_cache with recursive=True
+    md5, size, is_dir = add_to_cache("output.txt", recursive=True)
+
+    # Verify dep .dvc was updated
+    with open(dep_dvc) as f:
+        dep_result = yaml.safe_load(f)
+    assert dep_result["outs"][0]["md5"] == new_file_hash, (
+        "Recursive add should have updated dep .dvc file"
+    )
+
+    # Verify output .dvc has new dep hash
+    with open(output_dvc) as f:
+        output_result = yaml.safe_load(f)
+    recorded_dep = output_result["meta"]["computation"]["deps"]["input.txt"]
+    assert recorded_dep == new_file_hash, (
+        f"Output should record new dep hash {new_file_hash}, got {recorded_dep}"
     )
