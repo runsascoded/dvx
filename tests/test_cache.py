@@ -205,16 +205,10 @@ def test_add_to_cache_updates_dep_hashes_when_fresh(tmp_path):
     with open(output_dvc) as f:
         result = yaml.safe_load(f)
 
-    # Verify output hash was updated
+    # Verify output was updated with correct hash, size, and dep hash
     assert result["outs"][0]["md5"] == md5
     assert result["outs"][0]["size"] == size
-
-    # Dep hash should be UPDATED to match current .dvc file
-    recorded_dep_hash = result["meta"]["computation"]["deps"]["input.txt"]
-    assert recorded_dep_hash == new_dep_hash, (
-        f"Expected dep hash to be updated to {new_dep_hash}, got {recorded_dep_hash}. "
-        "add_to_cache should update dep hashes from current .dvc files when deps are fresh."
-    )
+    assert result["meta"]["computation"]["deps"]["input.txt"] == new_dep_hash
 
 
 def test_add_to_cache_errors_on_stale_deps(tmp_path):
@@ -274,8 +268,12 @@ def test_add_to_cache_errors_on_stale_deps(tmp_path):
     with pytest.raises(ValueError) as exc_info:
         add_to_cache("output.txt")
 
-    assert "stale dep" in str(exc_info.value).lower()
-    assert "input.txt" in str(exc_info.value)
+    expected_lines = [
+        "Cannot add output.txt: 1 stale dep(s):",
+        f"  input.txt: .dvc={stale_dvc_hash[:8]}... file={file_hash[:8]}...",
+        "Run `dvx add` on deps first, or use --recursive",
+    ]
+    assert str(exc_info.value).strip().split("\n") == expected_lines
 
 
 def test_add_to_cache_recursive_adds_stale_deps(tmp_path):
@@ -329,17 +327,12 @@ def test_add_to_cache_recursive_adds_stale_deps(tmp_path):
     # Run add_to_cache with recursive=True
     md5, size, is_dir = add_to_cache("output.txt", recursive=True)
 
-    # Verify dep .dvc was updated
+    # Verify dep .dvc was updated with correct file hash
     with open(dep_dvc) as f:
         dep_result = yaml.safe_load(f)
-    assert dep_result["outs"][0]["md5"] == new_file_hash, (
-        "Recursive add should have updated dep .dvc file"
-    )
+    assert dep_result["outs"][0]["md5"] == new_file_hash
 
     # Verify output .dvc has new dep hash
     with open(output_dvc) as f:
         output_result = yaml.safe_load(f)
-    recorded_dep = output_result["meta"]["computation"]["deps"]["input.txt"]
-    assert recorded_dep == new_file_hash, (
-        f"Output should record new dep hash {new_file_hash}, got {recorded_dep}"
-    )
+    assert output_result["meta"]["computation"]["deps"]["input.txt"] == new_file_hash
