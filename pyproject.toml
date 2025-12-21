@@ -69,7 +69,12 @@ Repository = "https://github.com/runsascoded/dvx"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-packages = ["dvx"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+dvx = ["shell/*.bash"]
 
 [tool.setuptools_scm]
 write_to = "src/dvx/_version.py"

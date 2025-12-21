@@ -503,3 +503,183 @@ def _cache_file(file_path, file_hash: str, cache_dir, force: bool = False):
 
     shutil.copy2(file_path, tmp_path)
     os.replace(tmp_path, cache_path)
+
+
+# =============================================================================
+# Dry-run / transfer status utilities
+# =============================================================================
+
+
+def _format_size(size: int | None) -> str:
+    """Format size in human-readable form."""
+    if size is None:
+        return "?"
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(size) < 1024:
+            return f"{size:.1f} {unit}" if unit != "B" else f"{size} {unit}"
+        size /= 1024
+    return f"{size:.1f} PB"
+
+
+def find_dvc_files(
+    targets: list[str] | None = None,
+    glob_pattern: bool = False,
+) -> list[str]:
+    """Find .dvc files to process.
+
+    Args:
+        targets: Specific targets (files/dirs). If None, find all .dvc files.
+        glob_pattern: If True, treat targets as glob patterns.
+
+    Returns:
+        List of .dvc file paths.
+    """
+    import glob
+    from pathlib import Path
+
+    from dvc.repo import Repo as DVCRepo
+
+    try:
+        root = DVCRepo.find_root()
+    except Exception:
+        root = "."
+
+    if targets:
+        dvc_files = []
+        for target in targets:
+            if glob_pattern:
+                matches = glob.glob(target, recursive=True)
+                for match in matches:
+                    if match.endswith(".dvc"):
+                        dvc_files.append(match)
+                    elif os.path.exists(match + ".dvc"):
+                        dvc_files.append(match + ".dvc")
+            else:
+                if target.endswith(".dvc"):
+                    dvc_files.append(target)
+                elif os.path.exists(target + ".dvc"):
+                    dvc_files.append(target + ".dvc")
+                elif os.path.isdir(target):
+                    # Find all .dvc files in directory (exclude .dvc subdir)
+                    for f in Path(target).rglob("*.dvc"):
+                        if f.is_file() and ".dvc/" not in str(f):
+                            dvc_files.append(str(f))
+        return dvc_files
+    else:
+        # Find all .dvc files in repo (exclude .dvc directory and cache)
+        return [
+            str(f) for f in Path(root).rglob("*.dvc")
+            if f.is_file() and ".dvc/" not in str(f)
+        ]
+
+
+def check_local_cache(md5: str) -> bool:
+    """Check if a hash exists in local cache.
+
+    Args:
+        md5: MD5 hash to check
+
+    Returns:
+        True if hash exists in local cache
+    """
+    from pathlib import Path
+
+    from dvc.repo import Repo as DVCRepo
+
+    try:
+        root = DVCRepo.find_root()
+    except Exception:
+        root = "."
+
+    is_dir = md5.endswith(".dir")
+    hash_value = md5[:-4] if is_dir else md5
+    cache_path = Path(root) / ".dvc" / "cache" / "files" / "md5" / hash_value[:2] / hash_value[2:]
+    if is_dir:
+        cache_path = cache_path.with_suffix(".dir")
+
+    return cache_path.exists()
+
+
+def check_remote_cache(md5: str, remote: str | None = None) -> bool:
+    """Check if a hash exists in remote cache.
+
+    Args:
+        md5: MD5 hash to check
+        remote: Remote name (uses default if None)
+
+    Returns:
+        True if hash exists in remote cache
+    """
+    from dvc.repo import Repo as DVCRepo
+
+    try:
+        with DVCRepo() as repo:
+            remote_odb = repo.cloud.get_remote_odb(name=remote)
+            return remote_odb.exists(md5)
+    except Exception:
+        return False
+
+
+def get_transfer_status(
+    targets: list[str] | None = None,
+    remote: str | None = None,
+    direction: str = "pull",
+    glob_pattern: bool = False,
+) -> dict:
+    """Get status of what would be transferred.
+
+    Args:
+        targets: Specific targets to check
+        remote: Remote name
+        direction: "pull" (check local cache) or "push" (check remote cache)
+        glob_pattern: If True, treat targets as glob patterns
+
+    Returns:
+        Dict with transfer status info:
+        {
+            "missing": [(path, md5, size), ...],  # Would be transferred
+            "cached": [(path, md5, size), ...],   # Already in cache
+            "errors": [(path, error), ...],       # Failed to check
+            "total_missing_size": int,
+            "total_cached_size": int,
+        }
+    """
+    dvc_files = find_dvc_files(targets, glob_pattern)
+
+    missing = []
+    cached = []
+    errors = []
+    total_missing_size = 0
+    total_cached_size = 0
+
+    check_fn = check_local_cache if direction == "pull" else check_remote_cache
+
+    for dvc_file in dvc_files:
+        try:
+            md5, size, _is_dir = _get_output_info(dvc_file)
+            # Get the data path (strip .dvc suffix)
+            data_path = dvc_file[:-4] if dvc_file.endswith(".dvc") else dvc_file
+
+            if direction == "push":
+                in_cache = check_fn(md5, remote)
+            else:
+                in_cache = check_fn(md5)
+
+            if in_cache:
+                cached.append((data_path, md5, size))
+                if size:
+                    total_cached_size += size
+            else:
+                missing.append((data_path, md5, size))
+                if size:
+                    total_missing_size += size
+        except Exception as e:
+            errors.append((dvc_file, str(e)))
+
+    return {
+        "missing": missing,
+        "cached": cached,
+        "errors": errors,
+        "total_missing_size": total_missing_size,
+        "total_cached_size": total_cached_size,
+    }
