@@ -1260,87 +1260,12 @@ def get_url(url, out):
 
 
 # =============================================================================
-# Cache subcommands
+# Cache subcommands (from cli.cache package)
 # =============================================================================
 
+from .cache import cache
 
-@cli.group()
-def cache():
-    """Manage DVC cache and inspect cached files."""
-
-
-@cache.command("dir")
-@click.argument("value", required=False)
-@click.option("-u", "--unset", is_flag=True, help="Unset cache directory.")
-def cache_dir(value, unset):
-    """Get or set the cache directory location."""
-    from dvc.cli import main as dvc_main
-
-    if value is None and not unset:
-        # Get current value - delegate to dvc
-        sys.exit(dvc_main(["cache", "dir"]))
-    else:
-        args = ["cache", "dir"]
-        if unset:
-            args.append("--unset")
-        if value:
-            args.append(value)
-        sys.exit(dvc_main(args))
-
-
-@cache.command("path")
-@click.argument("target")
-@click.option("-r", "--rev", metavar="<rev>", help="Git revision.")
-@click.option("--remote", metavar="<name>", help="Get remote blob URL instead.")
-@click.option("--absolute", is_flag=True, help="Output absolute path (default is relative).")
-def cache_path(target, rev, remote, absolute):
-    """Get the cache path for a DVC-tracked file.
-
-    TARGET can be:
-    - a .dvc file or path to a tracked file (adds .dvc if needed)
-    - a file inside a DVC-tracked directory
-    - an MD5 hash (32 hex chars) to get path directly
-
-    Examples:
-        dvx cache path data.txt.dvc
-        dvx cache path data.txt
-        dvx cache path data.txt --remote myremote
-        dvx cache path data.txt -r HEAD~1
-        dvx cache path tracked_dir/file.txt
-        dvx cache path d8e8fca2dc0f896fd7cb4cb0031ba249
-    """
-    from dvx.cache import get_cache_path
-
-    try:
-        path = get_cache_path(target, rev=rev, remote=remote, absolute=absolute)
-        click.echo(path)
-    except Exception as e:
-        raise click.ClickException(str(e)) from e
-
-
-@cache.command("md5")
-@click.argument("target")
-@click.option("-r", "--rev", metavar="<rev>", help="Git revision.")
-def cache_md5(target, rev):
-    """Get the MD5 hash for a DVC-tracked file.
-
-    TARGET can be:
-    - a .dvc file or path to a tracked file (adds .dvc if needed)
-    - a file inside a DVC-tracked directory
-
-    Examples:
-        dvx cache md5 data.txt.dvc
-        dvx cache md5 data.txt
-        dvx cache md5 data.txt -r HEAD~1
-        dvx cache md5 tracked_dir/file.txt
-    """
-    from dvx.cache import get_hash
-
-    try:
-        md5 = get_hash(target, rev=rev)
-        click.echo(md5)
-    except Exception as e:
-        raise click.ClickException(str(e)) from e
+cli.add_command(cache)
 
 
 # =============================================================================
