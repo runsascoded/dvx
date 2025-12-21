@@ -1,0 +1,55 @@
+name: Test, release
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+    - uses: actions/checkout@v4
+    - uses: astral-sh/setup-uv@v7
+    - run: uv python install ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: uv sync --python ${{ matrix.python-version }} --extra dev
+    - name: Run tests
+      run: uv run pytest tests
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+    - uses: actions/checkout@v4
+    - name: Fetch tag annotation
+      run: git fetch origin tag ${{ github.ref_name }} --force
+    - uses: astral-sh/setup-uv@v7
+    - run: uv python install 3.12
+    - name: Build package
+      run: uvx --from build pyproject-build --outdir dist
+    - name: Publish to PyPI
+      env:
+        TWINE_USERNAME: __token__
+        TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+      run: uvx twine upload dist/*
+    - name: Get tag message
+      id: tag
+      run: |
+        TAG_MSG=$(git tag -l --format='%(contents:body)' ${{ github.ref_name }})
+        echo "message<<EOF" >> $GITHUB_OUTPUT
+        echo "$TAG_MSG" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist/*
+        body: |
+          ${{ steps.tag.outputs.message }}
+        generate_release_notes: true
