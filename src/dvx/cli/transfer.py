@@ -20,7 +20,7 @@ def push(targets, all_branches, all_commits, jobs, dry_run, remote, all_tags, ve
 
     Use --verify to check that remote has the correct data after pushing.
     """
-    from dvx.cache import _format_size, check_remote_cache, get_transfer_status
+    from dvx.cache import _format_size, check_remote_cache_batch, get_transfer_status
 
     if dry_run:
         status = get_transfer_status(
@@ -28,6 +28,7 @@ def push(targets, all_branches, all_commits, jobs, dry_run, remote, all_tags, ve
             remote=remote,
             direction="push",
             glob_pattern=glob,
+            jobs=jobs,
         )
         missing = status["missing"]
         cached = status["cached"]
@@ -57,6 +58,8 @@ def push(targets, all_branches, all_commits, jobs, dry_run, remote, all_tags, ve
             remote=remote,
             direction="push",
             glob_pattern=glob,
+            jobs=jobs,
+            progress=False,  # Don't show progress twice
         )
         hashes_to_verify = [(path, md5) for path, md5, _size in status["missing"]]
 
@@ -73,13 +76,16 @@ def push(targets, all_branches, all_commits, jobs, dry_run, remote, all_tags, ve
             )
             click.echo(f"{pushed} file(s) pushed.")
 
-            # Verify after push
+            # Verify after push (parallel batch check)
             if verify and hashes_to_verify:
                 click.echo("\nVerifying remote...")
+                all_hashes = [md5 for _, md5 in hashes_to_verify]
+                cache_status = check_remote_cache_batch(all_hashes, remote, jobs=jobs)
+
                 verified = 0
                 failed = []
                 for path, md5 in hashes_to_verify:
-                    if check_remote_cache(md5, remote):
+                    if cache_status.get(md5, False):
                         verified += 1
                     else:
                         failed.append((path, md5))

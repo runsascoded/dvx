@@ -797,11 +797,82 @@ def check_remote_cache(md5: str, remote: str | None = None) -> bool:
         return False
 
 
+def check_remote_cache_batch(
+    hashes: list[str],
+    remote: str | None = None,
+    jobs: int | None = None,
+    progress: bool = True,
+) -> dict[str, bool]:
+    """Check if multiple hashes exist in remote cache (parallel).
+
+    Args:
+        hashes: List of MD5 hashes to check
+        remote: Remote name (uses default if None)
+        jobs: Number of parallel workers (default: min(32, len(hashes)))
+        progress: Show progress bar
+
+    Returns:
+        Dict mapping hash -> exists (True/False)
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from dvc.repo import Repo as DVCRepo
+
+    if not hashes:
+        return {}
+
+    # Deduplicate
+    unique_hashes = list(set(hashes))
+    results = {}
+
+    # Open repo once and reuse
+    try:
+        with DVCRepo() as repo:
+            remote_odb = repo.cloud.get_remote_odb(name=remote)
+
+            def check_one(md5: str) -> tuple[str, bool]:
+                try:
+                    return md5, remote_odb.exists(md5)
+                except Exception:
+                    return md5, False
+
+            max_workers = jobs or min(32, len(unique_hashes))
+
+            if progress:
+                try:
+                    from tqdm import tqdm
+                    pbar = tqdm(total=len(unique_hashes), desc="Checking remote", unit="file")
+                except ImportError:
+                    pbar = None
+            else:
+                pbar = None
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {executor.submit(check_one, h): h for h in unique_hashes}
+                for future in as_completed(futures):
+                    md5, exists = future.result()
+                    results[md5] = exists
+                    if pbar:
+                        pbar.update(1)
+
+            if pbar:
+                pbar.close()
+
+    except Exception:
+        # Fallback to sequential if parallel fails
+        for h in unique_hashes:
+            results[h] = check_remote_cache(h, remote)
+
+    return results
+
+
 def get_transfer_status(
     targets: list[str] | None = None,
     remote: str | None = None,
     direction: str = "pull",
     glob_pattern: bool = False,
+    jobs: int | None = None,
+    progress: bool = True,
 ) -> dict:
     """Get status of what would be transferred.
 
@@ -810,6 +881,8 @@ def get_transfer_status(
         remote: Remote name
         direction: "pull" (check local cache) or "push" (check remote cache)
         glob_pattern: If True, treat targets as glob patterns
+        jobs: Number of parallel workers for remote checks
+        progress: Show progress bar for remote checks
 
     Returns:
         Dict with transfer status info:
@@ -823,25 +896,40 @@ def get_transfer_status(
     """
     dvc_files = find_dvc_files(targets, glob_pattern)
 
-    missing = []
-    cached = []
+    # First pass: gather all file info
+    file_info = []  # [(dvc_file, data_path, md5, size), ...]
     errors = []
-    total_missing_size = 0
-    total_cached_size = 0
-
-    check_fn = check_local_cache if direction == "pull" else check_remote_cache
 
     for dvc_file in dvc_files:
         try:
             md5, size, _is_dir = _get_output_info(dvc_file)
-            # Get the data path (strip .dvc suffix)
             data_path = dvc_file[:-4] if dvc_file.endswith(".dvc") else dvc_file
+            file_info.append((dvc_file, data_path, md5, size))
+        except Exception as e:
+            errors.append((dvc_file, str(e)))
 
-            if direction == "push":
-                in_cache = check_fn(md5, remote)
-            else:
-                in_cache = check_fn(md5)
+    if not file_info:
+        return {
+            "missing": [],
+            "cached": [],
+            "errors": errors,
+            "total_missing_size": 0,
+            "total_cached_size": 0,
+        }
 
+    # Second pass: check cache (parallel for remote)
+    missing = []
+    cached = []
+    total_missing_size = 0
+    total_cached_size = 0
+
+    if direction == "push":
+        # Batch check remote (parallel)
+        all_hashes = [md5 for _, _, md5, _ in file_info]
+        cache_status = check_remote_cache_batch(all_hashes, remote, jobs=jobs, progress=progress)
+
+        for dvc_file, data_path, md5, size in file_info:
+            in_cache = cache_status.get(md5, False)
             if in_cache:
                 cached.append((data_path, md5, size))
                 if size:
@@ -850,8 +938,17 @@ def get_transfer_status(
                 missing.append((data_path, md5, size))
                 if size:
                     total_missing_size += size
-        except Exception as e:
-            errors.append((dvc_file, str(e)))
+    else:
+        # Local cache check is fast, no need for parallel
+        for dvc_file, data_path, md5, size in file_info:
+            if check_local_cache(md5):
+                cached.append((data_path, md5, size))
+                if size:
+                    total_cached_size += size
+            else:
+                missing.append((data_path, md5, size))
+                if size:
+                    total_missing_size += size
 
     return {
         "missing": missing,
