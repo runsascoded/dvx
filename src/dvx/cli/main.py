@@ -154,15 +154,99 @@ cli.add_command(diff)
 @click.option("-j", "--jobs", type=int, help="Number of parallel jobs.")
 @click.option("-n", "--dry", is_flag=True, help="Dry run - show what would be removed.")
 @click.option("-r", "--remote", help="Remote storage to gc.")
+@click.option("-s", "--safe", is_flag=True, help="Only delete files that exist in remote (verify before deleting).")
 @click.option("-T", "--all-tags", is_flag=True, help="Keep cache for all tags.")
 @click.option("-w", "--workspace", is_flag=True, help="Keep only cache for current workspace.")
-def gc(all_branches, all_commits, cloud, force, jobs, dry, remote, all_tags, workspace):
-    """Garbage collect unused cache files."""
+def gc(all_branches, all_commits, cloud, force, jobs, dry, remote, safe, all_tags, workspace):
+    """Garbage collect unused cache files.
+
+    Use --safe to only delete files that are backed up to remote storage.
+    This prevents accidental data loss by verifying remote has each file
+    before deleting locally.
+    """
     if not any([workspace, all_branches, all_tags, all_commits]):
         raise click.ClickException(
             "One of -w/--workspace, -a/--all-branches, -T/--all-tags, "
             "-A/--all-commits is required."
         )
+
+    if safe:
+        # Safe GC: verify files exist in remote before allowing deletion
+        from pathlib import Path
+
+        from dvx.cache import check_remote_cache
+
+        click.echo("Safe GC: checking remote before deleting...")
+
+        # First do a dry run to see what would be deleted
+        try:
+            with Repo() as repo:
+                result = repo.gc(
+                    workspace=workspace,
+                    all_branches=all_branches,
+                    all_tags=all_tags,
+                    all_commits=all_commits,
+                    cloud=False,  # Don't gc cloud in dry run
+                    remote=remote,
+                    force=True,  # Skip confirmation for dry run
+                    jobs=jobs,
+                    dry=True,  # Dry run
+                )
+        except Exception as e:
+            raise click.ClickException(str(e)) from e
+
+        # Get list of files that would be deleted
+        # DVC gc result doesn't give us the hashes directly, so we need
+        # to find local cache files and check which are "unused"
+        try:
+            from dvc.repo import Repo as DVCRepo
+
+            root = DVCRepo.find_root()
+            cache_dir = Path(root) / ".dvc" / "cache" / "files" / "md5"
+
+            if not cache_dir.exists():
+                click.echo("No cache files found.")
+                return
+
+            # Get all cache file hashes
+            cache_files = []
+            for prefix_dir in cache_dir.iterdir():
+                if prefix_dir.is_dir() and len(prefix_dir.name) == 2:
+                    for cache_file in prefix_dir.iterdir():
+                        if cache_file.is_file():
+                            md5 = prefix_dir.name + cache_file.name
+                            cache_files.append((cache_file, md5))
+
+            # Check which are in remote
+            not_in_remote = []
+            in_remote = []
+            for cache_file, md5 in cache_files:
+                if check_remote_cache(md5, remote):
+                    in_remote.append((cache_file, md5))
+                else:
+                    not_in_remote.append((cache_file, md5))
+
+            if not_in_remote:
+                click.echo(f"\nWARNING: {len(not_in_remote)} file(s) not in remote:")
+                for cache_file, md5 in not_in_remote[:10]:
+                    click.echo(f"  {md5[:8]}...")
+                if len(not_in_remote) > 10:
+                    click.echo(f"  ... and {len(not_in_remote) - 10} more")
+                click.echo("\nRun 'dvx push' first to backup these files, or use gc without --safe.")
+                if not dry:
+                    raise click.ClickException("Aborting: some files not in remote")
+            else:
+                click.echo(f"All {len(in_remote)} cache file(s) verified in remote.")
+
+        except click.ClickException:
+            raise
+        except Exception as e:
+            raise click.ClickException(f"Failed to verify remote: {e}") from e
+
+        if dry:
+            click.echo("\nDry run complete (no files deleted).")
+            return
+
     try:
         with Repo() as repo:
             result = repo.gc(

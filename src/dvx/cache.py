@@ -573,6 +573,183 @@ def find_dvc_files(
         ]
 
 
+def find_dvc_files_at_ref(ref: str, targets: list[str] | None = None) -> list[str]:
+    """Find .dvc files at a specific git ref.
+
+    Args:
+        ref: Git ref (commit, branch, tag)
+        targets: Specific paths to check (optional)
+
+    Returns:
+        List of .dvc file paths
+    """
+    import subprocess
+
+    # Get list of all files at the ref
+    result = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", ref],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    all_files = result.stdout.strip().split("\n")
+    dvc_files = [f for f in all_files if f.endswith(".dvc") and not f.startswith(".dvc/")]
+
+    if targets:
+        # Filter to matching targets
+        filtered = []
+        for target in targets:
+            target = target.rstrip("/")
+            if target.endswith(".dvc"):
+                if target in dvc_files:
+                    filtered.append(target)
+            else:
+                # Check for exact match or directory prefix
+                dvc_target = target + ".dvc"
+                if dvc_target in dvc_files:
+                    filtered.append(dvc_target)
+                else:
+                    # Check for files under this directory
+                    prefix = target + "/"
+                    filtered.extend(f for f in dvc_files if f.startswith(prefix))
+        return filtered
+    return dvc_files
+
+
+def get_output_info_at_ref(dvc_file: str, ref: str) -> tuple[str, int | None, bool]:
+    """Get output info from a .dvc file at a specific git ref.
+
+    Args:
+        dvc_file: Path to .dvc file
+        ref: Git ref
+
+    Returns:
+        Tuple of (md5, size, is_dir)
+    """
+    import subprocess
+
+    import yaml
+
+    result = subprocess.run(
+        ["git", "show", f"{ref}:{dvc_file}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    data = yaml.safe_load(result.stdout)
+    outs = data.get("outs", [])
+    if not outs:
+        raise ValueError(f"No outputs in {dvc_file}")
+    out = outs[0]
+    md5 = out.get("md5", "")
+    size = out.get("size")
+    is_dir = md5.endswith(".dir")
+    return md5, size, is_dir
+
+
+def get_transfer_status_at_ref(
+    ref: str,
+    targets: list[str] | None = None,
+    remote: str | None = None,
+) -> dict:
+    """Get status of what would be transferred for a specific git ref.
+
+    Args:
+        ref: Git ref to check
+        targets: Specific targets to check
+        remote: Remote name
+
+    Returns:
+        Dict with transfer status info (same format as get_transfer_status)
+    """
+    dvc_files = find_dvc_files_at_ref(ref, targets)
+
+    missing = []
+    cached = []
+    errors = []
+    total_missing_size = 0
+    total_cached_size = 0
+
+    for dvc_file in dvc_files:
+        try:
+            md5, size, _is_dir = get_output_info_at_ref(dvc_file, ref)
+            data_path = dvc_file[:-4] if dvc_file.endswith(".dvc") else dvc_file
+
+            if check_local_cache(md5):
+                cached.append((data_path, md5, size))
+                if size:
+                    total_cached_size += size
+            else:
+                missing.append((data_path, md5, size))
+                if size:
+                    total_missing_size += size
+        except Exception as e:
+            errors.append((dvc_file, str(e)))
+
+    return {
+        "missing": missing,
+        "cached": cached,
+        "errors": errors,
+        "total_missing_size": total_missing_size,
+        "total_cached_size": total_cached_size,
+    }
+
+
+def pull_hashes(
+    hashes: list[str],
+    remote: str | None = None,
+    jobs: int | None = None,
+) -> int:
+    """Pull specific hashes from remote to local cache.
+
+    Args:
+        hashes: List of MD5 hashes to pull
+        remote: Remote name (uses default if None)
+        jobs: Number of parallel jobs
+
+    Returns:
+        Number of files fetched
+    """
+    from dvc.repo import Repo as DVCRepo
+
+    if not hashes:
+        return 0
+
+    with DVCRepo() as repo:
+        remote_odb = repo.cloud.get_remote_odb(name=remote)
+        local_odb = repo.odb.local
+
+        # Filter to hashes not already in local cache
+        to_fetch = [h for h in hashes if not check_local_cache(h)]
+
+        if not to_fetch:
+            return 0
+
+        # Use DVC's transfer mechanism
+        from dvc.fs import Callback
+
+        callback = Callback.as_tqdm_callback(desc="Fetching", unit="file")
+        try:
+            transferred = remote_odb.fs.get(
+                [remote_odb.oid_to_path(h) for h in to_fetch],
+                [local_odb.oid_to_path(h) for h in to_fetch],
+                callback=callback,
+            )
+            return len(to_fetch)
+        except Exception:
+            # Fallback to one-by-one transfer
+            count = 0
+            for h in to_fetch:
+                try:
+                    src = remote_odb.oid_to_path(h)
+                    dst = local_odb.oid_to_path(h)
+                    remote_odb.fs.get(src, dst)
+                    count += 1
+                except Exception:
+                    pass
+            return count
+
+
 def check_local_cache(md5: str) -> bool:
     """Check if a hash exists in local cache.
 
