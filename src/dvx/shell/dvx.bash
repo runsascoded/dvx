@@ -11,13 +11,20 @@ alias dx='dvx'
 alias dxa='dvx add'
 alias dxar='dvx add -R'
 
-# Status
+# Status (short forms)
+alias dvs='dvx status'
+alias dvy='dvx status -y'
+
+# Status (dx* forms)
 alias dxs='dvx status'
 alias dxsv='dvx status -v'
 alias dxsy='dvx status -y'
 alias dxsj='dvx status --json'
 
-# Diff (content diff)
+# Diff (short form)
+alias dvd='dvx diff'
+
+# Diff (dx* forms)
 alias dxd='dvx diff'
 alias dxdc='dvx diff -c'
 alias dxdn='dvx diff -C'
@@ -65,3 +72,8 @@ alias dxps='dvx push'
 
 # GC
 alias dxgc='dvx gc'
+
+# DAG
+alias dvg='dvx dag'
+alias dxg='dvx dag'
+alias dxgs='dvx dag -s'
