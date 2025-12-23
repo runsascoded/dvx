@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TextIO
 
 from dvx.run.artifact import Artifact
-from dvx.run.dvc_files import get_git_head_sha, is_output_fresh, write_dvc_file
+from dvx.run.dvc_files import is_output_fresh, write_dvc_file
 from dvx.run.hash import compute_file_size, compute_md5
 
 
@@ -122,8 +122,6 @@ class ParallelExecutor:
         self.artifacts = artifacts
         self.config = config or ExecutionConfig()
         self.output = output or sys.stderr
-        # Capture git SHA once at start for consistent provenance
-        self.code_ref = get_git_head_sha() if self.config.provenance else None
 
     def execute(self) -> list[ExecutionResult]:
         """Execute all artifacts, respecting dependencies.
@@ -304,7 +302,6 @@ class ParallelExecutor:
                         md5=md5,
                         size=size,
                         cmd=cmd if self.config.provenance else None,
-                        code_ref=self.code_ref,
                         deps=deps_hashes if self.config.provenance else None,
                     )
                     if self.config.verbose:

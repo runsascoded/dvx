@@ -17,7 +17,6 @@ outs:
 meta:
   computation:
     cmd: "python process.py --input data.csv"
-    code_ref: "a1b2c3d4..."  # git SHA when computed
     deps:
       data.csv: def456...
       process.py: 789abc...
@@ -183,39 +182,6 @@ def has_file_changed_since(
     return old_blob != new_blob
 
 
-def have_deps_changed_since(
-    deps: dict[str, str],
-    code_ref: str,
-    repo_path: Path | None = None,
-) -> tuple[bool, list[str]]:
-    """Check if any dependencies have changed since a commit.
-
-    Uses git blob comparison for tracked files - fast, no hashing needed.
-    Falls back to hash comparison for untracked files.
-
-    Args:
-        deps: Dict of {dep_path: recorded_hash}
-        code_ref: Git SHA when artifact was computed
-        repo_path: Path to git repository
-
-    Returns:
-        Tuple of (any_changed, list_of_changed_paths)
-    """
-    changed = []
-
-    for dep_path in deps:
-        file_changed = has_file_changed_since(dep_path, code_ref, repo_path)
-
-        if file_changed is True:
-            changed.append(dep_path)
-        elif file_changed is None:
-            # Can't use git - file might be untracked or generated
-            # Fall back to hash comparison (handled by caller)
-            pass
-
-    return len(changed) > 0, changed
-
-
 @dataclass
 class DVCFileInfo:
     """Content of a .dvc file."""
@@ -225,7 +191,6 @@ class DVCFileInfo:
     size: int
     # Provenance via computation block (optional)
     cmd: str | None = None
-    code_ref: str | None = None  # git SHA
     deps: dict[str, str] = field(default_factory=dict)  # {path: md5}
     # Directory metadata
     nfiles: int | None = None
@@ -280,7 +245,6 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
         size=out.get("size", 0),
         # Provenance from computation block
         cmd=computation.get("cmd"),
-        code_ref=computation.get("code_ref"),
         deps=computation.get("deps") or {},
         # Directory metadata
         nfiles=out.get("nfiles"),
@@ -294,7 +258,6 @@ def write_dvc_file(
     md5: str | None = None,
     size: int | None = None,
     cmd: str | None = None,
-    code_ref: str | None = None,
     deps: dict[str, str] | None = None,
     nfiles: int | None = None,
     is_dir: bool | None = None,
@@ -307,7 +270,6 @@ def write_dvc_file(
         md5: MD5 hash of the output (omitted from file if None - placeholder mode)
         size: Size in bytes (omitted from file if None - placeholder mode)
         cmd: Command that was run (provenance)
-        code_ref: Git SHA when computation was run (provenance)
         deps: {dep_path: md5} of inputs (provenance)
         nfiles: Number of files (for directories)
         is_dir: Whether output is a directory (auto-detected if None)
@@ -353,12 +315,10 @@ def write_dvc_file(
 
     # Add computation block inside meta for DVC compatibility
     # (DVC allows arbitrary data in meta, but rejects unknown top-level keys)
-    if cmd or code_ref or deps:
+    if cmd or deps:
         computation = {}
         if cmd:
             computation["cmd"] = cmd
-        if code_ref:
-            computation["code_ref"] = code_ref
         if deps:
             computation["deps"] = deps
         data["meta"] = {"computation": computation}
@@ -372,7 +332,6 @@ def write_dvc_file(
 def is_output_fresh(
     output_path: Path,
     check_deps: bool = True,
-    check_code_ref: bool = True,  # noqa: ARG001 (deprecated, kept for compat)
     use_mtime_cache: bool = True,
     info: DVCFileInfo | None = None,
 ) -> tuple[bool, str]:
@@ -389,7 +348,6 @@ def is_output_fresh(
     Args:
         output_path: Path to the output file/directory
         check_deps: Whether to verify dependencies (default: True)
-        check_code_ref: Deprecated, kept for backward compatibility
         use_mtime_cache: Whether to use mtime cache for output hash (default: True)
         info: Pre-parsed DVCFileInfo (avoids re-reading .dvc file if already parsed)
 
@@ -458,7 +416,6 @@ class FreshnessDetails:
 def get_freshness_details(
     output_path: Path,
     check_deps: bool = True,
-    check_code_ref: bool = True,  # noqa: ARG001 (deprecated, kept for compat)
     use_mtime_cache: bool = True,
     info: DVCFileInfo | None = None,
 ) -> FreshnessDetails:
@@ -474,7 +431,6 @@ def get_freshness_details(
     Args:
         output_path: Path to the output file/directory
         check_deps: Whether to verify dependencies (default: True)
-        check_code_ref: Deprecated, kept for backward compatibility
         use_mtime_cache: Whether to use mtime cache for output hash (default: True)
         info: Pre-parsed DVCFileInfo (avoids re-reading .dvc file if already parsed)
 

@@ -111,7 +111,6 @@ def test_get_hash_with_computation_block(tmp_path):
         "meta": {
             "computation": {
                 "cmd": "python process.py",
-                "code_ref": "deadbeef",
                 "deps": {"input.txt": "111222333"},
             }
         },

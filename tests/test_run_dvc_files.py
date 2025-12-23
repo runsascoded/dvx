@@ -44,7 +44,6 @@ def test_write_dvc_file_with_computation(tmp_path):
         md5="abc123",
         size=100,
         cmd="python process.py",
-        code_ref="deadbeef1234",
         deps={"input.txt": "111222", "script.py": "333444"},
     )
 
@@ -55,7 +54,6 @@ def test_write_dvc_file_with_computation(tmp_path):
     assert "computation" in data["meta"]
     comp = data["meta"]["computation"]
     assert comp["cmd"] == "python process.py"
-    assert comp["code_ref"] == "deadbeef1234"
     assert comp["deps"]["input.txt"] == "111222"
     assert comp["deps"]["script.py"] == "333444"
 
@@ -122,7 +120,6 @@ def test_read_dvc_file_with_computation(tmp_path):
         "meta": {
             "computation": {
                 "cmd": "python process.py",
-                "code_ref": "deadbeef",
                 "deps": {"input.txt": "111222"},
             }
         },
@@ -134,7 +131,6 @@ def test_read_dvc_file_with_computation(tmp_path):
 
     assert info is not None
     assert info.cmd == "python process.py"
-    assert info.code_ref == "deadbeef"
     assert info.deps == {"input.txt": "111222"}
 
 
@@ -205,7 +201,6 @@ def test_roundtrip(tmp_path):
         md5="fedcba987654",
         size=12345,
         cmd="python train.py --model rf",
-        code_ref="abc123def456",
         deps={"data.csv": "111", "train.py": "222"},
     )
 
@@ -214,5 +209,4 @@ def test_roundtrip(tmp_path):
     assert info.md5 == "fedcba987654"
     assert info.size == 12345
     assert info.cmd == "python train.py --model rf"
-    assert info.code_ref == "abc123def456"
     assert info.deps == {"data.csv": "111", "train.py": "222"}

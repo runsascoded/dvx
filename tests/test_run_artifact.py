@@ -67,7 +67,6 @@ def test_artifact_from_dvc(tmp_path):
         "meta": {
             "computation": {
                 "cmd": "python process.py",
-                "code_ref": "deadbeef",
                 "deps": {"input.txt": "111222"},
             }
         },
@@ -82,7 +81,6 @@ def test_artifact_from_dvc(tmp_path):
     assert artifact.size == 100
     assert artifact.computation is not None
     assert artifact.computation.cmd == "python process.py"
-    assert artifact.computation.code_ref == "deadbeef"
 
 
 def test_artifact_from_dvc_missing(tmp_path):
@@ -102,7 +100,7 @@ def test_artifact_write_dvc(tmp_path):
         computation=Computation(cmd="echo test > output.txt"),
     )
 
-    dvc_path = artifact.write_dvc(capture_code_ref=False)
+    dvc_path = artifact.write_dvc()
 
     assert dvc_path.exists()
     with open(dvc_path) as f:

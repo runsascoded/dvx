@@ -24,7 +24,6 @@ outs:
 meta:
   computation:
     cmd: python process.py input.parquet output.parquet
-    code_ref: main:a1b2c3d
     deps:
       - path: input.parquet
         md5: def456...

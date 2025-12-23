@@ -67,13 +67,11 @@ class Computation:
         cmd: Shell command to produce the artifact
         deps: List of input dependencies (Artifacts or paths)
         params: Optional parameters for inspection/debugging
-        code_ref: Git SHA when computation was run (set automatically)
     """
 
     cmd: str
     deps: list[Artifact | str | Path] = field(default_factory=list)
     params: dict[str, Any] = field(default_factory=dict)
-    code_ref: str | None = None
 
     def get_dep_paths(self) -> list[Path]:
         """Get paths of all dependencies."""
@@ -191,7 +189,6 @@ class Artifact:
             computation = Computation(
                 cmd=info.cmd or "",
                 deps=deps,
-                code_ref=info.code_ref,
             )
 
         # Use the original path passed in (full path), not info.path (relative)
@@ -203,7 +200,7 @@ class Artifact:
             computation=computation,
         )
 
-    def write_dvc(self, capture_code_ref: bool = True) -> Path:
+    def write_dvc(self) -> Path:
         """Write this artifact's .dvc file.
 
         This is the "prep" phase - generates the .dvc file without
@@ -213,9 +210,6 @@ class Artifact:
         If the file doesn't exist yet, a placeholder .dvc file is created
         without md5/size fields. This signals "output doesn't exist yet"
         for the two-phase prep/run workflow.
-
-        Args:
-            capture_code_ref: Whether to capture current git HEAD as code_ref
 
         Returns:
             Path to the created .dvc file
@@ -234,22 +228,17 @@ class Artifact:
 
         # Get computation metadata
         cmd = None
-        code_ref = None
         deps_hashes = None
 
         if self.computation:
             cmd = self.computation.cmd
             deps_hashes = self.computation.get_dep_hashes()
 
-            if capture_code_ref:
-                code_ref = self.computation.code_ref or get_git_head_sha()
-
         return write_dvc_file(
             output_path=path,
             md5=md5,
             size=size,
             cmd=cmd,
-            code_ref=code_ref,
             deps=deps_hashes,
         )
 
@@ -335,12 +324,11 @@ def delayed(fn: F) -> F:
     return wrapper  # type: ignore
 
 
-def write_all_dvc(artifacts: list[Artifact], capture_code_ref: bool = True) -> list[Path]:
+def write_all_dvc(artifacts: list[Artifact]) -> list[Path]:
     """Write .dvc files for all artifacts in dependency order.
 
     Args:
         artifacts: List of artifacts to write
-        capture_code_ref: Whether to capture git HEAD as code_ref
 
     Returns:
         List of paths to created .dvc files
@@ -357,9 +345,7 @@ def write_all_dvc(artifacts: list[Artifact], capture_code_ref: bool = True) -> l
 
     # Write .dvc files in dependency order (leaves first)
     # Only write computed artifacts
-    return [
-        artifact.write_dvc(capture_code_ref) for artifact in all_artifacts if artifact.computation
-    ]
+    return [artifact.write_dvc() for artifact in all_artifacts if artifact.computation]
 
 
 def _run_one_artifact(
