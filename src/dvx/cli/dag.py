@@ -11,7 +11,7 @@ from pathlib import Path
 
 import click
 
-from dvx.run.dvc_files import read_dvc_file
+from dvx.run.dvc_files import read_dir_manifest, read_dvc_file
 
 
 @dataclass
@@ -23,7 +23,6 @@ class DagNode:
     md5: str | None = None
     size: int | None = None
     cmd: str | None = None
-    code_ref: str | None = None
     deps: dict[str, str] = field(default_factory=dict)  # {path: md5}
     is_dir: bool = False
 
@@ -138,7 +137,6 @@ def build_graph(root: Path, targets: list[str] | None = None) -> DependencyGraph
             md5=info.md5,
             size=info.size,
             cmd=info.cmd,
-            code_ref=info.code_ref,
             deps=info.deps or {},
             is_dir=info.is_dir,
         )
@@ -202,16 +200,97 @@ def format_ascii(graph: DependencyGraph, show_cmd: bool = False) -> str:
     return "\n".join(lines)
 
 
-def format_dot(graph: DependencyGraph, show_cmd: bool = False) -> str:
-    """Format graph as Graphviz DOT."""
+def format_dot(
+    graph: DependencyGraph,
+    show_cmd: bool = False,
+    cluster_dirs: bool = True,
+) -> str:
+    """Format graph as Graphviz DOT with optional directory clustering."""
     lines = ["digraph DVX {"]
     lines.append("  rankdir=TB;")
     lines.append("  node [shape=box];")
+    lines.append("  compound=true;")  # Allow edges to clusters
     lines.append("")
 
-    # Add nodes
+    # Build directory info: {dir_path: set of rel_paths}
+    dir_contents: dict[str, set[str]] = {}
+    dir_nodes: set[str] = set()
+
+    if cluster_dirs:
+        for path, node in graph.nodes.items():
+            if node.is_dir:
+                dir_nodes.add(path)
+                # Try to read manifest from cache
+                if node.md5:
+                    manifest = read_dir_manifest(node.md5)
+                    if manifest:
+                        dir_contents[path] = set(manifest.keys())
+                    else:
+                        dir_contents[path] = set()
+                else:
+                    dir_contents[path] = set()
+
+    # Collect all dep paths
+    all_deps: set[str] = set()
+    for node in graph.nodes.values():
+        all_deps.update(node.deps.keys())
+
+    # Build mapping: full_file_path -> (dir_path, rel_path)
+    # First from manifests, then by detecting deps that match dir_path/... pattern
+    file_to_dir: dict[str, tuple[str, str]] = {}
+
+    # From manifests (if available)
+    for dir_path, rel_paths in dir_contents.items():
+        for rel_path in rel_paths:
+            full_path = f"{dir_path}/{rel_path}"
+            file_to_dir[full_path] = (dir_path, rel_path)
+
+    # From deps that match directory prefix (fallback when manifests aren't cached)
+    for dep in all_deps:
+        if dep in file_to_dir or dep in graph.nodes:
+            continue
+        # Check if dep is inside any tracked directory
+        for dir_path in dir_nodes:
+            if dep.startswith(f"{dir_path}/"):
+                rel_path = dep[len(dir_path) + 1:]
+                file_to_dir[dep] = (dir_path, rel_path)
+                dir_contents[dir_path].add(rel_path)
+                break
+
+    # External deps: deps that aren't nodes and aren't files inside tracked dirs
+    external_deps = all_deps - set(graph.nodes.keys()) - set(file_to_dir.keys())
+
+    # Add directory clusters
+    for dir_path in sorted(dir_nodes):
+        rel_paths = dir_contents[dir_path]
+        if not rel_paths:
+            continue  # No files inside, skip cluster
+
+        escaped_dir = dir_path.replace('"', '\\"').replace("/", "_").replace(".", "_")
+        cluster_name = f"cluster_{escaped_dir}"
+
+        lines.append(f"  subgraph {cluster_name} {{")
+        lines.append(f'    label="{dir_path}/";')
+        lines.append("    style=filled; fillcolor=lightyellow;")
+
+        # Add files inside directory
+        for rel_path in sorted(rel_paths):
+            full_path = f"{dir_path}/{rel_path}"
+            escaped_full = full_path.replace('"', '\\"')
+            # Show just filename as label
+            lines.append(f'    "{escaped_full}" [label="{rel_path}"];')
+
+        lines.append("  }")
+        lines.append("")
+
+    # Track which directories became clusters (have files inside)
+    clustered_dirs = {d for d in dir_nodes if dir_contents.get(d)}
+
+    # Add regular (non-directory or empty directory) nodes
     for path, node in sorted(graph.nodes.items()):
-        # Escape quotes in path
+        if path in clustered_dirs:
+            continue  # Already handled as cluster
+
         escaped_path = path.replace('"', '\\"')
         label = escaped_path
         if node.is_dir:
@@ -224,14 +303,52 @@ def format_dot(graph: DependencyGraph, show_cmd: bool = False) -> str:
         style = "style=filled,fillcolor=lightblue" if node.cmd else ""
         lines.append(f'  "{escaped_path}" [label="{label}"{", " + style if style else ""}];')
 
+    # Add external dep nodes (ghost nodes - deps without .dvc files)
+    if external_deps:
+        lines.append("")
+        lines.append("  // External dependencies (no .dvc file)")
+        for dep in sorted(external_deps):
+            escaped_dep = dep.replace('"', '\\"')
+            lines.append(f'  "{escaped_dep}" [label="{escaped_dep}", style=dashed, color=gray];')
+
     lines.append("")
 
     # Add edges
     for path, node in sorted(graph.nodes.items()):
         escaped_path = path.replace('"', '\\"')
+
+        # Check if target node is a directory cluster
+        target_is_cluster = path in clustered_dirs
+
         for dep in sorted(node.deps.keys()):
             escaped_dep = dep.replace('"', '\\"')
-            lines.append(f'  "{escaped_dep}" -> "{escaped_path}";')
+
+            # Determine edge attributes for source (ltail) and target (lhead)
+            attrs = []
+            source_node = escaped_dep
+            target_node = escaped_path
+
+            # Check if dep is a file inside a tracked directory
+            if dep in file_to_dir:
+                # Source is a file inside a directory cluster
+                dir_path, rel_path = file_to_dir[dep]
+                source_node = f"{dir_path}/{rel_path}".replace('"', '\\"')
+            elif dep in clustered_dirs:
+                # Source is a directory cluster - pick first file, use ltail
+                first_file = sorted(dir_contents[dep])[0]
+                source_node = f"{dep}/{first_file}".replace('"', '\\"')
+                escaped_cluster = dep.replace("/", "_").replace(".", "_")
+                attrs.append(f"ltail=cluster_{escaped_cluster}")
+
+            # If target is a directory cluster, use lhead
+            if target_is_cluster:
+                first_file = sorted(dir_contents[path])[0]
+                target_node = f"{path}/{first_file}".replace('"', '\\"')
+                escaped_cluster = path.replace("/", "_").replace(".", "_")
+                attrs.append(f"lhead=cluster_{escaped_cluster}")
+
+            attr_str = f" [{', '.join(attrs)}]" if attrs else ""
+            lines.append(f'  "{source_node}" -> "{target_node}"{attr_str};')
 
     lines.append("}")
     return "\n".join(lines)
@@ -285,7 +402,6 @@ def format_json(graph: DependencyGraph) -> str:
             "md5": node.md5,
             "size": node.size,
             "cmd": node.cmd,
-            "code_ref": node.code_ref,
             "deps": node.deps,
             "is_dir": node.is_dir,
         }
@@ -310,7 +426,6 @@ def format_html(graph: DependencyGraph) -> str:
             "md5": node.md5[:8] if node.md5 else None,
             "size": node.size,
             "cmd": node.cmd,
-            "code_ref": node.code_ref[:8] if node.code_ref else None,
             "deps": list(node.deps.keys()),
             "is_dir": node.is_dir,
             "dep_count": len(node.deps),
@@ -552,7 +667,6 @@ def format_html(graph: DependencyGraph) -> str:
             let html = `<h3>${{d.id}}${{d.is_dir ? '/' : ''}}</h3>`;
             if (d.md5) html += `<p><strong>Hash:</strong> ${{d.md5}}...</p>`;
             if (d.size) html += `<p><strong>Size:</strong> ${{d.size.toLocaleString()}} bytes</p>`;
-            if (d.code_ref) html += `<p><strong>Code ref:</strong> ${{d.code_ref}}...</p>`;
             if (d.cmd) html += `<p><strong>Command:</strong></p><p class="cmd">${{d.cmd}}</p>`;
             if (d.deps.length > 0) {{
                 html += `<div class="deps"><strong>Dependencies (${{d.deps.length}}):</strong>`;
