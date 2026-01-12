@@ -6,6 +6,7 @@ Uses the provenance information in .dvc files (computation blocks).
 
 import subprocess
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -122,6 +123,11 @@ class ParallelExecutor:
         self.artifacts = artifacts
         self.config = config or ExecutionConfig()
         self.output = output or sys.stderr
+
+        # Command deduplication state (for multi-output computations)
+        self._cmd_lock = threading.Lock()
+        self._cmd_events: dict[str, threading.Event] = {}  # cmd -> completion event
+        self._cmd_results: dict[str, bool] = {}  # cmd -> success
 
     def execute(self) -> list[ExecutionResult]:
         """Execute all artifacts, respecting dependencies.
@@ -247,6 +253,9 @@ class ParallelExecutor:
     def _execute_artifact(self, artifact: Artifact) -> ExecutionResult:
         """Execute a single artifact computation.
 
+        Handles command deduplication: if multiple artifacts share the same cmd,
+        only the first one runs the command, others wait and verify output.
+
         Args:
             artifact: Artifact to execute
 
@@ -256,6 +265,7 @@ class ParallelExecutor:
         import time
 
         path = artifact.path
+        cmd = artifact.computation.cmd if artifact.computation else None
 
         # Check if should run
         should_run, reason = self._should_run(artifact)
@@ -268,10 +278,45 @@ class ParallelExecutor:
                 reason=reason,
             )
 
-        # Run the computation
-        cmd = artifact.computation.cmd
-        self._log(f"  ⟳ {path}: running...")
+        # Command deduplication for multi-output computations
+        if cmd:
+            with self._cmd_lock:
+                if cmd in self._cmd_results:
+                    # Command already completed - handle as co-output
+                    success = self._cmd_results[cmd]
+                    if success:
+                        return self._handle_co_output(artifact, cmd)
+                    return ExecutionResult(
+                        path=path,
+                        success=False,
+                        reason="command failed (co-output)",
+                    )
 
+                if cmd in self._cmd_events:
+                    # Command in progress - wait for it
+                    event = self._cmd_events[cmd]
+                else:
+                    # We'll run this command - create event for others to wait on
+                    event = threading.Event()
+                    self._cmd_events[cmd] = event
+                    event = None  # Signal that we're the runner
+
+            if event is not None:
+                # Wait for the other thread to complete
+                self._log(f"  ◐ {path}: waiting (same cmd running)...")
+                event.wait()
+                with self._cmd_lock:
+                    success = self._cmd_results.get(cmd, False)
+                if success:
+                    return self._handle_co_output(artifact, cmd)
+                return ExecutionResult(
+                    path=path,
+                    success=False,
+                    reason="command failed (co-output)",
+                )
+
+        # Run the computation
+        self._log(f"  ⟳ {path}: running...")
         start_time = time.time()
 
         try:
@@ -283,52 +328,124 @@ class ParallelExecutor:
                 check=True,
             )
             duration = time.time() - start_time
-
-            # Compute dependency hashes for provenance
-            deps_hashes = {}
-            if self.config.provenance:
-                deps_hashes = artifact.computation.get_dep_hashes()
-
-            # Write .dvc file for output
-            out = Path(path)
-            dvc_file = None
-            if out.exists():
-                try:
-                    md5 = compute_md5(out)
-                    size = compute_file_size(out)
-
-                    dvc_file = write_dvc_file(
-                        output_path=out,
-                        md5=md5,
-                        size=size,
-                        cmd=cmd if self.config.provenance else None,
-                        deps=deps_hashes if self.config.provenance else None,
-                    )
-                    if self.config.verbose:
-                        self._log(f"       → {dvc_file}")
-                except (FileNotFoundError, ValueError) as e:
-                    self._log(f"  ⚠ {path}: couldn't write .dvc: {e}")
-
-            self._log(f"  ✓ {path}: completed ({duration:.1f}s)")
-            return ExecutionResult(
-                path=path,
-                success=True,
-                reason="completed",
-                duration=duration,
-                dvc_file=dvc_file,
-            )
-
+            success = True
         except subprocess.CalledProcessError as e:
             duration = time.time() - start_time
             error_msg = e.stderr[:200] if e.stderr else str(e)
             self._log(f"  ✗ {path}: failed")
             if self.config.verbose:
                 self._log(f"       {error_msg}")
+            success = False
+
+            # Record failure and signal waiters
+            if cmd:
+                with self._cmd_lock:
+                    self._cmd_results[cmd] = False
+                    if cmd in self._cmd_events:
+                        self._cmd_events[cmd].set()
+
             return ExecutionResult(
                 path=path,
                 success=False,
                 reason=f"command failed: {error_msg}",
                 duration=duration,
+            )
+
+        # Record success and signal waiters
+        if cmd:
+            with self._cmd_lock:
+                self._cmd_results[cmd] = True
+                if cmd in self._cmd_events:
+                    self._cmd_events[cmd].set()
+
+        # Compute dependency hashes for provenance
+        deps_hashes = {}
+        if self.config.provenance and artifact.computation:
+            deps_hashes = artifact.computation.get_dep_hashes()
+
+        # Write .dvc file for output
+        out = Path(path)
+        dvc_file = None
+        if out.exists():
+            try:
+                md5 = compute_md5(out)
+                size = compute_file_size(out)
+
+                dvc_file = write_dvc_file(
+                    output_path=out,
+                    md5=md5,
+                    size=size,
+                    cmd=cmd if self.config.provenance else None,
+                    deps=deps_hashes if self.config.provenance else None,
+                )
+                if self.config.verbose:
+                    self._log(f"       → {dvc_file}")
+            except (FileNotFoundError, ValueError) as e:
+                self._log(f"  ⚠ {path}: couldn't write .dvc: {e}")
+
+        self._log(f"  ✓ {path}: completed ({duration:.1f}s)")
+        return ExecutionResult(
+            path=path,
+            success=True,
+            reason="completed",
+            duration=duration,
+            dvc_file=dvc_file,
+        )
+
+    def _handle_co_output(self, artifact: Artifact, cmd: str) -> ExecutionResult:
+        """Handle an artifact whose command was already run by another artifact.
+
+        Verifies the output exists and updates its .dvc file.
+
+        Args:
+            artifact: The co-output artifact
+            cmd: The command that produced this output
+
+        Returns:
+            ExecutionResult for this artifact
+        """
+        path = artifact.path
+        out = Path(path)
+
+        if not out.exists():
+            self._log(f"  ✗ {path}: co-output not produced")
+            return ExecutionResult(
+                path=path,
+                success=False,
+                reason="co-output not produced by command",
+            )
+
+        # Compute hash and write .dvc file
+        try:
+            md5 = compute_md5(out)
+            size = compute_file_size(out)
+
+            deps_hashes = {}
+            if self.config.provenance and artifact.computation:
+                deps_hashes = artifact.computation.get_dep_hashes()
+
+            dvc_file = write_dvc_file(
+                output_path=out,
+                md5=md5,
+                size=size,
+                cmd=cmd if self.config.provenance else None,
+                deps=deps_hashes if self.config.provenance else None,
+            )
+
+            self._log(f"  ✓ {path}: co-output ready")
+            return ExecutionResult(
+                path=path,
+                success=True,
+                skipped=False,
+                reason="co-output",
+                dvc_file=dvc_file,
+            )
+        except (FileNotFoundError, ValueError) as e:
+            self._log(f"  ✗ {path}: failed to process co-output: {e}")
+            return ExecutionResult(
+                path=path,
+                success=False,
+                reason=f"co-output error: {e}",
             )
 
     def _log(self, message: str):
