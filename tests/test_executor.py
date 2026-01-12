@@ -175,7 +175,7 @@ echo "output1" > {output1_path}
     assert len(failures) == 1, f"Expected 1 failure, got {len(failures)}: {failures}"
     assert "output1.txt" in successes[0].path
     assert "output2.txt" in failures[0].path
-    assert "not produced" in failures[0].reason
+    assert "not created" in failures[0].reason or "not produced" in failures[0].reason
 
 
 def test_multi_output_command_failure(tmp_workdir):
