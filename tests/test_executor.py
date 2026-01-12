@@ -23,13 +23,16 @@ def test_multi_output_deduplication(tmp_workdir):
     # Create a script that writes to two files and increments a counter
     counter_file = tmp_workdir / "counter.txt"
     counter_file.write_text("0")
+    output1_path = tmp_workdir / "output1.txt"
+    output2_path = tmp_workdir / "output2.txt"
 
     script = tmp_workdir / "multi_output.sh"
-    script.write_text("""#!/bin/bash
-count=$(cat counter.txt)
-echo $((count + 1)) > counter.txt
-echo "output1" > output1.txt
-echo "output2" > output2.txt
+    # Use absolute paths to avoid working directory issues in CI
+    script.write_text(f"""#!/bin/bash
+count=$(cat {counter_file})
+echo $((count + 1)) > {counter_file}
+echo "output1" > {output1_path}
+echo "output2" > {output2_path}
 """)
     script.chmod(0o755)
 
@@ -129,9 +132,17 @@ echo "output2" > output2.txt
 
 def test_multi_output_partial_failure(tmp_workdir):
     """Test handling when command succeeds but doesn't produce all outputs."""
+    # Track how many times the script runs
+    counter_file = tmp_workdir / "counter.txt"
+    counter_file.write_text("0")
+
+    output1_path = tmp_workdir / "output1.txt"
     script = tmp_workdir / "partial.sh"
-    script.write_text("""#!/bin/bash
-echo "output1" > output1.txt
+    # Use absolute paths to avoid working directory issues
+    script.write_text(f"""#!/bin/bash
+count=$(cat {counter_file})
+echo $((count + 1)) > {counter_file}
+echo "output1" > {output1_path}
 # Intentionally not creating output2.txt
 """)
     script.chmod(0o755)
@@ -148,15 +159,22 @@ echo "output1" > output1.txt
     )
 
     output = StringIO()
-    executor = ParallelExecutor([artifact1, artifact2], ExecutionConfig(), output)
+    # Use max_workers=2 to test parallel execution
+    config = ExecutionConfig(max_workers=2)
+    executor = ParallelExecutor([artifact1, artifact2], config, output)
     results = executor.execute()
 
-    # One should succeed, one should fail
+    # Command should run exactly once
+    assert counter_file.read_text().strip() == "1", "Command should run exactly once"
+
+    # One should succeed (output1.txt), one should fail (output2.txt not produced)
     successes = [r for r in results if r.success]
     failures = [r for r in results if not r.success]
 
-    assert len(successes) == 1
-    assert len(failures) == 1
+    assert len(successes) == 1, f"Expected 1 success, got {len(successes)}: {successes}"
+    assert len(failures) == 1, f"Expected 1 failure, got {len(failures)}: {failures}"
+    assert "output1.txt" in successes[0].path
+    assert "output2.txt" in failures[0].path
     assert "not produced" in failures[0].reason
 
 
