@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61", "setuptools_scm[toml]>=7"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
 
 [project]
 name = "dvx"
@@ -66,17 +66,14 @@ dvx = "dvx.cli:main"
 Homepage = "https://github.com/runsascoded/dvx"
 Repository = "https://github.com/runsascoded/dvx"
 
-[tool.setuptools]
-package-dir = {"" = "src"}
+[tool.hatch.version]
+source = "vcs"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.hatch.build.hooks.vcs]
+version-file = "src/dvx/_version.py"
 
-[tool.setuptools.package-data]
-dvx = ["shell/*.bash"]
-
-[tool.setuptools_scm]
-write_to = "src/dvx/_version.py"
+[tool.hatch.build.targets.wheel]
+packages = ["src/dvx"]
 
 [tool.ruff]
 line-length = 100
