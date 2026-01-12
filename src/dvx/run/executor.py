@@ -358,30 +358,39 @@ class ParallelExecutor:
                 if cmd in self._cmd_events:
                     self._cmd_events[cmd].set()
 
+        # Verify output exists
+        out = Path(path)
+        if not out.exists():
+            self._log(f"  ✗ {path}: command succeeded but output not created")
+            return ExecutionResult(
+                path=path,
+                success=False,
+                reason="output not created by command",
+                duration=duration,
+            )
+
         # Compute dependency hashes for provenance
         deps_hashes = {}
         if self.config.provenance and artifact.computation:
             deps_hashes = artifact.computation.get_dep_hashes()
 
         # Write .dvc file for output
-        out = Path(path)
         dvc_file = None
-        if out.exists():
-            try:
-                md5 = compute_md5(out)
-                size = compute_file_size(out)
+        try:
+            md5 = compute_md5(out)
+            size = compute_file_size(out)
 
-                dvc_file = write_dvc_file(
-                    output_path=out,
-                    md5=md5,
-                    size=size,
-                    cmd=cmd if self.config.provenance else None,
-                    deps=deps_hashes if self.config.provenance else None,
-                )
-                if self.config.verbose:
-                    self._log(f"       → {dvc_file}")
-            except (FileNotFoundError, ValueError) as e:
-                self._log(f"  ⚠ {path}: couldn't write .dvc: {e}")
+            dvc_file = write_dvc_file(
+                output_path=out,
+                md5=md5,
+                size=size,
+                cmd=cmd if self.config.provenance else None,
+                deps=deps_hashes if self.config.provenance else None,
+            )
+            if self.config.verbose:
+                self._log(f"       → {dvc_file}")
+        except (FileNotFoundError, ValueError) as e:
+            self._log(f"  ⚠ {path}: couldn't write .dvc: {e}")
 
         self._log(f"  ✓ {path}: completed ({duration:.1f}s)")
         return ExecutionResult(
