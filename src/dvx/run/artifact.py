@@ -49,6 +49,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 from dvx.run.dvc_files import (
     get_file_hash_from_dir,
+    get_git_blob_sha,
     get_git_head_sha,
     read_dvc_file,
     write_dvc_file,
@@ -71,6 +72,7 @@ class Computation:
 
     cmd: str
     deps: list[Artifact | str | Path] = field(default_factory=list)
+    git_deps: list[Artifact | str | Path] = field(default_factory=list)
     params: dict[str, Any] = field(default_factory=dict)
 
     def get_dep_paths(self) -> list[Path]:
@@ -102,6 +104,29 @@ class Computation:
                 path = Path(dep)
                 if path.exists():
                     hashes[str(path)] = compute_md5(path)
+        return hashes
+
+    def get_git_dep_hashes(self) -> dict[str, str]:
+        """Compute git blob SHAs for all git dependencies.
+
+        Returns:
+            Dict mapping path strings to blob SHAs at HEAD
+        """
+        hashes = {}
+        for dep in self.git_deps:
+            if isinstance(dep, Artifact):
+                path = dep.path
+                if dep.md5:
+                    hashes[path] = dep.md5
+                else:
+                    sha = get_git_blob_sha(path, "HEAD")
+                    if sha:
+                        hashes[path] = sha
+            else:
+                path = str(dep)
+                sha = get_git_blob_sha(path, "HEAD")
+                if sha:
+                    hashes[path] = sha
         return hashes
 
 
@@ -183,12 +208,14 @@ class Artifact:
             )
 
         computation = None
-        if info.cmd or info.deps:
+        if info.cmd or info.deps or info.git_deps:
             # Convert deps dict to Artifact objects
             deps = [Artifact(path=dep_path, md5=dep_md5) for dep_path, dep_md5 in info.deps.items()]
+            git_deps = [Artifact(path=dep_path, md5=blob_sha) for dep_path, blob_sha in info.git_deps.items()]
             computation = Computation(
                 cmd=info.cmd or "",
                 deps=deps,
+                git_deps=git_deps,
             )
 
         # Use the original path passed in (full path), not info.path (relative)
@@ -229,10 +256,12 @@ class Artifact:
         # Get computation metadata
         cmd = None
         deps_hashes = None
+        git_deps_hashes = None
 
         if self.computation:
             cmd = self.computation.cmd
             deps_hashes = self.computation.get_dep_hashes()
+            git_deps_hashes = self.computation.get_git_dep_hashes() or None
 
         return write_dvc_file(
             output_path=path,
@@ -240,6 +269,7 @@ class Artifact:
             size=size,
             cmd=cmd,
             deps=deps_hashes,
+            git_deps=git_deps_hashes,
         )
 
     def is_computed(self) -> bool:

@@ -242,3 +242,58 @@ def test_artifact_hash_eq():
     # Should be usable in sets
     s = {a1, a2, a3}
     assert len(s) == 2
+
+
+def test_computation_with_git_deps():
+    """Test Computation with git_deps field."""
+    comp = Computation(
+        cmd="python process.py",
+        deps=["input.txt"],
+        git_deps=["script.py", "lib.py"],
+    )
+
+    assert comp.git_deps == ["script.py", "lib.py"]
+
+
+def test_computation_get_git_dep_hashes_with_known_md5():
+    """Test get_git_dep_hashes() uses md5 from Artifact when available."""
+    dep = Artifact(path="script.py", md5="known_blob_sha")
+    comp = Computation(
+        cmd="python process.py",
+        git_deps=[dep],
+    )
+
+    hashes = comp.get_git_dep_hashes()
+
+    assert hashes == {"script.py": "known_blob_sha"}
+
+
+def test_artifact_from_dvc_with_git_deps(tmp_path):
+    """Test Artifact.from_dvc() populates git_deps from .dvc file."""
+    dvc_file = tmp_path / "output.txt.dvc"
+    dvc_content = {
+        "outs": [{"md5": "abc123", "size": 100, "path": "output.txt"}],
+        "meta": {
+            "computation": {
+                "cmd": "python process.py",
+                "deps": {"input.txt": "111222"},
+                "git_deps": {"script.py": "aabbccdd", "lib.py": "eeff0011"},
+            }
+        },
+    }
+    with open(dvc_file, "w") as f:
+        yaml.dump(dvc_content, f)
+
+    artifact = Artifact.from_dvc(tmp_path / "output.txt")
+
+    assert artifact is not None
+    assert artifact.computation is not None
+    assert len(artifact.computation.deps) == 1
+    assert len(artifact.computation.git_deps) == 2
+
+    git_dep_paths = {d.path for d in artifact.computation.git_deps}
+    assert git_dep_paths == {"script.py", "lib.py"}
+
+    # Check blob SHAs are stored as md5 on the Artifact objects
+    git_dep_map = {d.path: d.md5 for d in artifact.computation.git_deps}
+    assert git_dep_map == {"script.py": "aabbccdd", "lib.py": "eeff0011"}

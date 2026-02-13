@@ -210,3 +210,107 @@ def test_roundtrip(tmp_path):
     assert info.size == 12345
     assert info.cmd == "python train.py --model rf"
     assert info.deps == {"data.csv": "111", "train.py": "222"}
+
+
+def test_write_dvc_file_with_git_deps(tmp_path):
+    """Test .dvc file writing with git_deps block."""
+    output_path = tmp_path / "output.txt"
+
+    dvc_path = write_dvc_file(
+        output_path=output_path,
+        md5="abc123",
+        size=100,
+        cmd="python process.py",
+        deps={"input.txt": "111222"},
+        git_deps={"script.py": "aabbccdd", "lib.py": "eeff0011"},
+    )
+
+    with open(dvc_path) as f:
+        data = yaml.safe_load(f)
+
+    comp = data["meta"]["computation"]
+    assert comp["git_deps"]["script.py"] == "aabbccdd"
+    assert comp["git_deps"]["lib.py"] == "eeff0011"
+    assert comp["deps"]["input.txt"] == "111222"
+
+
+def test_read_dvc_file_with_git_deps(tmp_path):
+    """Test reading .dvc file with git_deps."""
+    dvc_file = tmp_path / "output.txt.dvc"
+    dvc_content = {
+        "outs": [{"md5": "abc123", "size": 100, "path": "output.txt"}],
+        "meta": {
+            "computation": {
+                "cmd": "python process.py",
+                "deps": {"input.txt": "111222"},
+                "git_deps": {"script.py": "aabbccdd"},
+            }
+        },
+    }
+    with open(dvc_file, "w") as f:
+        yaml.dump(dvc_content, f)
+
+    info = read_dvc_file(tmp_path / "output.txt")
+
+    assert info is not None
+    assert info.deps == {"input.txt": "111222"}
+    assert info.git_deps == {"script.py": "aabbccdd"}
+
+
+def test_roundtrip_with_git_deps(tmp_path):
+    """Test write then read preserves git_deps."""
+    output_path = tmp_path / "output.parquet"
+
+    write_dvc_file(
+        output_path=output_path,
+        md5="fedcba987654",
+        size=12345,
+        cmd="python train.py",
+        deps={"data.csv": "111"},
+        git_deps={"train.py": "aaa", "utils.py": "bbb"},
+    )
+
+    info = read_dvc_file(output_path)
+
+    assert info.deps == {"data.csv": "111"}
+    assert info.git_deps == {"train.py": "aaa", "utils.py": "bbb"}
+
+
+def test_write_dvc_file_git_deps_only(tmp_path):
+    """Test .dvc file with git_deps but no deps still creates computation block."""
+    output_path = tmp_path / "output.txt"
+
+    dvc_path = write_dvc_file(
+        output_path=output_path,
+        md5="abc123",
+        size=100,
+        git_deps={"script.py": "aabbccdd"},
+    )
+
+    with open(dvc_path) as f:
+        data = yaml.safe_load(f)
+
+    assert "meta" in data
+    comp = data["meta"]["computation"]
+    assert "deps" not in comp
+    assert comp["git_deps"]["script.py"] == "aabbccdd"
+
+
+def test_read_dvc_file_no_git_deps(tmp_path):
+    """Test reading .dvc file without git_deps returns empty dict."""
+    dvc_file = tmp_path / "output.txt.dvc"
+    dvc_content = {
+        "outs": [{"md5": "abc123", "size": 100, "path": "output.txt"}],
+        "meta": {
+            "computation": {
+                "cmd": "python process.py",
+                "deps": {"input.txt": "111222"},
+            }
+        },
+    }
+    with open(dvc_file, "w") as f:
+        yaml.dump(dvc_content, f)
+
+    info = read_dvc_file(tmp_path / "output.txt")
+
+    assert info.git_deps == {}
