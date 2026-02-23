@@ -306,12 +306,13 @@ def move(src, dst):
 # External data commands (import, get) - from external module
 # =============================================================================
 
-from .external import get, get_url, import_cmd, import_url
+from .external import get, get_url, import_cmd, import_url, update
 
 cli.add_command(import_cmd)
 cli.add_command(import_url)
 cli.add_command(get)
 cli.add_command(get_url)
+cli.add_command(update)
 
 
 # =============================================================================
