@@ -290,4 +290,4 @@ DVX is optimized for large repos:
 
 Apache 2.0
 
-[DVC]: https://dvc.org
+[DVC]: https://github.com/treeverse/dvc
