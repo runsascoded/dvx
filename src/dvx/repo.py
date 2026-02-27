@@ -360,6 +360,9 @@ class Repo:
         self,
         url: str,
         out: str | None = None,
+        no_download: bool = False,
+        fs_config: dict | None = None,
+        version_aware: bool = False,
         **kwargs: Any,
     ):
         """Import a file from a URL.
@@ -367,8 +370,39 @@ class Repo:
         Args:
             url: URL to import from.
             out: Output path.
+            no_download: Track metadata only (no download).
+            fs_config: Filesystem configuration (e.g. allow_anonymous_login).
+            version_aware: Track S3 version IDs.
         """
-        return self._repo.imp_url(url=url, out=out, **kwargs)
+        return self._repo.imp_url(
+            url=url,
+            out=out,
+            no_download=no_download,
+            fs_config=fs_config,
+            version_aware=version_aware,
+            **kwargs,
+        )
+
+    def update(
+        self,
+        targets: list[str],
+        no_download: bool = False,
+        recursive: bool = False,
+        **kwargs: Any,
+    ):
+        """Update imported data from external sources.
+
+        Args:
+            targets: .dvc files to update.
+            no_download: Update metadata only.
+            recursive: Update targets recursively.
+        """
+        return self._repo.update(
+            targets=targets,
+            no_download=no_download,
+            recursive=recursive,
+            **kwargs,
+        )
 
     # =========================================================================
     # Static/class methods

@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from dvx.run.artifact import Artifact, Computation
-from dvx.run.executor import ExecutionConfig, ParallelExecutor
+from dvx.run.executor import ExecutionConfig, ParallelExecutor, _group_into_levels, run
 
 
 @pytest.fixture
@@ -201,3 +201,98 @@ def test_multi_output_command_failure(tmp_workdir):
     # At least one should mention "co-output" (the waiter)
     reasons = [r.reason for r in results]
     assert any("failed" in r for r in reasons)
+
+
+def test_external_dep_no_circular_dependency(tmp_workdir):
+    """Test that deps without .dvc files don't cause 'Circular dependency detected'.
+
+    When a .dvc file has a dep on a git-tracked file (no .dvc file), the dep
+    should be treated as a leaf node and not block execution.
+    """
+    # Create the external dep (a git-tracked file, no .dvc file)
+    external_dep = tmp_workdir / "script.py"
+    external_dep.write_text("print('hello')\n")
+
+    # Create .dvc file for output that depends on external dep
+    output_path = tmp_workdir / "output.txt"
+    dvc_file = tmp_workdir / "output.txt.dvc"
+    dvc_content = {
+        "outs": [{"md5": "abc123", "size": 100, "path": "output.txt"}],
+        "meta": {
+            "computation": {
+                "cmd": f"echo result > {output_path}",
+                "deps": {str(external_dep): "deadbeef"},
+            }
+        },
+    }
+    with open(dvc_file, "w") as f:
+        yaml.dump(dvc_content, f)
+
+    # This should NOT raise "Circular dependency detected"
+    output = StringIO()
+    config = ExecutionConfig(dry_run=True)
+    results = run([dvc_file], config=config, output=output)
+
+    # Should complete without error
+    assert len(results) == 1
+    assert results[0].success
+
+
+def test_group_into_levels_with_external_deps():
+    """Test _group_into_levels handles artifacts whose deps are leaf nodes."""
+    leaf = Artifact(path="external.py")
+    computed = Artifact(
+        path="output.txt",
+        computation=Computation(cmd="echo hi", deps=[leaf]),
+    )
+
+    levels = _group_into_levels([leaf, computed])
+
+    assert len(levels) == 2
+    assert levels[0] == [leaf]
+    assert levels[1] == [computed]
+
+
+def test_group_into_levels_with_git_deps():
+    """Test _group_into_levels handles git_deps as dependencies."""
+    git_dep = Artifact(path="script.py")
+    computed = Artifact(
+        path="output.txt",
+        computation=Computation(cmd="echo hi", deps=[], git_deps=[git_dep]),
+    )
+
+    levels = _group_into_levels([git_dep, computed])
+
+    assert len(levels) == 2
+    assert levels[0] == [git_dep]
+    assert levels[1] == [computed]
+
+
+def test_run_with_git_deps_in_dvc_file(tmp_workdir):
+    """Test that run() handles .dvc files with git_deps."""
+    # Create the git dep file
+    script = tmp_workdir / "script.py"
+    script.write_text("print('hello')\n")
+
+    # Create .dvc file with git_deps
+    output_path = tmp_workdir / "output.txt"
+    dvc_file = tmp_workdir / "output.txt.dvc"
+    dvc_content = {
+        "outs": [{"md5": "abc123", "size": 100, "path": "output.txt"}],
+        "meta": {
+            "computation": {
+                "cmd": f"echo result > {output_path}",
+                "git_deps": {"script.py": "aabbccdd"},
+            }
+        },
+    }
+    with open(dvc_file, "w") as f:
+        yaml.dump(dvc_content, f)
+
+    # Should not raise "Circular dependency detected"
+    output = StringIO()
+    config = ExecutionConfig(dry_run=True)
+    results = run([dvc_file], config=config, output=output)
+
+    assert len(results) == 1
+    assert results[0].success

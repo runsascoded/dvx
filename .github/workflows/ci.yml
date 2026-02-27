@@ -23,6 +23,21 @@ jobs:
     - name: Run tests
       run: uv run pytest tests
 
+  test-s3:
+    runs-on: ubuntu-latest
+    # Only on push to main / manual — avoid hitting S3 on every PR
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    steps:
+    - uses: actions/checkout@v4
+    - uses: astral-sh/setup-uv@v7
+    - run: uv python install 3.13
+    - name: Install dependencies
+      run: uv sync --python 3.13 --extra dev --extra s3
+    - name: Run S3 integration tests
+      env:
+        DVX_TEST_S3: "1"
+      run: uv run pytest tests/test_s3_import.py -v
+
   publish:
     needs: test
     runs-on: ubuntu-latest

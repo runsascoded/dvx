@@ -77,13 +77,19 @@ def _group_into_levels(artifacts: list[Artifact]) -> list[list[Artifact]]:
                 # Leaf nodes are always ready
                 ready.append(artifact)
             else:
-                # Check if all deps are done
+                # Check if all deps (including git_deps) are done
                 deps_done = True
                 for dep in artifact.computation.deps:
                     dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
                     if dep_path not in done:
                         deps_done = False
                         break
+                if deps_done:
+                    for dep in artifact.computation.git_deps:
+                        dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
+                        if dep_path not in done:
+                            deps_done = False
+                            break
 
                 if deps_done:
                     ready.append(artifact)
@@ -371,8 +377,10 @@ class ParallelExecutor:
 
         # Compute dependency hashes for provenance
         deps_hashes = {}
+        git_deps_hashes = {}
         if self.config.provenance and artifact.computation:
             deps_hashes = artifact.computation.get_dep_hashes()
+            git_deps_hashes = artifact.computation.get_git_dep_hashes()
 
         # Write .dvc file for output
         dvc_file = None
@@ -386,6 +394,7 @@ class ParallelExecutor:
                 size=size,
                 cmd=cmd if self.config.provenance else None,
                 deps=deps_hashes if self.config.provenance else None,
+                git_deps=git_deps_hashes if self.config.provenance else None,
             )
             if self.config.verbose:
                 self._log(f"       → {dvc_file}")
@@ -430,8 +439,10 @@ class ParallelExecutor:
             size = compute_file_size(out)
 
             deps_hashes = {}
+            git_deps_hashes = {}
             if self.config.provenance and artifact.computation:
                 deps_hashes = artifact.computation.get_dep_hashes()
+                git_deps_hashes = artifact.computation.get_git_dep_hashes()
 
             dvc_file = write_dvc_file(
                 output_path=out,
@@ -439,6 +450,7 @@ class ParallelExecutor:
                 size=size,
                 cmd=cmd if self.config.provenance else None,
                 deps=deps_hashes if self.config.provenance else None,
+                git_deps=git_deps_hashes if self.config.provenance else None,
             )
 
             self._log(f"  ✓ {path}: co-output ready")
@@ -511,9 +523,19 @@ def run(
         if artifact.computation:
             for dep in artifact.computation.deps:
                 dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
-                dvc_file = Path(str(dep_path) + ".dvc")
-                if dvc_file.exists() and dep_path not in artifacts:
-                    pending.append(dvc_file)
+                if dep_path not in artifacts:
+                    dvc_file = Path(str(dep_path) + ".dvc")
+                    if dvc_file.exists():
+                        pending.append(dvc_file)
+                    else:
+                        # No .dvc file — add as leaf so _group_into_levels sees it in `done`
+                        artifacts[dep_path] = Artifact(path=dep_path)
+
+            # git_deps are always leaf nodes (git-tracked, no .dvc file)
+            for dep in artifact.computation.git_deps:
+                dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
+                if dep_path not in artifacts:
+                    artifacts[dep_path] = Artifact(path=dep_path)
 
     # Topological sort (deps first)
     sorted_artifacts = _topological_sort(artifacts)
@@ -535,6 +557,10 @@ def _topological_sort(artifacts: dict[str, Artifact]) -> list[Artifact]:
 
         if artifact.computation:
             for dep in artifact.computation.deps:
+                dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
+                if dep_path in artifacts:
+                    visit(artifacts[dep_path])
+            for dep in artifact.computation.git_deps:
                 dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
                 if dep_path in artifacts:
                     visit(artifacts[dep_path])

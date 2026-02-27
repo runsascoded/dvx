@@ -192,6 +192,7 @@ class DVCFileInfo:
     # Provenance via computation block (optional)
     cmd: str | None = None
     deps: dict[str, str] = field(default_factory=dict)  # {path: md5}
+    git_deps: dict[str, str] = field(default_factory=dict)  # {path: blob_sha}
     # Directory metadata
     nfiles: int | None = None
     is_dir: bool = False
@@ -246,6 +247,7 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
         # Provenance from computation block
         cmd=computation.get("cmd"),
         deps=computation.get("deps") or {},
+        git_deps=computation.get("git_deps") or {},
         # Directory metadata
         nfiles=out.get("nfiles"),
         is_dir=is_dir,
@@ -259,6 +261,7 @@ def write_dvc_file(
     size: int | None = None,
     cmd: str | None = None,
     deps: dict[str, str] | None = None,
+    git_deps: dict[str, str] | None = None,
     nfiles: int | None = None,
     is_dir: bool | None = None,
     stage: str | None = None,  # noqa: ARG001 (legacy, deprecated)
@@ -315,12 +318,14 @@ def write_dvc_file(
 
     # Add computation block inside meta for DVC compatibility
     # (DVC allows arbitrary data in meta, but rejects unknown top-level keys)
-    if cmd or deps:
+    if cmd or deps or git_deps:
         computation = {}
         if cmd:
             computation["cmd"] = cmd
         if deps:
             computation["deps"] = deps
+        if git_deps:
+            computation["git_deps"] = git_deps
         data["meta"] = {"computation": computation}
 
     with open(dvc_path, "w") as f:
@@ -397,6 +402,16 @@ def is_output_fresh(
             # Compare our recorded hash against dep's .dvc expected hash
             if dep_info.md5 != recorded_md5:
                 return False, f"dep changed: {dep_path}"
+
+    # Check git dependencies if requested
+    # Compare recorded blob SHAs against current HEAD blob SHAs
+    if check_deps and info.git_deps:
+        for dep_path, recorded_sha in info.git_deps.items():
+            current_sha = get_git_blob_sha(dep_path, "HEAD")
+            if current_sha is None:
+                return False, f"git dep missing: {dep_path}"
+            if current_sha != recorded_sha:
+                return False, f"git dep changed: {dep_path}"
 
     return True, "up-to-date"
 
@@ -505,6 +520,36 @@ def get_freshness_details(
             return FreshnessDetails(
                 fresh=False,
                 reason=f"dep changed: {first_dep}",
+                output_expected=info.md5,
+                output_expected_commit=output_expected_commit,
+                output_actual=current_md5,
+                changed_deps=changed_deps,
+            )
+
+    # Check git dependencies if requested
+    # Compare recorded blob SHAs against current HEAD blob SHAs
+    if check_deps and info.git_deps:
+        changed_deps = {}
+
+        for dep_path, recorded_sha in info.git_deps.items():
+            current_sha = get_git_blob_sha(dep_path, "HEAD")
+            if current_sha is None:
+                changed_deps[dep_path] = {"expected": recorded_sha, "expected_commit": None, "actual": "(missing)"}
+            elif current_sha != recorded_sha:
+                changed_deps[dep_path] = {"expected": recorded_sha, "expected_commit": None, "actual": current_sha}
+
+        if changed_deps:
+            dvc_file_path = str(path) + ".dvc"
+            for dep_path_key, dep_details in changed_deps.items():
+                if dep_details["expected"] and dep_details["expected"] not in ("(missing)", "(error)"):
+                    commit = find_hash_commit(dep_details["expected"], dvc_file_path)
+                    dep_details["expected_commit"] = commit
+
+            first_dep = next(iter(changed_deps))
+            output_expected_commit = find_hash_commit(info.md5, dvc_file_path) if info.md5 else None
+            return FreshnessDetails(
+                fresh=False,
+                reason=f"git dep changed: {first_dep}",
                 output_expected=info.md5,
                 output_expected_commit=output_expected_commit,
                 output_actual=current_md5,
