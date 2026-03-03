@@ -15,6 +15,8 @@ Usage:
     repo.push()
 """
 
+import dvx._compat  # noqa: F401  # patch DVC schemas before any validation
+
 from dvx.repo import Repo
 
 __all__ = ["Repo"]
