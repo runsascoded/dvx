@@ -56,17 +56,17 @@ dvx diff -s -r HEAD~5..HEAD
 
 #### Preprocessing Pipelines
 
-The real power is piping files through commands before diffing:
+The real power is piping files through commands before diffing. Use `{}` as a placeholder for the file path (like `find -exec`), or omit it to append the path at the end:
 
 ```bash
-# Compare line counts
-dvx diff wc -l data.csv
-
 # Compare Parquet schema (using parquet2json)
-dvx diff parquet2json {} schema data.parquet
+dvx diff -R abc123 'parquet2json {} schema' data.parquet
 
-# Compare first row as pretty JSON
-dvx diff 'parquet2json {} cat -l 1 | jq .' data.parquet
+# Compare row counts
+dvx diff -R abc123 'parquet2json {} rowcount' data.parquet
+
+# Compare all rows as compact JSON
+dvx diff -R abc123 'parquet2json {} cat | jq -c .' data.parquet
 
 # Decompress and compare headers of gzipped CSVs
 dvx diff 'gunzip -c {} | head -n1' data.csv.gz
@@ -77,13 +77,78 @@ dvx diff 'sort {} | uniq' data.txt
 
 #### Directory Diffs
 
-When diffing DVC-tracked directories, DVX shows which files changed with their hashes:
+When diffing DVC-tracked directories, DVX shows which files changed with their hashes and sizes:
 
 ```bash
 $ dvx diff -R abc123 data/
-test.parquet: c07bba3f... -> f46dd86f...
-test.txt: e20b902b... -> 9306ec07...
+- data/test.parquet  c07bba3f...  1592
++ data/test.parquet  f46dd86f...  1592
+- data/test.txt  e20b902b...  20
++ data/test.txt  9306ec07...  35
 ```
+
+#### Live Examples
+
+Examples below use [ryan-williams/dvc-helpers@test], a small repo with DVC-tracked text and Parquet files:
+
+```bash
+git clone -b test https://github.com/ryan-williams/dvc-helpers.git && cd dvc-helpers
+dvx pull -A  # fetch all cached data
+```
+
+**Text file update** — `seq 10` → `seq 15` ([`0455b50`]):
+
+```bash
+$ dvx diff -R 0455b50 test.txt
+10a11,15
+> 11
+> 12
+> 13
+> 14
+> 15
+```
+
+**Parquet schema change** — `INT64` → `INT32` ([`f29e52a`]):
+
+```bash
+$ dvx diff -R f29e52a 'parquet2json {} schema' test.parquet
+2c2
+<   OPTIONAL INT64 num;
+---
+>   OPTIONAL INT32 num;
+```
+
+**Parquet row count** — 5 → 8 rows:
+
+```bash
+$ dvx diff -R f29e52a 'parquet2json {} rowcount' test.parquet
+1c1
+< 5
+---
+> 8
+```
+
+**Parquet row data** — 3 rows appended:
+
+```bash
+$ dvx diff -R f29e52a 'parquet2json {} cat | jq -c .' test.parquet
+5a6,8
+> {"num":666,"str":"fff"}
+> {"num":777,"str":"ggg"}
+> {"num":888,"str":"hhh"}
+```
+
+**Directory diff** — files changed inside DVC-tracked directory ([`ae8638a`]):
+
+```bash
+$ dvx diff -R ae8638a data/
+- data/test.parquet  c07bba3fae2b64207aa92f422506e4a2  1592
++ data/test.parquet  f46dd86f608b1dc00993056c9fc55e6e  1592
+- data/test.txt  e20b902b49a98b1a05ed62804c757f94  20
++ data/test.txt  9306ec0709cc72558045559ada26573b  35
+```
+
+[ryan-williams/dvc-helpers@test]: https://github.com/ryan-williams/dvc-helpers/tree/test
 
 ### Cache Introspection
 
@@ -233,9 +298,9 @@ with Repo() as repo:
 
 ### Added in DVX
 - `dvx run` - Parallel pipeline execution with per-file provenance
+- `dvx diff` preprocessing - Pipe through commands before diffing (with `{}` placeholder)
 - `dvx cache path/md5` - Cache introspection
 - `dvx cat` - View cached files directly
-- `dvx diff` preprocessing - Pipe through commands before diffing
 - `dvx status --yaml` - Detailed status with hashes
 - Lock-free parallel `add` operations
 - Git blob batching for faster status checks

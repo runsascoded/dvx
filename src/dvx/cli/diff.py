@@ -275,15 +275,21 @@ def _run_pipeline_diff(
 
     cmd, *sub_cmds = cmds
 
+    def _build_cmd(cmd: str, path: str) -> str:
+        """Build command with file path: substitute {} or append."""
+        if "{}" in cmd:
+            return cmd.replace("{}", path)
+        return f"{cmd} {path}"
+
     if path1 is None:
         cmds1 = ["cat /dev/null"]
     else:
-        cmds1 = [f"{cmd} {path1}", *sub_cmds]
+        cmds1 = [_build_cmd(cmd, path1), *sub_cmds]
 
     if path2 is None:
         cmds2 = ["cat /dev/null"]
     else:
-        cmds2 = [f"{cmd} {path2}", *sub_cmds]
+        cmds2 = [_build_cmd(cmd, path2), *sub_cmds]
 
     return join_pipelines(
         base_cmd=["diff", *diff_args],
