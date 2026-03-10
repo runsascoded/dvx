@@ -167,7 +167,8 @@ def _format_graph(summary):
 @click.option("-j", "--jobs", type=int, default=None, help="Parallel workers for remote checks.")
 @click.option("-o", "--orphans", is_flag=True, help="List unreferenced cache blobs.")
 @click.option("-r", "--remote", default=None, help="Also check remote cache.")
-def audit(targets, output_json, graph, jobs, orphans, remote):
+@click.option("-S", "--snapshot", type=click.Path(exists=True), help="Load from snapshot directory (testing).")
+def audit(targets, output_json, graph, jobs, orphans, remote, snapshot):
     """Audit workspace blobs: classification, lineage, and cache analysis.
 
     With no arguments, prints a workspace summary.
@@ -183,13 +184,21 @@ def audit(targets, output_json, graph, jobs, orphans, remote):
         dvx audit --json                   # JSON output
         dvx audit --graph | dot -Tsvg      # colored DAG
         dvx audit -r myremote              # also check remote cache
+        dvx audit -S tmp/crashes-snapshot  # from snapshot
     """
+    from pathlib import Path
+
     from dvx.audit.scan import audit_artifact, find_orphans, scan_workspace
+
+    view = None
+    if snapshot:
+        from dvx.audit.repo_view import SnapshotRepoView
+        view = SnapshotRepoView.load(Path(snapshot))
 
     check_remote = remote is not None
 
     if orphans:
-        orphan_list = find_orphans()
+        orphan_list = find_orphans(view=view)
         if output_json:
             click.echo(json.dumps(
                 [{"md5": md5, "size": size} for md5, size in orphan_list],
@@ -207,6 +216,7 @@ def audit(targets, output_json, graph, jobs, orphans, remote):
             target_list[0],
             remote=remote,
             check_remote=check_remote,
+            view=view,
         )
         if blob is None:
             raise click.ClickException(f"No .dvc file found for: {target_list[0]}")
@@ -221,6 +231,7 @@ def audit(targets, output_json, graph, jobs, orphans, remote):
         targets=target_list,
         remote=remote,
         check_remote=check_remote,
+        view=view,
     )
 
     if not summary.blobs:
