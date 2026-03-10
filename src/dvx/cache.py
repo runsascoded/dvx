@@ -900,8 +900,12 @@ def get_transfer_status(
     file_info = []  # [(dvc_file, data_path, md5, size), ...]
     errors = []
 
+    from dvx.git_import import is_git_tracked_import
+
     for dvc_file in dvc_files:
         try:
+            if is_git_tracked_import(dvc_file):
+                continue  # Git-tracked imports skip DVC cache
             md5, size, _is_dir = _get_output_info(dvc_file)
             data_path = dvc_file[:-4] if dvc_file.endswith(".dvc") else dvc_file
             file_info.append((dvc_file, data_path, md5, size))

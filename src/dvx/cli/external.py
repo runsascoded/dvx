@@ -28,15 +28,31 @@ def import_cmd(url, path, out, rev):
 @click.command("import-url")
 @click.argument("url")
 @click.option("-F", "--fs-config", multiple=True, help="Filesystem config (key=value).")
+@click.option("-G", "--git", is_flag=True, help="Track in Git (not DVC cache). For small files.")
 @click.option("-N", "--no-download", is_flag=True, help="Track metadata only (no download).")
 @click.option("-o", "--out", help="Output path.")
 @click.option("-V", "--version-aware", is_flag=True, help="Track S3 version IDs.")
-def import_url(url, fs_config, no_download, out, version_aware):
+def import_url(url, fs_config, git, no_download, out, version_aware):
     """Import a file from a URL.
+
+    Use --git to commit the file to Git (instead of DVC cache) with URL
+    provenance. Good for small files (< 1MB) you want in the repo.
 
     Use --no-download to track metadata (ETag, size) without downloading.
     Use --fs-config allow_anonymous_login=true for public buckets.
     """
+    if git:
+        from dvx.git_import import git_import_url
+
+        try:
+            dvc_path = git_import_url(url=url, out=out, no_download=no_download)
+            action = "Tracked" if no_download else "Imported"
+            click.echo(f"{action} {url} (git-tracked)")
+            click.echo(f"  {dvc_path}")
+        except Exception as e:
+            raise click.ClickException(str(e)) from e
+        return
+
     fs_config_dict = dict(kv.split("=", 1) for kv in fs_config) if fs_config else None
     try:
         with Repo() as repo:
@@ -67,17 +83,37 @@ def update(no_download, recursive, targets):
 
     Re-checks source ETags and optionally re-downloads if changed.
     """
-    try:
-        with Repo() as repo:
-            repo.update(
-                targets=list(targets),
-                no_download=no_download,
-                recursive=recursive,
-            )
-            for target in targets:
-                click.echo(f"Updated {target}")
-    except Exception as e:
-        raise click.ClickException(str(e)) from e
+    from pathlib import Path
+
+    from dvx.git_import import is_git_tracked_import, update_git_import
+
+    dvc_targets = []
+    for target in targets:
+        dvc_path = Path(target)
+        if not dvc_path.suffix == ".dvc":
+            dvc_path = Path(f"{target}.dvc")
+        if is_git_tracked_import(dvc_path):
+            try:
+                changed = update_git_import(dvc_path, no_download=no_download)
+                status = "updated" if changed else "up to date"
+                click.echo(f"{target}: {status} (git-tracked)")
+            except Exception as e:
+                raise click.ClickException(f"{target}: {e}") from e
+        else:
+            dvc_targets.append(target)
+
+    if dvc_targets:
+        try:
+            with Repo() as repo:
+                repo.update(
+                    targets=dvc_targets,
+                    no_download=no_download,
+                    recursive=recursive,
+                )
+                for target in dvc_targets:
+                    click.echo(f"Updated {target}")
+        except Exception as e:
+            raise click.ClickException(str(e)) from e
 
 
 # =============================================================================

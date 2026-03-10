@@ -196,6 +196,8 @@ class DVCFileInfo:
     # Directory metadata
     nfiles: int | None = None
     is_dir: bool = False
+    # Git-tracked import (file in Git, not DVC cache)
+    git_tracked: bool = False
     # Legacy field for backward compatibility
     stage: str | None = None
 
@@ -251,6 +253,8 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
         # Directory metadata
         nfiles=out.get("nfiles"),
         is_dir=is_dir,
+        # Git-tracked import
+        git_tracked=bool(meta.get("git_tracked")),
         stage=meta.get("stage"),  # Legacy only
     )
 
