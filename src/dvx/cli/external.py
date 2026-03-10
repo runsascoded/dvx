@@ -27,12 +27,13 @@ def import_cmd(url, path, out, rev):
 
 @click.command("import-url")
 @click.argument("url")
+@click.option("-A", "--user-agent", help="Custom User-Agent header (persisted for updates).")
 @click.option("-F", "--fs-config", multiple=True, help="Filesystem config (key=value).")
 @click.option("-G", "--git", is_flag=True, help="Track in Git (not DVC cache). For small files.")
 @click.option("-N", "--no-download", is_flag=True, help="Track metadata only (no download).")
 @click.option("-o", "--out", help="Output path.")
 @click.option("-V", "--version-aware", is_flag=True, help="Track S3 version IDs.")
-def import_url(url, fs_config, git, no_download, out, version_aware):
+def import_url(url, user_agent, fs_config, git, no_download, out, version_aware):
     """Import a file from a URL.
 
     Use --git to commit the file to Git (instead of DVC cache) with URL
@@ -40,12 +41,13 @@ def import_url(url, fs_config, git, no_download, out, version_aware):
 
     Use --no-download to track metadata (ETag, size) without downloading.
     Use --fs-config allow_anonymous_login=true for public buckets.
+    Use --user-agent to set a custom User-Agent (needed for some sites).
     """
     if git:
         from dvx.git_import import git_import_url
 
         try:
-            dvc_path = git_import_url(url=url, out=out, no_download=no_download)
+            dvc_path = git_import_url(url=url, out=out, no_download=no_download, user_agent=user_agent)
             action = "Tracked" if no_download else "Imported"
             click.echo(f"{action} {url} (git-tracked)")
             click.echo(f"  {dvc_path}")

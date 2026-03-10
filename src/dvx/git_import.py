@@ -13,6 +13,8 @@ from urllib.request import Request, urlopen
 
 import yaml
 
+DEFAULT_USER_AGENT = "dvx/0.1"
+
 
 def _default_out(url: str) -> str:
     """Derive output filename from URL path."""
@@ -23,12 +25,17 @@ def _default_out(url: str) -> str:
     return name
 
 
-def _download(url: str, out: Path) -> tuple[str, int, dict[str, str]]:
+def _download(
+    url: str,
+    out: Path,
+    user_agent: str | None = None,
+) -> tuple[str, int, dict[str, str]]:
     """Download URL to `out`, returning (md5, size, http_headers).
 
     Headers dict includes ETag, Last-Modified, Content-Length if present.
     """
-    req = Request(url, headers={"User-Agent": "dvx/0.1"})
+    ua = user_agent or DEFAULT_USER_AGENT
+    req = Request(url, headers={"User-Agent": ua})
     with urlopen(req) as resp:  # noqa: S310
         data = resp.read()
         headers = {
@@ -44,9 +51,10 @@ def _download(url: str, out: Path) -> tuple[str, int, dict[str, str]]:
     return md5, len(data), headers
 
 
-def _head_metadata(url: str) -> dict[str, str]:
+def _head_metadata(url: str, user_agent: str | None = None) -> dict[str, str]:
     """HEAD request to get ETag/Last-Modified without downloading."""
-    req = Request(url, method="HEAD", headers={"User-Agent": "dvx/0.1"})
+    ua = user_agent or DEFAULT_USER_AGENT
+    req = Request(url, method="HEAD", headers={"User-Agent": ua})
     with urlopen(req) as resp:  # noqa: S310
         return {
             k: resp.headers[k]
@@ -69,6 +77,7 @@ def _build_dvc_data(
     size: int,
     headers: dict[str, str],
     out_name: str,
+    user_agent: str | None = None,
 ) -> dict:
     """Build the .dvc YAML structure for a git-tracked import."""
     dep: dict = {"path": url}
@@ -78,6 +87,8 @@ def _build_dvc_data(
         dep["size"] = size
     if "Last-Modified" in headers:
         dep["mtime"] = _parse_last_modified(headers["Last-Modified"])
+    if user_agent:
+        dep["user_agent"] = user_agent
 
     out_entry = {
         "md5": md5,
@@ -101,6 +112,7 @@ def git_import_url(
     url: str,
     out: str | None = None,
     no_download: bool = False,
+    user_agent: str | None = None,
 ) -> Path:
     """Import a URL as a git-tracked file with DVX provenance.
 
@@ -111,6 +123,7 @@ def git_import_url(
         url: HTTP(S) URL to import.
         out: Output path (default: derived from URL filename).
         no_download: If True, only create .dvc with metadata (HEAD request).
+        user_agent: Custom User-Agent header (persisted in .dvc for updates).
 
     Returns:
         Path to the created .dvc file.
@@ -118,15 +131,13 @@ def git_import_url(
     out_path = Path(out or _default_out(url))
 
     if no_download:
-        headers = _head_metadata(url)
+        headers = _head_metadata(url, user_agent=user_agent)
         size = int(headers.get("Content-Length", 0))
-        # No file to hash; leave md5 empty
-        dvc_data = _build_dvc_data(url, "", size, headers, out_path.name)
-        # Remove empty md5 from outs
+        dvc_data = _build_dvc_data(url, "", size, headers, out_path.name, user_agent=user_agent)
         del dvc_data["outs"][0]["md5"]
     else:
-        md5, size, headers = _download(url, out_path)
-        dvc_data = _build_dvc_data(url, md5, size, headers, out_path.name)
+        md5, size, headers = _download(url, out_path, user_agent=user_agent)
+        dvc_data = _build_dvc_data(url, md5, size, headers, out_path.name, user_agent=user_agent)
 
     dvc_path = Path(str(out_path) + ".dvc")
     dvc_path.parent.mkdir(parents=True, exist_ok=True)
@@ -178,29 +189,30 @@ def update_git_import(dvc_path: Path, no_download: bool = False) -> bool:
     if not meta.get("git_tracked"):
         return False
 
-    url = data["deps"][0]["path"]
-    old_checksum = data["deps"][0].get("checksum")
+    dep = data["deps"][0]
+    url = dep["path"]
+    old_checksum = dep.get("checksum")
+    user_agent = dep.get("user_agent")
     out_name = data["outs"][0]["path"]
     out_path = dvc_path.parent / out_name
 
     if no_download:
-        headers = _head_metadata(url)
+        headers = _head_metadata(url, user_agent=user_agent)
         new_checksum = headers.get("ETag")
         if new_checksum and new_checksum == old_checksum:
             return False
         size = int(headers.get("Content-Length", 0))
-        new_data = _build_dvc_data(url, "", size, headers, out_name)
+        new_data = _build_dvc_data(url, "", size, headers, out_name, user_agent=user_agent)
         if "md5" in data["outs"][0]:
             new_data["outs"][0]["md5"] = data["outs"][0]["md5"]
         else:
             del new_data["outs"][0]["md5"]
     else:
-        md5, size, headers = _download(url, out_path)
+        md5, size, headers = _download(url, out_path, user_agent=user_agent)
         new_checksum = headers.get("ETag")
         if new_checksum and new_checksum == old_checksum:
-            # ETag unchanged but we already downloaded; keep the new file
             pass
-        new_data = _build_dvc_data(url, md5, size, headers, out_name)
+        new_data = _build_dvc_data(url, md5, size, headers, out_name, user_agent=user_agent)
 
     with open(dvc_path, "w") as f:
         yaml.dump(new_data, f, sort_keys=False, default_flow_style=False)
