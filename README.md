@@ -276,6 +276,7 @@ with Repo() as repo:
 | `add` | Track file(s) with optional provenance |
 | `status` | Show freshness of tracked files (data & deps) |
 | `diff` | Content diff with preprocessing support |
+| `audit` | Blob classification, lineage, and cache analysis |
 | `cache` | Inspect cache (path, md5, dir) |
 | `cat` | View cached file contents |
 | `push` | Upload data to remote storage |
@@ -299,6 +300,7 @@ with Repo() as repo:
 ### Added in DVX
 - `dvx run` - Parallel pipeline execution with per-file provenance
 - `dvx diff` preprocessing - Pipe through commands before diffing (with `{}` placeholder)
+- `dvx audit` - Blob classification (input/generated/foreign), lineage, orphan detection
 - `dvx cache path/md5` - Cache introspection
 - `dvx cat` - View cached files directly
 - `dvx status --yaml` - Detailed status with hashes
