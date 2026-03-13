@@ -42,6 +42,10 @@ def _patch():
     for schema in (META_SCHEMA, ARTIFACT_SCHEMA, DEP_SCHEMA):
         schema["mtime"] = _mtime_validator
 
+    # Allow `checksum` and `user_agent` in deps (used by dvx import-url)
+    DEP_SCHEMA["checksum"] = str
+    DEP_SCHEMA["user_agent"] = str
+
     # 2. Extend Meta.to_dict() to serialize mtime as ISO 8601 for HTTP sources.
     #    Local filesystems always have inode set; HTTP sources never do.
     #    Use this to distinguish HTTP mtime (from Last-Modified) from

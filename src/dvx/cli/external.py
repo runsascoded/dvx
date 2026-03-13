@@ -28,12 +28,13 @@ def import_cmd(url, path, out, rev):
 @click.command("import-url")
 @click.argument("url")
 @click.option("-A", "--user-agent", help="Custom User-Agent header (persisted for updates).")
+@click.option("-f", "--force", is_flag=True, help="Override local file if exists.")
 @click.option("-F", "--fs-config", multiple=True, help="Filesystem config (key=value).")
 @click.option("-G", "--git", is_flag=True, help="Track in Git (not DVC cache). For small files.")
 @click.option("-N", "--no-download", is_flag=True, help="Track metadata only (no download).")
 @click.option("-o", "--out", help="Output path.")
 @click.option("-V", "--version-aware", is_flag=True, help="Track S3 version IDs.")
-def import_url(url, user_agent, fs_config, git, no_download, out, version_aware):
+def import_url(url, user_agent, force, fs_config, git, no_download, out, version_aware):
     """Import a file from a URL.
 
     Use --git to commit the file to Git (instead of DVC cache) with URL
@@ -61,6 +62,7 @@ def import_url(url, user_agent, fs_config, git, no_download, out, version_aware)
             repo.imp_url(
                 url=url,
                 out=out,
+                force=force,
                 no_download=no_download,
                 fs_config=fs_config_dict,
                 version_aware=version_aware,
