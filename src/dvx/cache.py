@@ -380,7 +380,7 @@ def add_to_cache(
         _cache_file(target_path, md5, cache_dir, force)
 
     # Write .dvc file, preserving existing metadata
-    dvc_path = Path(str(target) + ".dvc")
+    dvc_path = Path(str(target_path) + ".dvc")
 
     # Load existing .dvc file to preserve meta section
     existing_meta = None

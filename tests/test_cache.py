@@ -335,3 +335,33 @@ def test_add_to_cache_recursive_adds_stale_deps(tmp_path):
     with open(output_dvc) as f:
         output_result = yaml.safe_load(f)
     assert output_result["meta"]["computation"]["deps"]["input.txt"] == new_file_hash
+
+
+def test_add_to_cache_trailing_slash_directory(tmp_path):
+    """Test that `dvx add dir/` creates dir.dvc, not dir/.dvc.
+
+    Trailing slash on a directory target should not cause the .dvc file
+    to be created inside the directory.
+    """
+    from dvx.cache import add_to_cache
+
+    os.chdir(tmp_path)
+
+    # Create .dvc directory structure
+    dvc_dir = tmp_path / ".dvc"
+    dvc_dir.mkdir()
+    cache_dir = dvc_dir / "cache" / "files" / "md5"
+    cache_dir.mkdir(parents=True)
+
+    # Create a directory with a file
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file.txt").write_text("hello\n")
+
+    # Add with trailing slash
+    md5, size, is_dir = add_to_cache("data/")
+
+    # .dvc file should be beside the directory, not inside it
+    assert (tmp_path / "data.dvc").exists(), "data.dvc should exist beside directory"
+    assert not (tmp_path / "data" / ".dvc").exists(), "data/.dvc should NOT exist"
+    assert is_dir
