@@ -64,8 +64,8 @@ def is_fetch_due(schedule: str, last_run: str | None, now: datetime | None = Non
     if now is None:
         now = datetime.now(timezone.utc)
 
-    # Parse last_run (ISO 8601)
-    last = datetime.fromisoformat(last_run)
+    # Parse last_run (ISO 8601); handle Z suffix for Python 3.10 compat
+    last = datetime.fromisoformat(last_run.replace("Z", "+00:00"))
     if last.tzinfo is None:
         last = last.replace(tzinfo=timezone.utc)
 
