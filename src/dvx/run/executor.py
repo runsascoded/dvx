@@ -40,6 +40,7 @@ class ExecutionConfig:
     cached_patterns: list[str] = field(default_factory=list)
     provenance: bool = True
     verbose: bool = False
+    commit: bool = False  # Auto-commit after each stage
 
 
 def _matches_patterns(path: str, patterns: list[str]) -> bool:
@@ -321,27 +322,66 @@ class ParallelExecutor:
                     reason="command failed (co-output)",
                 )
 
-        # Run the computation
+        # Run the computation with stage output protocol env vars
         self._log(f"  ⟳ {path}: running...")
         start_time = time.time()
 
-        try:
-            subprocess.run(
-                cmd,
-                shell=True,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            duration = time.time() - start_time
-            success = True
-        except subprocess.CalledProcessError as e:
-            duration = time.time() - start_time
-            error_msg = e.stderr[:200] if e.stderr else str(e)
-            self._log(f"  ✗ {path}: failed")
-            if self.config.verbose:
-                self._log(f"       {error_msg}")
-            success = False
+        import os
+        import tempfile
+
+        commit_msg_file = tempfile.NamedTemporaryFile(
+            mode="w", prefix="dvx-commit-", suffix=".txt", delete=False,
+        )
+        summary_file = tempfile.NamedTemporaryFile(
+            mode="w", prefix="dvx-summary-", suffix=".txt", delete=False,
+        )
+        commit_msg_file.close()
+        summary_file.close()
+
+        env = os.environ.copy()
+        env["DVX_COMMIT_MSG_FILE"] = commit_msg_file.name
+        env["DVX_SUMMARY_FILE"] = summary_file.name
+
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        duration = time.time() - start_time
+
+        if result.returncode != 0:
+            # Save full output to a log file
+            safe_name = Path(path).stem.replace("/", "-")
+            log_path = Path(f"tmp/dvx-run-{safe_name}.log")
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(log_path, "w") as f:
+                if result.stdout:
+                    f.write("=== stdout ===\n")
+                    f.write(result.stdout)
+                if result.stderr:
+                    f.write("=== stderr ===\n")
+                    f.write(result.stderr)
+
+            self._log(f"  ✗ {path}: failed (exit code {result.returncode})")
+            # Show last N lines of stderr
+            stderr_lines = (result.stderr or "").rstrip().split("\n")
+            tail_count = 20
+            if stderr_lines and stderr_lines != [""]:
+                shown = stderr_lines[-tail_count:]
+                if len(stderr_lines) > tail_count:
+                    self._log(f"\n    stderr (last {tail_count} of {len(stderr_lines)} lines):")
+                else:
+                    self._log("\n    stderr:")
+                for line in shown:
+                    self._log(f"      {line}")
+                self._log(f"\n    Full output: {log_path}")
+            elif self.config.verbose:
+                self._log(f"    (no stderr)")
+
+            error_msg = stderr_lines[-1] if stderr_lines and stderr_lines != [""] else f"exit code {result.returncode}"
 
             # Record failure and signal waiters
             if cmd:
@@ -349,6 +389,13 @@ class ParallelExecutor:
                     self._cmd_results[cmd] = False
                     if cmd in self._cmd_events:
                         self._cmd_events[cmd].set()
+
+            # Clean up temp files on failure
+            for f in (commit_msg_file.name, summary_file.name):
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass
 
             return ExecutionResult(
                 path=path,
@@ -400,6 +447,7 @@ class ParallelExecutor:
                 self._log(f"  ⚠ {path}: couldn't write .dvc: {e}")
 
             self._log(f"  ✓ {path}: side-effect completed ({duration:.1f}s)")
+            self._handle_stage_output(path, commit_msg_file.name, summary_file.name)
             return ExecutionResult(
                 path=path,
                 success=True,
@@ -412,6 +460,12 @@ class ParallelExecutor:
         out = Path(path)
         if not out.exists():
             self._log(f"  ✗ {path}: command succeeded but output not created")
+            # Clean up temp files
+            for f in (commit_msg_file.name, summary_file.name):
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass
             return ExecutionResult(
                 path=path,
                 success=False,
@@ -448,6 +502,7 @@ class ParallelExecutor:
             self._log(f"  ⚠ {path}: couldn't write .dvc: {e}")
 
         self._log(f"  ✓ {path}: completed ({duration:.1f}s)")
+        self._handle_stage_output(path, commit_msg_file.name, summary_file.name)
         return ExecutionResult(
             path=path,
             success=True,
@@ -514,6 +569,60 @@ class ParallelExecutor:
                 success=False,
                 reason=f"co-output error: {e}",
             )
+
+    def _handle_stage_output(self, path: str, commit_msg_path: str, summary_path: str):
+        """Handle post-cmd stage output: commit message and summary.
+
+        Args:
+            path: Artifact path (for default commit message)
+            commit_msg_path: Path to commit message temp file
+            summary_path: Path to summary temp file
+        """
+        import os
+
+        try:
+            # Check summary file
+            if os.path.exists(summary_path) and os.path.getsize(summary_path) > 0:
+                with open(summary_path) as f:
+                    summary = f.read().strip()
+                if summary:
+                    self._log(f"    → {summary}")
+
+            # Check commit message file
+            commit_msg = None
+            if os.path.exists(commit_msg_path) and os.path.getsize(commit_msg_path) > 0:
+                with open(commit_msg_path) as f:
+                    commit_msg = f.read().strip()
+
+            if not commit_msg and self.config.commit:
+                # Fallback: auto-commit with default message
+                stage_name = Path(path).stem
+                commit_msg = f"Run {stage_name}"
+
+            if commit_msg:
+                # Stage tracked changes and commit
+                result = subprocess.run(
+                    ["git", "add", "-u"],
+                    capture_output=True, text=True, check=False,
+                )
+                if result.returncode == 0:
+                    result = subprocess.run(
+                        ["git", "commit", "--allow-empty", "-m", commit_msg],
+                        capture_output=True, text=True, check=False,
+                    )
+                    if result.returncode == 0:
+                        self._log(f"    📝 committed: {commit_msg.splitlines()[0]}")
+                    elif "nothing to commit" in result.stdout:
+                        pass  # No changes to commit
+                    else:
+                        self._log(f"    ⚠ commit failed: {result.stderr.strip()}")
+        finally:
+            # Clean up temp files
+            for f in (commit_msg_path, summary_path):
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass
 
     def _log(self, message: str):
         """Write log message to output stream."""

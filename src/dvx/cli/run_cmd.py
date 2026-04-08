@@ -12,10 +12,11 @@ import click
 @click.option("--force-upstream", multiple=True, metavar="<pattern>", help="Force re-run upstream artifacts matching pattern.")
 @click.option("--cached", multiple=True, metavar="<pattern>", help="Use cached value for artifacts matching pattern.")
 @click.option("-j", "--jobs", type=int, help="Number of parallel jobs (default: CPU count).")
+@click.option("-c", "--commit", is_flag=True, help="Auto-commit after each stage (uses $DVX_COMMIT_MSG_FILE or default message).")
 @click.option("-n", "--dry-run", is_flag=True, help="Show execution plan without running.")
 @click.option("--no-provenance", is_flag=True, help="Don't include provenance in .dvc files.")
 @click.option("-v", "--verbose", is_flag=True, help="Show detailed output.")
-def run_cmd(targets, force, force_upstream, cached, jobs, dry_run, no_provenance, verbose):
+def run_cmd(targets, force, force_upstream, cached, jobs, commit, dry_run, no_provenance, verbose):
     """Execute artifact computations from .dvc files.
 
     Run computations defined in .dvc files, respecting dependencies and
@@ -30,6 +31,7 @@ def run_cmd(targets, force, force_upstream, cached, jobs, dry_run, no_provenance
         dvx run -j 4               # Use 4 parallel workers
         dvx run --dry-run          # Show what would run
         dvx run --force            # Force re-run all
+        dvx run --commit           # Auto-commit after each stage
     """
     from dvx.run.executor import ExecutionConfig, run
 
@@ -54,6 +56,7 @@ def run_cmd(targets, force, force_upstream, cached, jobs, dry_run, no_provenance
         cached_patterns=list(cached) if cached else [],
         provenance=not no_provenance,
         verbose=verbose,
+        commit=commit,
     )
 
     try:
