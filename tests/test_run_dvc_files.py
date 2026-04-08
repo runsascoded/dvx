@@ -499,3 +499,175 @@ def test_side_effect_stale_when_dep_changed(tmp_path):
     fresh, reason = is_output_fresh(Path("deploy"), use_mtime_cache=False)
     assert fresh is False
     assert "dep changed: dist" == reason
+
+
+# =============================================================================
+# Fetch/cron schedule tests
+# =============================================================================
+
+
+def test_is_fetch_due_never_run():
+    """Fetch is always due if never run (last_run=None)."""
+    from dvx.run.dvc_files import is_fetch_due
+
+    assert is_fetch_due("daily", None) is True
+    assert is_fetch_due("hourly", None) is True
+    assert is_fetch_due("weekly", None) is True
+
+
+def test_is_fetch_due_manual():
+    """Manual schedule is never auto-due."""
+    from dvx.run.dvc_files import is_fetch_due
+
+    assert is_fetch_due("manual", None) is False
+    assert is_fetch_due("manual", "2026-01-01T00:00:00Z") is False
+
+
+def test_is_fetch_due_daily():
+    """Daily schedule: due after 24h, not before."""
+    from datetime import datetime, timezone
+
+    from dvx.run.dvc_files import is_fetch_due
+
+    last = "2026-04-07T12:00:00+00:00"
+    # 23 hours later → not due
+    now_early = datetime(2026, 4, 8, 11, 0, 0, tzinfo=timezone.utc)
+    assert is_fetch_due("daily", last, now=now_early) is False
+
+    # 25 hours later → due
+    now_late = datetime(2026, 4, 8, 13, 0, 0, tzinfo=timezone.utc)
+    assert is_fetch_due("daily", last, now=now_late) is True
+
+
+def test_is_fetch_due_hourly():
+    """Hourly schedule: due after 1h."""
+    from datetime import datetime, timezone
+
+    from dvx.run.dvc_files import is_fetch_due
+
+    last = "2026-04-07T12:00:00+00:00"
+    now_early = datetime(2026, 4, 7, 12, 30, 0, tzinfo=timezone.utc)
+    assert is_fetch_due("hourly", last, now=now_early) is False
+
+    now_late = datetime(2026, 4, 7, 13, 1, 0, tzinfo=timezone.utc)
+    assert is_fetch_due("hourly", last, now=now_late) is True
+
+
+def test_read_fetch_schedule(tmp_path):
+    """Test reading fetch schedule from .dvc file."""
+    dvc_file = tmp_path / "data.xml.dvc"
+    dvc_content = {
+        "outs": [{"md5": "abc123", "size": 1000, "path": "data.xml"}],
+        "meta": {
+            "computation": {
+                "cmd": "fetch-data",
+                "fetch": {
+                    "schedule": "daily",
+                    "last_run": "2026-04-07T15:10:00Z",
+                },
+            }
+        },
+    }
+    with open(dvc_file, "w") as f:
+        yaml.dump(dvc_content, f)
+
+    info = read_dvc_file(dvc_file)
+    assert info is not None
+    assert info.fetch_schedule == "daily"
+    assert info.fetch_last_run == "2026-04-07T15:10:00Z"
+    assert info.is_side_effect is False
+
+
+def test_write_fetch_schedule(tmp_path):
+    """Test writing fetch schedule to .dvc file."""
+    output_path = tmp_path / "data.xml"
+
+    dvc_path = write_dvc_file(
+        output_path=output_path,
+        md5="abc123",
+        size=1000,
+        cmd="fetch-data",
+        fetch_schedule="daily",
+        fetch_last_run="2026-04-07T15:10:00Z",
+    )
+
+    with open(dvc_path) as f:
+        data = yaml.safe_load(f)
+
+    fetch = data["meta"]["computation"]["fetch"]
+    assert fetch["schedule"] == "daily"
+    assert fetch["last_run"] == "2026-04-07T15:10:00Z"
+
+
+def test_fetch_schedule_roundtrip(tmp_path):
+    """Test write then read of fetch schedule."""
+    output_path = tmp_path / "data.xml"
+
+    write_dvc_file(
+        output_path=output_path,
+        md5="abc123",
+        size=1000,
+        cmd="fetch-data",
+        fetch_schedule="0 15 * * *",
+        fetch_last_run="2026-04-07T15:10:00Z",
+    )
+
+    info = read_dvc_file(output_path)
+    assert info.fetch_schedule == "0 15 * * *"
+    assert info.fetch_last_run == "2026-04-07T15:10:00Z"
+
+
+def test_fetch_due_makes_output_stale(tmp_path):
+    """Output with expired fetch schedule reports stale."""
+    from datetime import datetime, timezone
+    from unittest.mock import patch
+
+    os.chdir(tmp_path)
+
+    # Create output file
+    output = tmp_path / "data.xml"
+    output.write_text("<data/>")
+
+    # Write .dvc with daily schedule, last run >24h ago
+    dvc_path = write_dvc_file(
+        output_path=output,
+        md5="abc123",
+        size=7,
+        cmd="fetch-data",
+        fetch_schedule="daily",
+        fetch_last_run="2026-04-06T10:00:00Z",
+    )
+
+    # Mock now to be 2 days later
+    fake_now = datetime(2026, 4, 8, 10, 0, 0, tzinfo=timezone.utc)
+    with patch("dvx.run.dvc_files.is_fetch_due", wraps=lambda s, l, now=None: True):
+        fresh, reason = is_output_fresh(Path("data.xml"), use_mtime_cache=False)
+
+    assert fresh is False
+    assert reason == "fetch schedule due"
+
+
+def test_fetch_not_due_output_fresh(tmp_path):
+    """Output with recent fetch schedule and matching hash is fresh."""
+    os.chdir(tmp_path)
+
+    # Create output file with known content
+    output = tmp_path / "data.xml"
+    output.write_text("<data/>")
+
+    from dvx.run.hash import compute_md5
+    md5 = compute_md5(output)
+
+    # Write .dvc with daily schedule, last run just now
+    write_dvc_file(
+        output_path=output,
+        md5=md5,
+        size=output.stat().st_size,
+        cmd="fetch-data",
+        fetch_schedule="daily",
+        fetch_last_run="2099-01-01T00:00:00Z",  # Far future → not due
+    )
+
+    fresh, reason = is_output_fresh(Path("data.xml"), use_mtime_cache=False)
+    assert fresh is True
+    assert reason == "up-to-date"

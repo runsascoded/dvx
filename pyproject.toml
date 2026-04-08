@@ -41,6 +41,8 @@ hdfs = ["dvc-hdfs"]
 webdav = ["dvc-webdav"]
 webhdfs = ["dvc-webhdfs"]
 oss = ["dvc-oss"]
+# Cron schedule support
+cron = ["croniter>=1.0"]
 # All remotes
 all = [
     "dvc-s3",

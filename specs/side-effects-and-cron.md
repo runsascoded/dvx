@@ -179,10 +179,11 @@ The notebooks are vestigial — the CLI wrappers already exist. The notebook for
 3. `dvx run` executor updates dep hashes in `.dvc` after successful side-effect execution
 4. `dvx push`/`pull` skip side-effect stages (no cache to push — TODO: verify)
 
-### Phase 2: Cron/fetch stages
-1. Add `fetch.schedule` and `fetch.last_run` to `.dvc` schema
-2. `dvx status` checks schedule + last_run for staleness
-3. `dvx run` updates `last_run` after fetch
+### Phase 2: Cron/fetch stages ✅
+1. `DVCFileInfo.fetch_schedule`/`.fetch_last_run` fields; read/write `computation.fetch`
+2. `is_fetch_due()`: parses "daily"/"hourly"/"weekly"/cron/"manual"; optional `croniter` dep
+3. `is_output_fresh()`/`get_freshness_details()` check fetch schedule before dep/output checks
+4. Executor updates `fetch.last_run` to current UTC ISO 8601 after successful execution
 
 ### Phase 3: Directory deps
 1. Add directory dep support (git tree SHA or glob hash)

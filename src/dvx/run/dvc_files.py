@@ -28,11 +28,63 @@ Note: Computation info is stored in `meta.computation` for DVC compatibility
 
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import yaml
 
 from dvx.run.hash import compute_md5
+
+
+# Simple schedule name → interval mapping
+_SCHEDULE_INTERVALS: dict[str, timedelta] = {
+    "hourly": timedelta(hours=1),
+    "daily": timedelta(days=1),
+    "weekly": timedelta(weeks=1),
+}
+
+
+def is_fetch_due(schedule: str, last_run: str | None, now: datetime | None = None) -> bool:
+    """Check if a fetch schedule is due for execution.
+
+    Args:
+        schedule: Schedule string ("daily", "hourly", "weekly", cron expr, or "manual")
+        last_run: ISO 8601 timestamp of last execution, or None if never run
+        now: Current time (default: utcnow)
+
+    Returns:
+        True if the fetch should be re-executed
+    """
+    if schedule == "manual":
+        return False
+
+    if last_run is None:
+        return True  # Never run → always due
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    # Parse last_run (ISO 8601)
+    last = datetime.fromisoformat(last_run)
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+
+    # Simple interval schedules
+    interval = _SCHEDULE_INTERVALS.get(schedule)
+    if interval is not None:
+        return now >= last + interval
+
+    # Cron expression: find next fire time after last_run
+    try:
+        from croniter import croniter
+        cron = croniter(schedule, last)
+        next_fire = cron.get_next(datetime)
+        if next_fire.tzinfo is None:
+            next_fire = next_fire.replace(tzinfo=timezone.utc)
+        return now >= next_fire
+    except Exception:
+        # If croniter not installed or invalid expression, treat as due
+        return True
 
 
 # Cache for git blob SHAs (keyed by (repo_path, ref))
@@ -203,6 +255,9 @@ class DVCFileInfo:
     git_tracked: bool = False
     # Explicit side-effect flag (None = infer from md5/cmd)
     side_effect: bool | None = None
+    # Fetch/cron schedule (e.g. "daily", "0 15 * * *", "manual")
+    fetch_schedule: str | None = None
+    fetch_last_run: str | None = None  # ISO 8601 timestamp
     # Legacy field for backward compatibility
     stage: str | None = None
 
@@ -258,6 +313,11 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
     if explicit_side_effect is not None:
         explicit_side_effect = bool(explicit_side_effect)
 
+    # Fetch/cron schedule
+    fetch = computation.get("fetch") or {}
+    fetch_schedule = fetch.get("schedule")
+    fetch_last_run = fetch.get("last_run")
+
     if not has_outs:
         # Side-effect stage: no outputs, but must have computation
         if not computation.get("cmd"):
@@ -271,6 +331,8 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
             deps=computation.get("deps") or {},
             git_deps=computation.get("git_deps") or {},
             side_effect=explicit_side_effect,
+            fetch_schedule=fetch_schedule,
+            fetch_last_run=fetch_last_run,
             stage=meta.get("stage"),
         )
 
@@ -295,6 +357,8 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
         # Git-tracked import
         git_tracked=bool(meta.get("git_tracked")),
         side_effect=explicit_side_effect,
+        fetch_schedule=fetch_schedule,
+        fetch_last_run=fetch_last_run,
         stage=meta.get("stage"),  # Legacy only
     )
 
@@ -309,6 +373,8 @@ def write_dvc_file(
     nfiles: int | None = None,
     is_dir: bool | None = None,
     side_effect: bool | None = None,
+    fetch_schedule: str | None = None,
+    fetch_last_run: str | None = None,
     stage: str | None = None,  # noqa: ARG001 (legacy, deprecated)
 ) -> Path:
     """Write .dvc file for an output with provenance.
@@ -322,6 +388,8 @@ def write_dvc_file(
         nfiles: Number of files (for directories)
         is_dir: Whether output is a directory (auto-detected if None)
         side_effect: Explicit side-effect flag (written to YAML if True)
+        fetch_schedule: Cron/interval schedule (e.g. "daily", "0 15 * * *")
+        fetch_last_run: ISO 8601 timestamp of last fetch execution
         stage: Deprecated, kept for backward compatibility
 
     Returns:
@@ -372,7 +440,7 @@ def write_dvc_file(
 
     # Add computation block inside meta for DVC compatibility
     # (DVC allows arbitrary data in meta, but rejects unknown top-level keys)
-    if cmd or deps or git_deps:
+    if cmd or deps or git_deps or fetch_schedule:
         computation = {}
         if cmd:
             computation["cmd"] = cmd
@@ -382,6 +450,11 @@ def write_dvc_file(
             computation["git_deps"] = git_deps
         if side_effect is True:
             computation["side_effect"] = True
+        if fetch_schedule:
+            fetch = {"schedule": fetch_schedule}
+            if fetch_last_run:
+                fetch["last_run"] = fetch_last_run
+            computation["fetch"] = fetch
         data["meta"] = {"computation": computation}
 
     with open(dvc_path, "w") as f:
@@ -419,6 +492,10 @@ def is_output_fresh(
         info = read_dvc_file(output_path)
     if info is None:
         return False, "no .dvc file"
+
+    # Check fetch schedule staleness (before dep/output checks)
+    if info.fetch_schedule and is_fetch_due(info.fetch_schedule, info.fetch_last_run):
+        return False, "fetch schedule due"
 
     # Side-effect stages have no output to check — freshness is purely dep-based
     if not info.is_side_effect:
@@ -514,6 +591,10 @@ def get_freshness_details(
         info = read_dvc_file(output_path)
     if info is None:
         return FreshnessDetails(fresh=False, reason="no .dvc file")
+
+    # Check fetch schedule staleness (before dep/output checks)
+    if info.fetch_schedule and is_fetch_due(info.fetch_schedule, info.fetch_last_run):
+        return FreshnessDetails(fresh=False, reason="fetch schedule due")
 
     path = Path(output_path)
     current_md5 = None
