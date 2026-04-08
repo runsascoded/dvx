@@ -364,6 +364,41 @@ class ParallelExecutor:
                 if cmd in self._cmd_events:
                     self._cmd_events[cmd].set()
 
+        # Check if this is a side-effect stage (no output expected)
+        from dvx.run.dvc_files import read_dvc_file as _read_dvc
+        info = _read_dvc(Path(path))
+        is_side_effect = info is not None and info.is_side_effect
+
+        if is_side_effect:
+            # Side-effect: update dep hashes in .dvc, no output hash
+            dvc_file = None
+            deps_hashes = {}
+            git_deps_hashes = {}
+            if self.config.provenance and artifact.computation:
+                deps_hashes = artifact.computation.get_dep_hashes()
+                git_deps_hashes = artifact.computation.get_git_dep_hashes()
+
+            try:
+                dvc_file = write_dvc_file(
+                    output_path=Path(path),
+                    cmd=cmd if self.config.provenance else None,
+                    deps=deps_hashes if self.config.provenance else None,
+                    git_deps=git_deps_hashes if self.config.provenance else None,
+                )
+                if self.config.verbose:
+                    self._log(f"       → {dvc_file}")
+            except (FileNotFoundError, ValueError) as e:
+                self._log(f"  ⚠ {path}: couldn't write .dvc: {e}")
+
+            self._log(f"  ✓ {path}: side-effect completed ({duration:.1f}s)")
+            return ExecutionResult(
+                path=path,
+                success=True,
+                reason="completed",
+                duration=duration,
+                dvc_file=dvc_file,
+            )
+
         # Verify output exists
         out = Path(path)
         if not out.exists():

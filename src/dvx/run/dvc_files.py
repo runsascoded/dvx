@@ -184,11 +184,14 @@ def has_file_changed_since(
 
 @dataclass
 class DVCFileInfo:
-    """Content of a .dvc file."""
+    """Content of a .dvc file.
+
+    For side-effect stages (cmd + deps, no outputs), md5 and size are None.
+    """
 
     path: str
-    md5: str
-    size: int
+    md5: str | None = None
+    size: int | None = None
     # Provenance via computation block (optional)
     cmd: str | None = None
     deps: dict[str, str] = field(default_factory=dict)  # {path: md5}
@@ -198,8 +201,21 @@ class DVCFileInfo:
     is_dir: bool = False
     # Git-tracked import (file in Git, not DVC cache)
     git_tracked: bool = False
+    # Explicit side-effect flag (None = infer from md5/cmd)
+    side_effect: bool | None = None
     # Legacy field for backward compatibility
     stage: str | None = None
+
+    @property
+    def is_side_effect(self) -> bool:
+        """True if this is a side-effect stage (has computation but no outputs).
+
+        Respects explicit ``side_effect`` field if set; otherwise inferred
+        from having a cmd but no output hash.
+        """
+        if self.side_effect is not None:
+            return self.side_effect
+        return self.md5 is None and self.cmd is not None
 
 
 def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
@@ -227,8 +243,36 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
         loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
         data = yaml.load(f, Loader=loader)  # noqa: S506
 
-    if not data or "outs" not in data or not data["outs"]:
+    if not data:
         return None
+
+    # Computation info lives in meta.computation for DVC compatibility
+    # Also check top-level computation for backward compat with old DVX files
+    meta = data.get("meta", {}) or {}
+    computation = meta.get("computation", {}) or data.get("computation", {}) or {}
+
+    has_outs = "outs" in data and data["outs"]
+
+    # Check for explicit side_effect flag in computation block
+    explicit_side_effect = computation.get("side_effect")
+    if explicit_side_effect is not None:
+        explicit_side_effect = bool(explicit_side_effect)
+
+    if not has_outs:
+        # Side-effect stage: no outputs, but must have computation
+        if not computation.get("cmd"):
+            return None
+        # Infer path from .dvc filename (strip .dvc suffix)
+        inferred_path = dvc_path.stem if dvc_path.suffix == ".dvc" else str(dvc_path)
+        return DVCFileInfo(
+            path=inferred_path,
+            # md5=None, size=None → side-effect stage
+            cmd=computation.get("cmd"),
+            deps=computation.get("deps") or {},
+            git_deps=computation.get("git_deps") or {},
+            side_effect=explicit_side_effect,
+            stage=meta.get("stage"),
+        )
 
     out = data["outs"][0]
 
@@ -236,11 +280,6 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
     md5_raw = out.get("md5", "")
     is_dir = md5_raw.endswith(".dir")
     md5 = md5_raw[:-4] if is_dir else md5_raw  # Strip .dir suffix
-
-    # Computation info lives in meta.computation for DVC compatibility
-    # Also check top-level computation for backward compat with old DVX files
-    meta = data.get("meta", {})
-    computation = meta.get("computation", {}) or data.get("computation", {})
 
     return DVCFileInfo(
         path=out.get("path", str(output_path)),
@@ -255,6 +294,7 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
         is_dir=is_dir,
         # Git-tracked import
         git_tracked=bool(meta.get("git_tracked")),
+        side_effect=explicit_side_effect,
         stage=meta.get("stage"),  # Legacy only
     )
 
@@ -268,6 +308,7 @@ def write_dvc_file(
     git_deps: dict[str, str] | None = None,
     nfiles: int | None = None,
     is_dir: bool | None = None,
+    side_effect: bool | None = None,
     stage: str | None = None,  # noqa: ARG001 (legacy, deprecated)
 ) -> Path:
     """Write .dvc file for an output with provenance.
@@ -280,6 +321,7 @@ def write_dvc_file(
         deps: {dep_path: md5} of inputs (provenance)
         nfiles: Number of files (for directories)
         is_dir: Whether output is a directory (auto-detected if None)
+        side_effect: Explicit side-effect flag (written to YAML if True)
         stage: Deprecated, kept for backward compatibility
 
     Returns:
@@ -291,34 +333,42 @@ def write_dvc_file(
     # Ensure parent directory exists
     dvc_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Auto-detect if directory
-    if is_dir is None:
-        is_dir = output_path.is_dir() if output_path.exists() else False
+    # Side-effect stage: explicit flag, or inferred from cmd with no output hash
+    if side_effect is not None:
+        is_side_effect = side_effect
+    else:
+        is_side_effect = md5 is None and size is None and cmd is not None
 
-    # Path in .dvc file should be relative to the .dvc file location (just the filename)
-    relative_path = output_path.name
+    data = {}
 
-    # Build out_entry, omitting md5/size if None (placeholder for prep phase)
-    out_entry = {}
-    if md5 is not None:
-        # For directories, add .dir suffix to hash (DVC convention)
-        out_entry["md5"] = f"{md5}.dir" if is_dir else md5
-    if size is not None:
-        out_entry["size"] = size
-    # Always specify hash: md5 to use new-style cache (not legacy md5-dos2unix)
-    out_entry["hash"] = "md5"
+    if not is_side_effect:
+        # Auto-detect if directory
+        if is_dir is None:
+            is_dir = output_path.is_dir() if output_path.exists() else False
 
-    # Add nfiles for directories (if we have the info)
-    if is_dir:
-        if nfiles is None and output_path.exists():
-            # Count files in directory
-            nfiles = sum(1 for f in output_path.rglob("*") if f.is_file())
-        if nfiles is not None:
-            out_entry["nfiles"] = nfiles
+        # Path in .dvc file should be relative to the .dvc file location (just the filename)
+        relative_path = output_path.name
 
-    out_entry["path"] = relative_path
+        # Build out_entry, omitting md5/size if None (placeholder for prep phase)
+        out_entry = {}
+        if md5 is not None:
+            # For directories, add .dir suffix to hash (DVC convention)
+            out_entry["md5"] = f"{md5}.dir" if is_dir else md5
+        if size is not None:
+            out_entry["size"] = size
+        # Always specify hash: md5 to use new-style cache (not legacy md5-dos2unix)
+        out_entry["hash"] = "md5"
 
-    data = {"outs": [out_entry]}
+        # Add nfiles for directories (if we have the info)
+        if is_dir:
+            if nfiles is None and output_path.exists():
+                # Count files in directory
+                nfiles = sum(1 for f in output_path.rglob("*") if f.is_file())
+            if nfiles is not None:
+                out_entry["nfiles"] = nfiles
+
+        out_entry["path"] = relative_path
+        data["outs"] = [out_entry]
 
     # Add computation block inside meta for DVC compatibility
     # (DVC allows arbitrary data in meta, but rejects unknown top-level keys)
@@ -330,6 +380,8 @@ def write_dvc_file(
             computation["deps"] = deps
         if git_deps:
             computation["git_deps"] = git_deps
+        if side_effect is True:
+            computation["side_effect"] = True
         data["meta"] = {"computation": computation}
 
     with open(dvc_path, "w") as f:
@@ -368,26 +420,28 @@ def is_output_fresh(
     if info is None:
         return False, "no .dvc file"
 
-    path = Path(output_path)
-    if not path.exists():
-        return False, "output missing"
+    # Side-effect stages have no output to check — freshness is purely dep-based
+    if not info.is_side_effect:
+        path = Path(output_path)
+        if not path.exists():
+            return False, "output missing"
 
-    # Check output hash (with mtime cache optimization)
-    if use_mtime_cache:
-        from dvx.run.status import get_artifact_hash_cached
+        # Check output hash (with mtime cache optimization)
+        if use_mtime_cache:
+            from dvx.run.status import get_artifact_hash_cached
 
-        try:
-            current_md5, _, _was_cached = get_artifact_hash_cached(path, compute_md5)
-        except (FileNotFoundError, ValueError) as e:
-            return False, f"hash error: {e}"
-    else:
-        try:
-            current_md5 = compute_md5(path)
-        except (FileNotFoundError, ValueError) as e:
-            return False, f"hash error: {e}"
+            try:
+                current_md5, _, _was_cached = get_artifact_hash_cached(path, compute_md5)
+            except (FileNotFoundError, ValueError) as e:
+                return False, f"hash error: {e}"
+        else:
+            try:
+                current_md5 = compute_md5(path)
+            except (FileNotFoundError, ValueError) as e:
+                return False, f"hash error: {e}"
 
-    if current_md5 != info.md5:
-        return False, f"data changed ({info.md5[:8]}... vs {current_md5[:8]}...)"
+        if current_md5 != info.md5:
+            return False, f"data changed ({info.md5[:8]}... vs {current_md5[:8]}...)"
 
     # Check dependencies if requested
     # Compare recorded dep hashes against dep's .dvc file (not actual data)
@@ -462,33 +516,38 @@ def get_freshness_details(
         return FreshnessDetails(fresh=False, reason="no .dvc file")
 
     path = Path(output_path)
-    if not path.exists():
+    current_md5 = None
+
+    # Side-effect stages have no output to check
+    if info.is_side_effect:
+        pass
+    elif not path.exists():
         return FreshnessDetails(
             fresh=False,
             reason="output missing",
             output_expected=info.md5,
         )
-
-    # Check output hash (with mtime cache optimization)
-    if use_mtime_cache:
-        from dvx.run.status import get_artifact_hash_cached
-        try:
-            current_md5, _, _ = get_artifact_hash_cached(path, compute_md5)
-        except (FileNotFoundError, ValueError) as e:
-            return FreshnessDetails(fresh=False, reason=f"hash error: {e}")
     else:
-        try:
-            current_md5 = compute_md5(path)
-        except (FileNotFoundError, ValueError) as e:
-            return FreshnessDetails(fresh=False, reason=f"hash error: {e}")
+        # Check output hash (with mtime cache optimization)
+        if use_mtime_cache:
+            from dvx.run.status import get_artifact_hash_cached
+            try:
+                current_md5, _, _ = get_artifact_hash_cached(path, compute_md5)
+            except (FileNotFoundError, ValueError) as e:
+                return FreshnessDetails(fresh=False, reason=f"hash error: {e}")
+        else:
+            try:
+                current_md5 = compute_md5(path)
+            except (FileNotFoundError, ValueError) as e:
+                return FreshnessDetails(fresh=False, reason=f"hash error: {e}")
 
-    if current_md5 != info.md5:
-        return FreshnessDetails(
-            fresh=False,
-            reason="output hash mismatch",
-            output_expected=info.md5,
-            output_actual=current_md5,
-        )
+        if current_md5 != info.md5:
+            return FreshnessDetails(
+                fresh=False,
+                reason="output hash mismatch",
+                output_expected=info.md5,
+                output_actual=current_md5,
+            )
 
     # Check dependencies if requested
     # Compare recorded dep hashes against dep's .dvc file (not actual data)
