@@ -1,11 +1,12 @@
 """Tests for dvx.run.artifact module."""
 
+import os
 from pathlib import Path
 
 import pytest
 import yaml
 
-from dvx.run.artifact import Artifact, Computation, delayed, write_all_dvc
+from dvx.run.artifact import Artifact, Computation, delayed, materialize, write_all_dvc
 
 
 def test_artifact_basic(tmp_path):
@@ -297,3 +298,85 @@ def test_artifact_from_dvc_with_git_deps(tmp_path):
     # Check blob SHAs are stored as md5 on the Artifact objects
     git_dep_map = {d.path: d.md5 for d in artifact.computation.git_deps}
     assert git_dep_map == {"script.py": "aabbccdd", "lib.py": "eeff0011"}
+
+
+def test_artifact_from_dvc_side_effect(tmp_path):
+    """Test Artifact.from_dvc() for side-effect stages (no outs)."""
+    dvc_file = tmp_path / "deploy.dvc"
+    dvc_content = {
+        "meta": {
+            "computation": {
+                "cmd": "wrangler pages deploy dist",
+                "deps": {"dist/index.html": "aaa111"},
+            }
+        }
+    }
+    with open(dvc_file, "w") as f:
+        yaml.dump(dvc_content, f)
+
+    artifact = Artifact.from_dvc(tmp_path / "deploy")
+
+    assert artifact is not None
+    assert artifact.path == "deploy"
+    assert artifact.md5 is None
+    assert artifact.computation is not None
+    assert artifact.computation.cmd == "wrangler pages deploy dist"
+    assert len(artifact.computation.deps) == 1
+
+
+def test_materialize_single(tmp_path):
+    """Test materialize() runs a computation and updates the artifact."""
+    os.chdir(tmp_path)
+
+    output = tmp_path / "result.txt"
+    artifact = Artifact(
+        path=str(output),
+        computation=Computation(cmd=f"echo hello > {output}"),
+    )
+
+    computed = materialize([artifact], update_dvc=False)
+
+    assert len(computed) == 1
+    assert output.exists()
+    assert output.read_text().strip() == "hello"
+    assert computed[0].md5 is not None
+
+
+def test_materialize_skips_fresh(tmp_path):
+    """Test materialize() skips already-fresh artifacts (doesn't re-run cmd)."""
+    os.chdir(tmp_path)
+
+    output = tmp_path / "result.txt"
+    output.write_text("existing\n")
+
+    from dvx.run.hash import compute_md5
+    from dvx.run.dvc_files import write_dvc_file
+    md5 = compute_md5(output)
+
+    # Write .dvc so it's "fresh"
+    write_dvc_file(output_path=output, md5=md5, size=output.stat().st_size)
+
+    artifact = Artifact(
+        path=str(output),
+        md5=md5,
+        computation=Computation(cmd="echo should-not-run"),
+    )
+
+    materialize([artifact], update_dvc=False)
+
+    # File content should be unchanged (cmd was not executed)
+    assert output.read_text() == "existing\n"
+
+
+def test_materialize_error_raises(tmp_path):
+    """Test materialize() raises on command failure."""
+    os.chdir(tmp_path)
+
+    output = tmp_path / "result.txt"
+    artifact = Artifact(
+        path=str(output),
+        computation=Computation(cmd="false"),  # always fails
+    )
+
+    with pytest.raises(RuntimeError, match="Computation failed"):
+        materialize([artifact], update_dvc=False)

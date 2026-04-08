@@ -8,9 +8,11 @@ import yaml
 
 from dvx.run.dvc_files import (
     DVCFileInfo,
+    find_parent_dvc_dir,
     get_dvc_file_path,
     get_freshness_details,
     is_output_fresh,
+    read_dir_manifest,
     read_dvc_file,
     write_dvc_file,
 )
@@ -897,3 +899,96 @@ def test_is_fetch_due_naive_last_run():
     last = "2026-04-07T12:00:00"  # No timezone
     now = datetime(2026, 4, 8, 13, 0, 0, tzinfo=timezone.utc)
     assert is_fetch_due("daily", last, now=now) is True
+
+
+# =============================================================================
+# find_parent_dvc_dir / read_dir_manifest tests
+# =============================================================================
+
+
+def test_find_parent_dvc_dir_basic(tmp_path):
+    """find_parent_dvc_dir finds .dvc-tracked parent directory."""
+    # Create a directory tracked by DVC
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "file1.txt").write_text("content1\n")
+    (data_dir / "sub").mkdir()
+    (data_dir / "sub" / "file2.txt").write_text("content2\n")
+
+    # Write .dvc file for the directory
+    dvc_file = tmp_path / "data.dvc"
+    dvc_content = {
+        "outs": [{"md5": "abc123.dir", "size": 1000, "nfiles": 2, "path": "data"}]
+    }
+    with open(dvc_file, "w") as f:
+        yaml.dump(dvc_content, f)
+
+    # Find parent for a file inside the directory
+    result = find_parent_dvc_dir(tmp_path / "data" / "file1.txt")
+    assert result is not None
+    parent_dir, relpath = result
+    assert parent_dir == tmp_path / "data"
+    assert relpath == "file1.txt"
+
+    # Find parent for a nested file
+    result2 = find_parent_dvc_dir(tmp_path / "data" / "sub" / "file2.txt")
+    assert result2 is not None
+    parent_dir2, relpath2 = result2
+    assert parent_dir2 == tmp_path / "data"
+    assert relpath2 == "sub/file2.txt"
+
+
+def test_find_parent_dvc_dir_not_found(tmp_path):
+    """find_parent_dvc_dir returns None when no parent .dvc exists."""
+    (tmp_path / "untracked.txt").write_text("hello\n")
+    result = find_parent_dvc_dir(tmp_path / "untracked.txt")
+    assert result is None
+
+
+def test_read_dir_manifest(tmp_path):
+    """read_dir_manifest reads .dir JSON manifest from cache."""
+    import json
+
+    # Create cache structure
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    subdir = cache_dir / "ab"
+    subdir.mkdir()
+
+    # Write manifest file (hash = "abc123...", prefix "ab", rest "c123...")
+    manifest = [
+        {"md5": "111222333", "relpath": "file1.txt"},
+        {"md5": "444555666", "relpath": "sub/file2.txt"},
+    ]
+    manifest_file = subdir / "c123def456.dir"
+    manifest_file.write_text(json.dumps(manifest))
+
+    result = read_dir_manifest("abc123def456", cache_dir)
+
+    assert result == {"file1.txt": "111222333", "sub/file2.txt": "444555666"}
+
+
+def test_read_dir_manifest_with_dir_suffix(tmp_path):
+    """read_dir_manifest handles hash with .dir suffix."""
+    import json
+
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    subdir = cache_dir / "ab"
+    subdir.mkdir()
+
+    manifest = [{"md5": "aaa", "relpath": "data.csv"}]
+    (subdir / "c123.dir").write_text(json.dumps(manifest))
+
+    # Pass hash with .dir suffix
+    result = read_dir_manifest("abc123.dir", cache_dir)
+    assert result == {"data.csv": "aaa"}
+
+
+def test_read_dir_manifest_missing(tmp_path):
+    """read_dir_manifest returns empty dict for missing manifest."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+
+    result = read_dir_manifest("nonexistent", cache_dir)
+    assert result == {}
