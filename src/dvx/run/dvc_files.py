@@ -175,6 +175,46 @@ def get_git_blob_sha(path: str, ref: str = "HEAD", repo_path: Path | None = None
         return None
 
 
+def get_git_object_sha(path: str, ref: str = "HEAD", repo_path: Path | None = None) -> str | None:
+    """Get the git object SHA for a path at a specific ref.
+
+    Works for both files (blob SHAs) and directories (tree SHAs).
+    Checks the blob cache first for speed, then falls back to
+    ``git rev-parse`` which handles both object types.
+
+    Args:
+        path: Path to the file or directory (relative to repo root)
+        ref: Git ref (commit SHA, branch, tag, HEAD, etc.)
+        repo_path: Path to git repository (default: current directory)
+
+    Returns:
+        Object SHA string, or None if path doesn't exist at that ref
+    """
+    # Strip trailing slash for consistency
+    path = path.rstrip("/")
+
+    # Try blob cache first (fast path for files)
+    is_sha_like = ref.isalnum() and len(ref) in (7, 8, 12, 40)
+    if ref == "HEAD" or is_sha_like:
+        blob_map = _get_blob_cache(ref, repo_path)
+        blob_sha = blob_map.get(path)
+        if blob_sha is not None:
+            return blob_sha
+
+    # Fall back to git rev-parse (handles both blobs and trees)
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", f"{ref}:{path}"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
 def find_hash_commit(
     hash_value: str,
     file_path: str,
@@ -539,10 +579,10 @@ def is_output_fresh(
                 return False, f"dep changed: {dep_path}"
 
     # Check git dependencies if requested
-    # Compare recorded blob SHAs against current HEAD blob SHAs
+    # Compare recorded SHAs against current HEAD (blob for files, tree for dirs)
     if check_deps and info.git_deps:
         for dep_path, recorded_sha in info.git_deps.items():
-            current_sha = get_git_blob_sha(dep_path, "HEAD")
+            current_sha = get_git_object_sha(dep_path, "HEAD")
             if current_sha is None:
                 return False, f"git dep missing: {dep_path}"
             if current_sha != recorded_sha:
@@ -671,12 +711,12 @@ def get_freshness_details(
             )
 
     # Check git dependencies if requested
-    # Compare recorded blob SHAs against current HEAD blob SHAs
+    # Compare recorded SHAs against current HEAD (blob for files, tree for dirs)
     if check_deps and info.git_deps:
         changed_deps = {}
 
         for dep_path, recorded_sha in info.git_deps.items():
-            current_sha = get_git_blob_sha(dep_path, "HEAD")
+            current_sha = get_git_object_sha(dep_path, "HEAD")
             if current_sha is None:
                 changed_deps[dep_path] = {"expected": recorded_sha, "expected_commit": None, "actual": "(missing)"}
             elif current_sha != recorded_sha:

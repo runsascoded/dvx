@@ -185,9 +185,10 @@ The notebooks are vestigial — the CLI wrappers already exist. The notebook for
 3. `is_output_fresh()`/`get_freshness_details()` check fetch schedule before dep/output checks
 4. Executor updates `fetch.last_run` to current UTC ISO 8601 after successful execution
 
-### Phase 3: Directory deps
-1. Add directory dep support (git tree SHA or glob hash)
-2. Use for www build deps (`www/src/`, `www/public/`)
+### Phase 3: Directory deps ✅
+1. `get_git_object_sha()`: resolves both files (blob) and directories (tree) via blob cache + `git rev-parse` fallback
+2. Freshness checks and `Computation.get_git_dep_hashes()` use `get_git_object_sha` for git_deps
+3. Directory paths in `git_deps` use tree SHAs — any file change under the dir changes the tree SHA
 
 ### Phase 4: Migrate crashes CI to `dvx run`
 1. Model remaining stages as `.dvc` files

@@ -51,6 +51,7 @@ from dvx.run.dvc_files import (
     get_file_hash_from_dir,
     get_git_blob_sha,
     get_git_head_sha,
+    get_git_object_sha,
     read_dvc_file,
     write_dvc_file,
 )
@@ -107,10 +108,12 @@ class Computation:
         return hashes
 
     def get_git_dep_hashes(self) -> dict[str, str]:
-        """Compute git blob SHAs for all git dependencies.
+        """Compute git object SHAs for all git dependencies.
+
+        Returns blob SHAs for files, tree SHAs for directories.
 
         Returns:
-            Dict mapping path strings to blob SHAs at HEAD
+            Dict mapping path strings to object SHAs at HEAD
         """
         hashes = {}
         for dep in self.git_deps:
@@ -119,12 +122,12 @@ class Computation:
                 if dep.md5:
                     hashes[path] = dep.md5
                 else:
-                    sha = get_git_blob_sha(path, "HEAD")
+                    sha = get_git_object_sha(path, "HEAD")
                     if sha:
                         hashes[path] = sha
             else:
                 path = str(dep)
-                sha = get_git_blob_sha(path, "HEAD")
+                sha = get_git_object_sha(path, "HEAD")
                 if sha:
                     hashes[path] = sha
         return hashes

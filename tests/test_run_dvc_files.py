@@ -671,3 +671,115 @@ def test_fetch_not_due_output_fresh(tmp_path):
     fresh, reason = is_output_fresh(Path("data.xml"), use_mtime_cache=False)
     assert fresh is True
     assert reason == "up-to-date"
+
+
+# =============================================================================
+# Directory git_deps tests
+# =============================================================================
+
+
+@pytest.fixture
+def git_repo(tmp_path):
+    """Create a temporary git repo with files and directories."""
+    import subprocess
+
+    os.chdir(tmp_path)
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True, check=True)
+
+    # Create files
+    (tmp_path / "script.py").write_text("print('hello')\n")
+
+    # Create a directory with files
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "app.ts").write_text("export const app = 1;\n")
+    (src / "utils.ts").write_text("export const util = 2;\n")
+
+    subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=True)
+
+    return tmp_path
+
+
+def test_get_git_object_sha_file(git_repo):
+    """get_git_object_sha returns blob SHA for files."""
+    from dvx.run.dvc_files import get_git_blob_sha, get_git_object_sha
+
+    file_sha = get_git_object_sha("script.py", "HEAD", git_repo)
+    blob_sha = get_git_blob_sha("script.py", "HEAD", git_repo)
+
+    assert file_sha is not None
+    assert file_sha == blob_sha
+
+
+def test_get_git_object_sha_directory(git_repo):
+    """get_git_object_sha returns tree SHA for directories."""
+    from dvx.run.dvc_files import get_git_blob_sha, get_git_object_sha
+
+    dir_sha = get_git_object_sha("src", "HEAD", git_repo)
+    blob_sha = get_git_blob_sha("src", "HEAD", git_repo)
+
+    assert dir_sha is not None
+    # Directories are NOT in the blob cache
+    assert blob_sha is None
+    # But get_git_object_sha finds them via rev-parse
+    assert len(dir_sha) == 40
+
+
+def test_get_git_object_sha_trailing_slash(git_repo):
+    """get_git_object_sha strips trailing slash."""
+    from dvx.run.dvc_files import get_git_object_sha
+
+    with_slash = get_git_object_sha("src/", "HEAD", git_repo)
+    without_slash = get_git_object_sha("src", "HEAD", git_repo)
+
+    assert with_slash == without_slash
+
+
+def test_directory_git_dep_freshness(git_repo):
+    """Freshness check works with directory git_deps (tree SHAs)."""
+    import subprocess
+
+    from dvx.run.dvc_files import get_git_object_sha
+
+    os.chdir(git_repo)
+
+    # Get current tree SHA for src/
+    tree_sha = get_git_object_sha("src", "HEAD", git_repo)
+    assert tree_sha is not None
+
+    # Create output file
+    output = git_repo / "bundle.js"
+    output.write_text("bundled\n")
+
+    from dvx.run.hash import compute_md5
+    md5 = compute_md5(output)
+
+    # Write .dvc with directory git_dep
+    write_dvc_file(
+        output_path=output,
+        md5=md5,
+        size=output.stat().st_size,
+        cmd="build",
+        git_deps={"src": tree_sha},
+    )
+
+    # Should be fresh — tree SHA matches
+    fresh, reason = is_output_fresh(Path("bundle.js"), use_mtime_cache=False)
+    assert fresh is True
+
+    # Modify a file in src/
+    (git_repo / "src" / "app.ts").write_text("export const app = 99;\n")
+    subprocess.run(["git", "add", "src/app.ts"], cwd=git_repo, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "update app"], cwd=git_repo, capture_output=True, check=True)
+
+    # Clear blob cache so it re-reads
+    from dvx.run.dvc_files import _blob_cache
+    _blob_cache.clear()
+
+    # Should now be stale — tree SHA changed
+    fresh, reason = is_output_fresh(Path("bundle.js"), use_mtime_cache=False)
+    assert fresh is False
+    assert "git dep changed: src" == reason
