@@ -21,10 +21,11 @@ def run_cmd(targets, force, force_upstream, cached, jobs, dry_run, no_provenance
     Run computations defined in .dvc files, respecting dependencies and
     executing in parallel where possible. Skips fresh (up-to-date) artifacts.
 
-    If no targets specified, runs all *.dvc files in current directory.
+    If no targets specified, recursively discovers all .dvc files in the
+    current directory tree.
 
     Examples:
-        dvx run                    # Run all .dvc files
+        dvx run                    # Run all .dvc files (recursive)
         dvx run output.dvc         # Run specific target
         dvx run -j 4               # Use 4 parallel workers
         dvx run --dry-run          # Show what would run
@@ -35,11 +36,13 @@ def run_cmd(targets, force, force_upstream, cached, jobs, dry_run, no_provenance
     # Find targets
     target_paths = list(targets) if targets else []
     if not target_paths:
-        # Default: find all .dvc files in current directory
-        target_paths = list(Path(".").glob("*.dvc"))
+        # Default: recursively find all .dvc files (excluding .dvc/ directory)
+        target_paths = [
+            p for p in Path(".").glob("**/*.dvc") if p.is_file() and ".dvc/" not in str(p)
+        ]
         if not target_paths:
             raise click.ClickException(
-                "No .dvc files found in current directory.\n"
+                "No .dvc files found.\n"
                 "Specify targets or run from a directory with .dvc files."
             )
 
