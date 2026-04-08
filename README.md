@@ -191,7 +191,7 @@ pip install dvx[all]
 ### Running Pipelines
 
 ```bash
-# Run all .dvc computations (parallel by default)
+# Run all .dvc computations (recursive discovery, parallel)
 dvx run
 
 # Run specific target
@@ -205,6 +205,33 @@ dvx run --dry-run
 
 # Force re-run (ignore freshness)
 dvx run --force
+
+# Auto-commit after each stage
+dvx run --commit
+```
+
+#### Per-Stage Commits
+
+Stages can trigger commits by writing to `$DVX_COMMIT_MSG_FILE` (set by DVX before each cmd):
+
+```bash
+# In your stage script:
+echo "Refresh data: 5 new records" > "$DVX_COMMIT_MSG_FILE"
+```
+
+With `dvx run --commit`, stages that don't write a commit message get a default one (e.g. "Run refresh"). DVX also sets `$DVX_SUMMARY_FILE` for short status output.
+
+#### Error Output
+
+When a stage fails, DVX shows the exit code, last 20 lines of stderr, and saves the full log:
+
+```
+  ✗ refresh: failed (exit code 1)
+
+    stderr (last 20 lines):
+      ConnectionError: Failed to fetch https://...
+
+    Full output: tmp/dvx-run-refresh.log
 ```
 
 ### Tracking Data
@@ -309,6 +336,8 @@ with Repo() as repo:
 - Fetch schedules - Periodic re-fetch with daily/hourly/weekly/cron staleness
 - Directory dependencies - Git tree SHA tracking for `git_deps`
 - `dvx import-url --git` - Git-tracked imports with URL provenance
+- Per-stage commits - `$DVX_COMMIT_MSG_FILE` env var + `--commit` flag
+- Detailed error output - Exit code, stderr tail, log file on failure
 - `dvx diff` preprocessing - Pipe through commands before diffing (with `{}` placeholder)
 - `dvx cache path/md5` - Cache introspection
 - `dvx cat` - View cached files directly

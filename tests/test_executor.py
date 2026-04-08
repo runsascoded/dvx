@@ -296,3 +296,87 @@ def test_run_with_git_deps_in_dvc_file(tmp_workdir):
 
     assert len(results) == 1
     assert results[0].success
+
+
+def test_failed_stage_exit_code_and_log(tmp_workdir):
+    """Test that a failing stage records exit code in reason and writes a log file."""
+    artifact = Artifact(
+        path=str(tmp_workdir / "fail_output.txt"),
+        computation=Computation(cmd="echo fail_msg >&2 && exit 42", deps=[]),
+    )
+
+    output = StringIO()
+    config = ExecutionConfig()
+    executor = ParallelExecutor([artifact], config, output)
+    results = executor.execute()
+
+    assert len(results) == 1
+    result = results[0]
+    assert not result.success
+    assert "fail_msg" in result.reason
+
+    # Log file should exist in tmp/
+    log_path = tmp_workdir / "tmp" / "dvx-run-fail_output.log"
+    assert log_path.exists()
+    log_content = log_path.read_text()
+    assert "fail_msg" in log_content
+
+
+def test_summary_file_output(tmp_workdir):
+    """Test that a stage writing to $DVX_SUMMARY_FILE has its summary shown."""
+    output_path = tmp_workdir / "summary_test.txt"
+
+    cmd = f'echo result > {output_path} && echo "Stage completed successfully" > "$DVX_SUMMARY_FILE"'
+
+    artifact = Artifact(
+        path=str(output_path),
+        computation=Computation(cmd=cmd, deps=[]),
+    )
+
+    output = StringIO()
+    config = ExecutionConfig()
+    executor = ParallelExecutor([artifact], config, output)
+    results = executor.execute()
+
+    assert len(results) == 1
+    assert results[0].success
+
+    log_output = output.getvalue()
+    assert "Stage completed successfully" in log_output
+
+
+def test_env_vars_are_set(tmp_workdir):
+    """Test that $DVX_COMMIT_MSG_FILE and $DVX_SUMMARY_FILE are set to non-empty paths."""
+    output_path = tmp_workdir / "env_test.txt"
+    env_dump = tmp_workdir / "env_dump.txt"
+
+    cmd = (
+        f'echo "COMMIT=$DVX_COMMIT_MSG_FILE" > {env_dump} && '
+        f'echo "SUMMARY=$DVX_SUMMARY_FILE" >> {env_dump} && '
+        f'echo ok > {output_path}'
+    )
+
+    artifact = Artifact(
+        path=str(output_path),
+        computation=Computation(cmd=cmd, deps=[]),
+    )
+
+    output = StringIO()
+    config = ExecutionConfig()
+    executor = ParallelExecutor([artifact], config, output)
+    results = executor.execute()
+
+    assert len(results) == 1
+    assert results[0].success
+
+    env_content = env_dump.read_text()
+    lines = env_content.strip().split("\n")
+    commit_line = [l for l in lines if l.startswith("COMMIT=")][0]
+    summary_line = [l for l in lines if l.startswith("SUMMARY=")][0]
+
+    commit_val = commit_line.split("=", 1)[1]
+    summary_val = summary_line.split("=", 1)[1]
+
+    assert commit_val != "", "DVX_COMMIT_MSG_FILE should be non-empty"
+    assert summary_val != "", "DVX_SUMMARY_FILE should be non-empty"
+    assert commit_val != summary_val, "Commit and summary files should be different paths"

@@ -421,3 +421,37 @@ def test_status_dep_changed(runner, temp_dvc_repo):
     assert output_line.startswith("✗")
     assert "dep changed" in output_line
     assert "input.txt" in output_line
+
+
+def test_run_discovers_dvc_files_recursively(runner, tmp_path):
+    """Test that `dvx run` with no targets finds .dvc files in subdirectories."""
+    os.chdir(tmp_path)
+
+    # Create .dvc files in nested subdirectories
+    sub1 = tmp_path / "sub1"
+    sub1.mkdir()
+    sub2 = tmp_path / "sub1" / "sub2"
+    sub2.mkdir()
+
+    for d, name in [(tmp_path, "top.txt"), (sub1, "mid.txt"), (sub2, "deep.txt")]:
+        dvc_content = {
+            "outs": [{"md5": "", "size": 0, "path": name}],
+            "meta": {"computation": {"cmd": f"echo {name} > {name}"}},
+        }
+        dvc_file = d / f"{name}.dvc"
+        with open(dvc_file, "w") as f:
+            yaml.dump(dvc_content, f)
+
+    # Also create a .dvc/config dir to make sure .dvc/ directory files are excluded
+    dvc_dir = tmp_path / ".dvc"
+    dvc_dir.mkdir()
+    spurious = dvc_dir / "something.dvc"
+    spurious.write_text("should be ignored")
+
+    result = runner.invoke(cli, ["run", "--dry-run"])
+    assert result.exit_code == 0
+
+    # All three .dvc files should be discovered
+    assert "top.txt" in result.output
+    assert "mid.txt" in result.output
+    assert "deep.txt" in result.output
