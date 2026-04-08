@@ -4,7 +4,10 @@ DVX is a lightweight wrapper around [DVC] that provides core data versioning wit
 
 - **Parallel pipeline execution** with per-file provenance tracking
 - **Decentralized workflow definitions** - each `.dvc` file contains its computation, deps, and outputs
+- **Side-effect stages** for deploys, posts, and syncs without local file outputs
+- **Fetch schedules** for periodic re-fetch of external data (daily/hourly/cron)
 - **Enhanced diff** with preprocessing pipelines and directory support
+- **Git-tracked imports** with URL provenance for small files
 - **Cache introspection** commands for examining cached data
 - **Performance optimizations** for large repos (batched git lookups, mtime caching)
 
@@ -176,6 +179,9 @@ pip install dvx
 # With S3 support
 pip install dvx[s3]
 
+# With cron schedule support
+pip install dvx[cron]
+
 # With all remote backends
 pip install dvx[all]
 ```
@@ -289,7 +295,8 @@ with Repo() as repo:
 | `remove` | Stop tracking file(s) |
 | `move` | Move tracked file(s) |
 | `import` | Import from another DVC repo |
-| `import-url` | Import from a URL |
+| `import-url` | Import from a URL (`--git` for git-tracked, `-A` for User-Agent) |
+| `update` | Re-fetch imported data from source |
 | `get` | Download without tracking |
 | `get-url` | Download URL without tracking |
 | `shell-integration` | Output shell aliases |
@@ -298,6 +305,10 @@ with Repo() as repo:
 
 ### Added in DVX
 - `dvx run` - Parallel pipeline execution with per-file provenance
+- Side-effect stages - Deploys/syncs modeled as `.dvc` files with no `outs`
+- Fetch schedules - Periodic re-fetch with daily/hourly/weekly/cron staleness
+- Directory dependencies - Git tree SHA tracking for `git_deps`
+- `dvx import-url --git` - Git-tracked imports with URL provenance
 - `dvx diff` preprocessing - Pipe through commands before diffing (with `{}` placeholder)
 - `dvx cache path/md5` - Cache introspection
 - `dvx cat` - View cached files directly
@@ -335,6 +346,82 @@ When adding outputs with dependencies:
 - **Recursive add**: Use `dvx add -r` to auto-add stale deps first
 - **Accurate recording**: Recorded dep hashes always match what was actually used
 
+## Side-Effect Stages
+
+Not all pipeline stages produce local file outputs. Deploys, database imports, Slack posts — these are side effects. DVX models them as `.dvc` files with `meta.computation` but no `outs`:
+
+```yaml
+# www-deploy.dvc
+meta:
+  computation:
+    cmd: wrangler pages deploy www/dist --project-name my-app
+    deps:
+      www/dist/index.html: a1b2c3d4...
+      www/dist/assets/app.js: e5f6a7b8...
+```
+
+- `dvx status` reports stale when dep hashes change
+- `dvx run` executes the command and updates dep hashes
+- No cache push/pull — the `.dvc` file itself is the receipt
+- Side-effect is inferred from no `outs` + having a `cmd` (optionally explicit via `computation.side_effect: true`)
+
+## Fetch Schedules
+
+External data sources change on their own schedule. DVX can track periodic fetches with a `fetch.schedule`:
+
+```yaml
+# data/live-feed.xml.dvc
+outs:
+- md5: abc123...
+  path: live-feed.xml
+meta:
+  computation:
+    cmd: curl -o live-feed.xml https://api.example.com/feed
+    fetch:
+      schedule: daily        # or "hourly", "weekly", "0 15 * * *", "manual"
+      last_run: 2026-04-07T15:10:00Z
+```
+
+- `dvx status` reports stale when `last_run + interval` has elapsed
+- `dvx run` executes the fetch and updates `last_run`
+- If fetched data is identical (same hash), downstream stages stay fresh
+- `"manual"` schedule is never auto-stale — only runs on `dvx run --force`
+- Cron expressions require the optional `croniter` package: `pip install dvx[cron]`
+
+## Directory Dependencies
+
+Stages can depend on entire directory trees using `git_deps`. DVX uses git tree SHAs, which change when any file in the directory changes:
+
+```yaml
+# bundle.js.dvc
+outs:
+- md5: def456...
+  path: bundle.js
+meta:
+  computation:
+    cmd: cd www && pnpm build
+    git_deps:
+      www/src: abc123tree...     # tree SHA — any file change invalidates
+      www/package.json: def456blob...  # blob SHA — individual file
+```
+
+## Git-Tracked Imports
+
+For small files from URLs (configs, metadata), use `--git` to track in Git instead of DVC cache:
+
+```bash
+# Import and commit to Git (not DVC cache)
+dvx import-url --git https://example.com/config.json
+
+# With custom User-Agent (persisted for updates)
+dvx import-url --git -A "MyBot/1.0" https://api.example.com/data.json
+
+# Update: re-checks ETag/Last-Modified, re-downloads if changed
+dvx update config.json.dvc
+```
+
+The `.dvc` file stores URL provenance (ETag, Last-Modified, size, User-Agent) so `dvx update` knows how to re-fetch.
+
 ## Performance
 
 DVX is optimized for large repos:
@@ -355,4 +442,4 @@ DVX is optimized for large repos:
 
 Apache 2.0
 
-[DVC]: https://github.com/treeverse/dvc
+[DVC]: https://github.com/iterative/dvc

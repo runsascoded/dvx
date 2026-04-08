@@ -9,6 +9,7 @@ import yaml
 from dvx.run.dvc_files import (
     DVCFileInfo,
     get_dvc_file_path,
+    get_freshness_details,
     is_output_fresh,
     read_dvc_file,
     write_dvc_file,
@@ -783,3 +784,116 @@ def test_directory_git_dep_freshness(git_repo):
     fresh, reason = is_output_fresh(Path("bundle.js"), use_mtime_cache=False)
     assert fresh is False
     assert "git dep changed: src" == reason
+
+
+# =============================================================================
+# get_freshness_details tests for side-effect and fetch
+# =============================================================================
+
+
+def test_freshness_details_side_effect_fresh(tmp_path):
+    """get_freshness_details returns fresh for side-effect with matching deps."""
+    os.chdir(tmp_path)
+
+    dep_dvc = tmp_path / "dist.dvc"
+    with open(dep_dvc, "w") as f:
+        yaml.dump({"outs": [{"md5": "abc123", "size": 100, "path": "dist"}]}, f)
+
+    se_dvc = tmp_path / "deploy.dvc"
+    with open(se_dvc, "w") as f:
+        yaml.dump({
+            "meta": {"computation": {"cmd": "deploy.sh", "deps": {"dist": "abc123"}}}
+        }, f)
+
+    details = get_freshness_details(Path("deploy"), use_mtime_cache=False)
+    assert details.fresh is True
+    assert details.reason == "up-to-date"
+
+
+def test_freshness_details_side_effect_stale(tmp_path):
+    """get_freshness_details returns stale for side-effect with changed deps."""
+    os.chdir(tmp_path)
+
+    dep_dvc = tmp_path / "dist.dvc"
+    with open(dep_dvc, "w") as f:
+        yaml.dump({"outs": [{"md5": "new_hash", "size": 200, "path": "dist"}]}, f)
+
+    se_dvc = tmp_path / "deploy.dvc"
+    with open(se_dvc, "w") as f:
+        yaml.dump({
+            "meta": {"computation": {"cmd": "deploy.sh", "deps": {"dist": "old_hash"}}}
+        }, f)
+
+    details = get_freshness_details(Path("deploy"), use_mtime_cache=False)
+    assert details.fresh is False
+    assert "dep changed: dist" in details.reason
+    assert details.changed_deps is not None
+    assert "dist" in details.changed_deps
+
+
+def test_freshness_details_fetch_due(tmp_path):
+    """get_freshness_details returns stale when fetch schedule is due."""
+    os.chdir(tmp_path)
+
+    output = tmp_path / "data.xml"
+    output.write_text("<data/>")
+
+    write_dvc_file(
+        output_path=output,
+        md5="abc123",
+        size=7,
+        cmd="fetch-data",
+        fetch_schedule="daily",
+        fetch_last_run="2020-01-01T00:00:00Z",  # Long ago → due
+    )
+
+    details = get_freshness_details(Path("data.xml"), use_mtime_cache=False)
+    assert details.fresh is False
+    assert details.reason == "fetch schedule due"
+
+
+def test_freshness_details_fetch_not_due(tmp_path):
+    """get_freshness_details returns fresh when fetch not due and hash matches."""
+    os.chdir(tmp_path)
+
+    output = tmp_path / "data.xml"
+    output.write_text("<data/>")
+
+    from dvx.run.hash import compute_md5
+    md5 = compute_md5(output)
+
+    write_dvc_file(
+        output_path=output,
+        md5=md5,
+        size=output.stat().st_size,
+        cmd="fetch-data",
+        fetch_schedule="daily",
+        fetch_last_run="2099-01-01T00:00:00Z",
+    )
+
+    details = get_freshness_details(Path("data.xml"), use_mtime_cache=False)
+    assert details.fresh is True
+
+
+def test_is_fetch_due_weekly():
+    """Weekly schedule: due after 7 days, not before."""
+    from datetime import datetime, timezone
+
+    from dvx.run.dvc_files import is_fetch_due
+
+    last = "2026-04-01T12:00:00+00:00"
+    # 6 days later → not due
+    assert is_fetch_due("weekly", last, now=datetime(2026, 4, 7, 12, 0, 0, tzinfo=timezone.utc)) is False
+    # 8 days later → due
+    assert is_fetch_due("weekly", last, now=datetime(2026, 4, 9, 12, 0, 0, tzinfo=timezone.utc)) is True
+
+
+def test_is_fetch_due_naive_last_run():
+    """last_run without timezone is treated as UTC."""
+    from datetime import datetime, timezone
+
+    from dvx.run.dvc_files import is_fetch_due
+
+    last = "2026-04-07T12:00:00"  # No timezone
+    now = datetime(2026, 4, 8, 13, 0, 0, tzinfo=timezone.utc)
+    assert is_fetch_due("daily", last, now=now) is True
