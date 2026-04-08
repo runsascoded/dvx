@@ -189,8 +189,3 @@ The notebooks are vestigial — the CLI wrappers already exist. The notebook for
 1. `get_git_object_sha()`: resolves both files (blob) and directories (tree) via blob cache + `git rev-parse` fallback
 2. Freshness checks and `Computation.get_git_dep_hashes()` use `get_git_object_sha` for git_deps
 3. Directory paths in `git_deps` use tree SHAs — any file change under the dir changes the tree SHA
-
-### Phase 4: Migrate crashes CI to `dvx run`
-1. Model remaining stages as `.dvc` files
-2. Replace `daily.yml` pipeline with `dvx run` + thin GHA wrapper
-3. Remove notebook execution (use CLI wrappers directly)
