@@ -362,8 +362,8 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
         # Side-effect stage: no outputs, but must have computation
         if not computation.get("cmd"):
             return None
-        # Infer path from .dvc filename (strip .dvc suffix)
-        inferred_path = dvc_path.stem if dvc_path.suffix == ".dvc" else str(dvc_path)
+        # Infer path from .dvc filename (strip .dvc suffix, preserve directory)
+        inferred_path = str(dvc_path)[:-4] if str(dvc_path).endswith(".dvc") else str(dvc_path)
         return DVCFileInfo(
             path=inferred_path,
             # md5=None, size=None → side-effect stage

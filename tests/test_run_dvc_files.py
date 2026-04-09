@@ -342,11 +342,33 @@ def test_read_side_effect_dvc_file(tmp_path):
     info = read_dvc_file(dvc_file)
 
     assert info is not None
-    assert info.path == "deploy"
+    assert info.path == str(dvc_file)[:-4]  # Full path minus .dvc suffix
     assert info.md5 is None
     assert info.size is None
     assert info.cmd == "wrangler pages deploy dist"
     assert info.deps == {"dist/index.html": "abc123"}
+    assert info.is_side_effect is True
+
+
+def test_read_side_effect_subdirectory_path(tmp_path):
+    """Side-effect .dvc in a subdirectory preserves the directory in path."""
+    subdir = tmp_path / "njsp" / "data"
+    subdir.mkdir(parents=True)
+    dvc_file = subdir / "refresh.dvc"
+    dvc_content = {
+        "meta": {
+            "computation": {
+                "cmd": "njsp refresh_data",
+                "fetch": {"schedule": "daily"},
+            }
+        }
+    }
+    with open(dvc_file, "w") as f:
+        yaml.dump(dvc_content, f)
+
+    info = read_dvc_file(dvc_file)
+    assert info is not None
+    assert info.path == str(subdir / "refresh")
     assert info.is_side_effect is True
 
 

@@ -317,11 +317,34 @@ def test_artifact_from_dvc_side_effect(tmp_path):
     artifact = Artifact.from_dvc(tmp_path / "deploy")
 
     assert artifact is not None
-    assert artifact.path == "deploy"
+    assert artifact.path == str(tmp_path / "deploy")
     assert artifact.md5 is None
     assert artifact.computation is not None
     assert artifact.computation.cmd == "wrangler pages deploy dist"
     assert len(artifact.computation.deps) == 1
+
+
+def test_artifact_from_dvc_side_effect_subdirectory(tmp_path):
+    """Artifact.from_dvc() preserves directory path for side-effect in subdirs."""
+    subdir = tmp_path / "api"
+    subdir.mkdir()
+    dvc_file = subdir / "deploy.dvc"
+    dvc_content = {
+        "meta": {
+            "computation": {
+                "cmd": "wrangler deploy",
+                "deps": {"dist/index.html": "aaa"},
+            }
+        }
+    }
+    with open(dvc_file, "w") as f:
+        yaml.dump(dvc_content, f)
+
+    artifact = Artifact.from_dvc(subdir / "deploy")
+
+    assert artifact is not None
+    assert artifact.path == str(subdir / "deploy")
+    assert artifact.md5 is None
 
 
 def test_materialize_single(tmp_path):

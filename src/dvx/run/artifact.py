@@ -221,9 +221,8 @@ class Artifact:
                 git_deps=git_deps,
             )
 
-        # For side-effect stages, use info.path (inferred from .dvc filename)
-        # For regular stages, use the original path passed in (full path)
-        artifact_path = str(path) if not info.is_side_effect else info.path
+        # Always use the original path passed in (preserves directory prefix)
+        artifact_path = str(path)
         return cls(
             path=artifact_path,
             md5=info.md5,
