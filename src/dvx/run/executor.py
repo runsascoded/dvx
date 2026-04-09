@@ -41,6 +41,7 @@ class ExecutionConfig:
     provenance: bool = True
     verbose: bool = False
     commit: bool = False  # Auto-commit after each stage
+    push: bool = False  # Push after each per-stage commit
 
 
 def _matches_patterns(path: str, patterns: list[str]) -> bool:
@@ -612,6 +613,17 @@ class ParallelExecutor:
                     )
                     if result.returncode == 0:
                         self._log(f"    📝 committed: {commit_msg.splitlines()[0]}")
+                        # Push if configured (via --push flag or $DVX_PUSH env var)
+                        should_push = self.config.push or os.environ.get("DVX_PUSH") == "1"
+                        if should_push:
+                            push_result = subprocess.run(
+                                ["git", "push"],
+                                capture_output=True, text=True, check=False,
+                            )
+                            if push_result.returncode == 0:
+                                self._log("    📤 pushed")
+                            else:
+                                self._log(f"    ⚠ push failed: {push_result.stderr.strip()}")
                     elif "nothing to commit" in result.stdout:
                         pass  # No changes to commit
                     else:

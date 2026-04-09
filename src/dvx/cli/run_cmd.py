@@ -15,8 +15,9 @@ import click
 @click.option("-c", "--commit", is_flag=True, help="Auto-commit after each stage (uses $DVX_COMMIT_MSG_FILE or default message).")
 @click.option("-n", "--dry-run", is_flag=True, help="Show execution plan without running.")
 @click.option("--no-provenance", is_flag=True, help="Don't include provenance in .dvc files.")
+@click.option("-p", "--push", is_flag=True, help="Push after each per-stage commit (also via $DVX_PUSH=1).")
 @click.option("-v", "--verbose", is_flag=True, help="Show detailed output.")
-def run_cmd(targets, force, force_upstream, cached, jobs, commit, dry_run, no_provenance, verbose):
+def run_cmd(targets, force, force_upstream, cached, jobs, commit, dry_run, no_provenance, push, verbose):
     """Execute artifact computations from .dvc files.
 
     Run computations defined in .dvc files, respecting dependencies and
@@ -57,6 +58,7 @@ def run_cmd(targets, force, force_upstream, cached, jobs, commit, dry_run, no_pr
         provenance=not no_provenance,
         verbose=verbose,
         commit=commit,
+        push=push,
     )
 
     try:
