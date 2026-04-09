@@ -41,7 +41,7 @@ class ExecutionConfig:
     provenance: bool = True
     verbose: bool = False
     commit: bool = False  # Auto-commit after each stage
-    push: bool = False  # Push after each per-stage commit
+    push: str = "never"  # Push strategy: "never", "each", "end"
 
 
 def _matches_patterns(path: str, patterns: list[str]) -> bool:
@@ -195,6 +195,21 @@ class ParallelExecutor:
                 self._log(f"\nFailed: {failed}")
                 break
 
+        # Push at end if configured
+        import os
+        push_strategy = os.environ.get("DVX_PUSH", self.config.push)
+        if push_strategy == "end":
+            executed = [r for r in results if r.success and not r.skipped]
+            if executed:
+                push_result = subprocess.run(
+                    ["git", "push"],
+                    capture_output=True, text=True, check=False,
+                )
+                if push_result.returncode == 0:
+                    self._log("\n📤 pushed all commits")
+                else:
+                    self._log(f"\n⚠ push failed: {push_result.stderr.strip()}")
+
         return results
 
     def _should_run(self, artifact: Artifact) -> tuple[bool, str]:
@@ -336,12 +351,18 @@ class ParallelExecutor:
         summary_file = tempfile.NamedTemporaryFile(
             mode="w", prefix="dvx-summary-", suffix=".txt", delete=False,
         )
+        push_file = tempfile.NamedTemporaryFile(
+            mode="w", prefix="dvx-push-", suffix=".txt", delete=False,
+        )
         commit_msg_file.close()
         summary_file.close()
+        push_file.close()
 
         env = os.environ.copy()
         env["DVX_COMMIT_MSG_FILE"] = commit_msg_file.name
         env["DVX_SUMMARY_FILE"] = summary_file.name
+        env["DVX_PUSH_FILE"] = push_file.name
+        stage_env_extras = {"push_file": push_file.name}
 
         result = subprocess.run(
             cmd,
@@ -392,7 +413,7 @@ class ParallelExecutor:
                         self._cmd_events[cmd].set()
 
             # Clean up temp files on failure
-            for f in (commit_msg_file.name, summary_file.name):
+            for f in (commit_msg_file.name, summary_file.name, push_file.name):
                 try:
                     os.unlink(f)
                 except OSError:
@@ -448,7 +469,7 @@ class ParallelExecutor:
                 self._log(f"  ⚠ {path}: couldn't write .dvc: {e}")
 
             self._log(f"  ✓ {path}: side-effect completed ({duration:.1f}s)")
-            self._handle_stage_output(path, commit_msg_file.name, summary_file.name)
+            self._handle_stage_output(path, commit_msg_file.name, summary_file.name, stage_env_extras)
             return ExecutionResult(
                 path=path,
                 success=True,
@@ -462,7 +483,7 @@ class ParallelExecutor:
         if not out.exists():
             self._log(f"  ✗ {path}: command succeeded but output not created")
             # Clean up temp files
-            for f in (commit_msg_file.name, summary_file.name):
+            for f in (commit_msg_file.name, summary_file.name, push_file.name):
                 try:
                     os.unlink(f)
                 except OSError:
@@ -503,7 +524,7 @@ class ParallelExecutor:
             self._log(f"  ⚠ {path}: couldn't write .dvc: {e}")
 
         self._log(f"  ✓ {path}: completed ({duration:.1f}s)")
-        self._handle_stage_output(path, commit_msg_file.name, summary_file.name)
+        self._handle_stage_output(path, commit_msg_file.name, summary_file.name, stage_env_extras)
         return ExecutionResult(
             path=path,
             success=True,
@@ -571,15 +592,19 @@ class ParallelExecutor:
                 reason=f"co-output error: {e}",
             )
 
-    def _handle_stage_output(self, path: str, commit_msg_path: str, summary_path: str):
-        """Handle post-cmd stage output: commit message and summary.
+    def _handle_stage_output(self, path: str, commit_msg_path: str, summary_path: str, env_extras: dict | None = None):
+        """Handle post-cmd stage output: commit message, summary, push.
 
         Args:
             path: Artifact path (for default commit message)
             commit_msg_path: Path to commit message temp file
             summary_path: Path to summary temp file
+            env_extras: Additional temp file paths (e.g. push_file)
         """
         import os
+
+        if env_extras is None:
+            env_extras = {}
 
         try:
             # Check summary file
@@ -613,8 +638,14 @@ class ParallelExecutor:
                     )
                     if result.returncode == 0:
                         self._log(f"    📝 committed: {commit_msg.splitlines()[0]}")
-                        # Push if configured (via --push flag or $DVX_PUSH env var)
-                        should_push = self.config.push or os.environ.get("DVX_PUSH") == "1"
+                        # Check if stage requested push via $DVX_PUSH_FILE
+                        push_file = env_extras.get("push_file", "")
+                        stage_wants_push = (
+                            os.path.exists(push_file) and os.path.getsize(push_file) > 0
+                        ) if push_file else False
+                        # Push strategy: "each" always pushes, stage push_file triggers push
+                        push_strategy = os.environ.get("DVX_PUSH", self.config.push)
+                        should_push = push_strategy == "each" or stage_wants_push
                         if should_push:
                             push_result = subprocess.run(
                                 ["git", "push"],
@@ -630,9 +661,10 @@ class ParallelExecutor:
                         self._log(f"    ⚠ commit failed: {result.stderr.strip()}")
         finally:
             # Clean up temp files
-            for f in (commit_msg_path, summary_path):
+            for f in (commit_msg_path, summary_path, env_extras.get("push_file", "")):
                 try:
-                    os.unlink(f)
+                    if f:
+                        os.unlink(f)
                 except OSError:
                     pass
 
