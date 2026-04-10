@@ -659,12 +659,17 @@ class ParallelExecutor:
                         stage_wants_push = (
                             os.path.exists(push_file) and os.path.getsize(push_file) > 0
                         ) if push_file else False
-                        # Push strategy: CLI/env > per-stage config > global config
+                        # Push strategy: CLI/env > global config
+                        # Per-stage config only selects *when* to push within a
+                        # run that already has push enabled — it doesn't enable
+                        # push by itself. stage.push() ($DVX_PUSH_FILE) is the
+                        # exception: it's an explicit per-invocation request.
                         push_strategy = os.environ.get("DVX_PUSH", self.config.push)
-                        if push_strategy == "never":
+                        if push_strategy != "never":
+                            # Push enabled globally — check per-stage override
                             stage_push = dvx_config.should_push(path)
-                            if stage_push == "each":
-                                push_strategy = "each"
+                            if stage_push is not None and stage_push != "never":
+                                push_strategy = stage_push
                         should_push = push_strategy == "each" or stage_wants_push
                         if should_push:
                             push_result = subprocess.run(
