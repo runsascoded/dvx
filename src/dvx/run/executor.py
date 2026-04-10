@@ -40,7 +40,7 @@ class ExecutionConfig:
     cached_patterns: list[str] = field(default_factory=list)
     provenance: bool = True
     verbose: bool = False
-    commit: bool = False  # Auto-commit after each stage
+    commit: str = "auto"  # Commit strategy: "auto", "always", "never"
     push: str = "never"  # Push strategy: "never", "each", "end"
 
 
@@ -195,9 +195,13 @@ class ParallelExecutor:
                 self._log(f"\nFailed: {failed}")
                 break
 
-        # Push at end if configured
+        # Push at end if configured (CLI/env > config file)
         import os
+        from dvx.config import load_config as _load_config
+        _dvx_config = _load_config()
         push_strategy = os.environ.get("DVX_PUSH", self.config.push)
+        if push_strategy == "never":
+            push_strategy = _dvx_config.push
         if push_strategy == "end":
             executed = [r for r in results if r.success and not r.skipped]
             if executed:
@@ -614,16 +618,28 @@ class ParallelExecutor:
                 if summary:
                     self._log(f"    → {summary}")
 
+            # Determine commit strategy for this stage
+            from dvx.config import load_config
+            dvx_config = load_config()
+            # CLI/env override > per-stage config > global config
+            commit_strategy = self.config.commit
+            if commit_strategy == "auto":
+                # Check per-stage override from config file
+                stage_commit = dvx_config.should_commit(path)
+                if stage_commit != "auto":
+                    commit_strategy = stage_commit
+
             # Check commit message file
             commit_msg = None
-            if os.path.exists(commit_msg_path) and os.path.getsize(commit_msg_path) > 0:
-                with open(commit_msg_path) as f:
-                    commit_msg = f.read().strip()
+            if commit_strategy != "never":
+                if os.path.exists(commit_msg_path) and os.path.getsize(commit_msg_path) > 0:
+                    with open(commit_msg_path) as f:
+                        commit_msg = f.read().strip()
 
-            if not commit_msg and self.config.commit:
-                # Fallback: auto-commit with default message
-                stage_name = Path(path).stem
-                commit_msg = f"Run {stage_name}"
+                if not commit_msg and commit_strategy == "always":
+                    # Fallback: auto-commit with default message
+                    stage_name = Path(path).stem
+                    commit_msg = f"Run {stage_name}"
 
             if commit_msg:
                 # Stage tracked changes and commit
@@ -643,8 +659,12 @@ class ParallelExecutor:
                         stage_wants_push = (
                             os.path.exists(push_file) and os.path.getsize(push_file) > 0
                         ) if push_file else False
-                        # Push strategy: "each" always pushes, stage push_file triggers push
+                        # Push strategy: CLI/env > per-stage config > global config
                         push_strategy = os.environ.get("DVX_PUSH", self.config.push)
+                        if push_strategy == "never":
+                            stage_push = dvx_config.should_push(path)
+                            if stage_push == "each":
+                                push_strategy = "each"
                         should_push = push_strategy == "each" or stage_wants_push
                         if should_push:
                             push_result = subprocess.run(

@@ -57,7 +57,7 @@ def run_cmd(targets, force, force_upstream, cached, jobs, commit, dry_run, no_pr
         cached_patterns=list(cached) if cached else [],
         provenance=not no_provenance,
         verbose=verbose,
-        commit=commit,
+        commit="always" if commit else "auto",
         push=push or "never",
     )
 

@@ -158,5 +158,4 @@ def command(fn):
 
 1. ✅ **Push strategies** — `--push each` (per-commit) and `--push end` (batch at finish), also via `$DVX_PUSH` env var
 2. ✅ **`dvx.stage` library** — `stage.commit()`, `stage.summary()`, `stage.push()` + `$DVX_PUSH_FILE` env var
-3. ⬜ **Config file** — `.dvx/config.yml` for per-stage overrides (future)
-4. ⬜ **Stage outputs** — `output()` / `input()` for inter-stage data passing (future)
+3. ✅ **Config file** — `.dvx/config.yml` or `dvx.yml` with `run.commit`, `run.push`, per-stage overrides. Priority: CLI flags > env vars > config > defaults
