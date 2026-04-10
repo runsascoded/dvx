@@ -360,6 +360,8 @@ class DVCFileInfo:
     # Fetch/cron schedule (e.g. "daily", "0 15 * * *", "manual")
     fetch_schedule: str | None = None
     fetch_last_run: str | None = None  # ISO 8601 timestamp
+    # Ordering: run after these .dvc stages (paths), even without data deps
+    after: list[str] = field(default_factory=list)
     # Legacy field for backward compatibility
     stage: str | None = None
 
@@ -420,6 +422,11 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
     fetch_schedule = fetch.get("schedule")
     fetch_last_run = fetch.get("last_run")
 
+    # Ordering constraints
+    after = computation.get("after") or []
+    if isinstance(after, str):
+        after = [after]
+
     # Resolve dep/git_dep paths relative to .dvc file's directory
     dvc_dir = dvc_path.parent
     raw_deps = computation.get("deps") or {}
@@ -442,6 +449,7 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
             side_effect=explicit_side_effect,
             fetch_schedule=fetch_schedule,
             fetch_last_run=fetch_last_run,
+            after=after,
             stage=meta.get("stage"),
         )
 
@@ -468,6 +476,7 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
         side_effect=explicit_side_effect,
         fetch_schedule=fetch_schedule,
         fetch_last_run=fetch_last_run,
+        after=after,
         stage=meta.get("stage"),  # Legacy only
     )
 
@@ -484,6 +493,7 @@ def write_dvc_file(
     side_effect: bool | None = None,
     fetch_schedule: str | None = None,
     fetch_last_run: str | None = None,
+    after: list[str] | None = None,
     stage: str | None = None,  # noqa: ARG001 (legacy, deprecated)
 ) -> Path:
     """Write .dvc file for an output with provenance.
@@ -549,7 +559,7 @@ def write_dvc_file(
 
     # Add computation block inside meta for DVC compatibility
     # (DVC allows arbitrary data in meta, but rejects unknown top-level keys)
-    if cmd or deps or git_deps or fetch_schedule:
+    if cmd or deps or git_deps or fetch_schedule or after:
         computation = {}
         if cmd:
             computation["cmd"] = cmd
@@ -566,6 +576,8 @@ def write_dvc_file(
             if fetch_last_run:
                 fetch["last_run"] = fetch_last_run
             computation["fetch"] = fetch
+        if after:
+            computation["after"] = after
         data["meta"] = {"computation": computation}
 
     with open(dvc_path, "w") as f:

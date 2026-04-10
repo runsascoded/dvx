@@ -74,6 +74,7 @@ class Computation:
     cmd: str
     deps: list[Artifact | str | Path] = field(default_factory=list)
     git_deps: list[Artifact | str | Path] = field(default_factory=list)
+    after: list[str] = field(default_factory=list)  # Ordering: run after these .dvc stages
     params: dict[str, Any] = field(default_factory=dict)
 
     def get_dep_paths(self) -> list[Path]:
@@ -211,7 +212,7 @@ class Artifact:
             )
 
         computation = None
-        if info.cmd or info.deps or info.git_deps:
+        if info.cmd or info.deps or info.git_deps or info.after:
             # Convert deps dict to Artifact objects
             deps = [Artifact(path=dep_path, md5=dep_md5) for dep_path, dep_md5 in info.deps.items()]
             git_deps = [Artifact(path=dep_path, md5=blob_sha) for dep_path, blob_sha in info.git_deps.items()]
@@ -219,6 +220,7 @@ class Artifact:
                 cmd=info.cmd or "",
                 deps=deps,
                 git_deps=git_deps,
+                after=info.after,
             )
 
         # Always use the original path passed in (preserves directory prefix)

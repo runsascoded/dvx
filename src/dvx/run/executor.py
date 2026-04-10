@@ -79,7 +79,7 @@ def _group_into_levels(artifacts: list[Artifact]) -> list[list[Artifact]]:
                 # Leaf nodes are always ready
                 ready.append(artifact)
             else:
-                # Check if all deps (including git_deps) are done
+                # Check if all deps (including git_deps and after constraints) are done
                 deps_done = True
                 for dep in artifact.computation.deps:
                     dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
@@ -90,6 +90,13 @@ def _group_into_levels(artifacts: list[Artifact]) -> list[list[Artifact]]:
                     for dep in artifact.computation.git_deps:
                         dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
                         if dep_path not in done:
+                            deps_done = False
+                            break
+                if deps_done:
+                    for after_path in artifact.computation.after:
+                        # Normalize: strip .dvc suffix for comparison
+                        after_key = after_path[:-4] if after_path.endswith(".dvc") else after_path
+                        if after_key not in done:
                             deps_done = False
                             break
 
@@ -766,6 +773,16 @@ def run(
                 if dep_path not in artifacts:
                     artifacts[dep_path] = Artifact(path=dep_path)
 
+            # after: ordering constraints (load referenced .dvc files)
+            for after_path in artifact.computation.after:
+                after_key = after_path[:-4] if after_path.endswith(".dvc") else after_path
+                if after_key not in artifacts:
+                    dvc_file = Path(after_path if after_path.endswith(".dvc") else after_path + ".dvc")
+                    if dvc_file.exists():
+                        pending.append(dvc_file)
+                    else:
+                        artifacts[after_key] = Artifact(path=after_key)
+
     # Topological sort (deps first)
     sorted_artifacts = _topological_sort(artifacts)
 
@@ -793,6 +810,10 @@ def _topological_sort(artifacts: dict[str, Artifact]) -> list[Artifact]:
                 dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
                 if dep_path in artifacts:
                     visit(artifacts[dep_path])
+            for after_path in artifact.computation.after:
+                after_key = after_path[:-4] if after_path.endswith(".dvc") else after_path
+                if after_key in artifacts:
+                    visit(artifacts[after_key])
 
         result.append(artifact)
 

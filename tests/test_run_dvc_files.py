@@ -1183,3 +1183,61 @@ def test_raw_file_dep_freshness_details_stale(tmp_path):
     assert details.changed_deps is not None
     assert "input.txt" in details.changed_deps
     assert details.changed_deps["input.txt"]["actual"] == actual_dep_md5
+
+
+# =============================================================================
+# after: ordering constraint tests
+# =============================================================================
+
+
+def test_read_after_field(tmp_path):
+    """read_dvc_file reads computation.after field."""
+    dvc_file = tmp_path / "summaries.dvc"
+    dvc_content = {
+        "meta": {
+            "computation": {
+                "cmd": "njsp refresh_summaries",
+                "after": ["njsp/data/refresh.dvc"],
+            }
+        }
+    }
+    with open(dvc_file, "w") as f:
+        yaml.dump(dvc_content, f)
+
+    info = read_dvc_file(dvc_file)
+    assert info is not None
+    assert info.after == ["njsp/data/refresh.dvc"]
+
+
+def test_read_after_string(tmp_path):
+    """after: as a single string is normalized to a list."""
+    dvc_file = tmp_path / "deploy.dvc"
+    dvc_content = {
+        "meta": {
+            "computation": {
+                "cmd": "deploy.sh",
+                "after": "refresh.dvc",
+            }
+        }
+    }
+    with open(dvc_file, "w") as f:
+        yaml.dump(dvc_content, f)
+
+    info = read_dvc_file(dvc_file)
+    assert info.after == ["refresh.dvc"]
+
+
+def test_write_after_field(tmp_path):
+    """write_dvc_file persists after field."""
+    output_path = tmp_path / "summaries"
+
+    dvc_path = write_dvc_file(
+        output_path=output_path,
+        cmd="refresh_summaries",
+        after=["refresh.dvc"],
+    )
+
+    with open(dvc_path) as f:
+        data = yaml.safe_load(f)
+
+    assert data["meta"]["computation"]["after"] == ["refresh.dvc"]
