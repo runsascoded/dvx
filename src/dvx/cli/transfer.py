@@ -1,6 +1,5 @@
 """DVX transfer commands - push, pull, fetch."""
 
-import shutil
 from pathlib import Path
 
 import click
@@ -8,23 +7,13 @@ import click
 from dvx import Repo
 
 
-def _pull_targets(
-    targets: list[str],
-    remote: str | None = None,
-    jobs: int | None = None,
-    force: bool = False,
-):
-    """Pull specific targets by resolving their .dvc files.
+def _resolve_pull_targets(targets: list[str]) -> list[str]:
+    """Resolve pull targets to .dvc file paths.
 
-    Bypasses DVC's pipeline-based pull (which requires dvc.yaml) and
-    instead reads MD5 hashes from .dvc files, fetches from remote cache,
-    and links/copies to the output path.
+    Accepts output paths, .dvc paths, and directories.
+    DVC's pull accepts .dvc files as targets directly.
     """
-    from dvx.cache import get_cache_path_from_hash, pull_hashes
-    from dvx.run.dvc_files import read_dvc_file
-
-    # Resolve targets to (output_path, md5) pairs
-    to_pull: list[tuple[Path, str]] = []
+    resolved = []
     for target in targets:
         target_path = Path(target)
 
@@ -32,56 +21,22 @@ def _pull_targets(
         if target_path.is_dir():
             dvc_files = sorted(target_path.glob("**/*.dvc"))
             for dvc_file in dvc_files:
-                if ".dvc/" in str(dvc_file):
-                    continue
-                info = read_dvc_file(dvc_file)
-                if info and info.md5:
-                    out = Path(str(dvc_file)[:-4])
-                    to_pull.append((out, info.md5))
+                if ".dvc/" not in str(dvc_file):
+                    resolved.append(str(dvc_file))
             continue
 
-        # Try as output path or .dvc path
-        info = read_dvc_file(target_path)
-        if info and info.md5:
-            if target_path.suffix == ".dvc":
-                out = Path(str(target_path)[:-4])
-            else:
-                out = target_path
-            to_pull.append((out, info.md5))
+        # Already a .dvc path
+        if target_path.suffix == ".dvc":
+            resolved.append(str(target_path))
         else:
-            click.echo(f"  ⚠ {target}: no .dvc file found or no hash", err=True)
+            # Try adding .dvc suffix
+            dvc_path = Path(str(target_path) + ".dvc")
+            if dvc_path.exists():
+                resolved.append(str(dvc_path))
+            else:
+                click.echo(f"  ⚠ {target}: no .dvc file found", err=True)
 
-    if not to_pull:
-        click.echo("Nothing to pull.")
-        return
-
-    # Fetch hashes from remote
-    hashes = [md5 for _, md5 in to_pull]
-    fetched = pull_hashes(hashes, remote=remote, jobs=jobs)
-
-    # Checkout: link/copy from cache to output path
-    checked_out = 0
-    for out_path, md5 in to_pull:
-        cache_path = Path(get_cache_path_from_hash(md5, absolute=True))
-        if not cache_path.exists():
-            click.echo(f"  ⚠ {out_path}: not in local cache after fetch", err=True)
-            continue
-
-        if out_path.exists() and not force:
-            # Check if already matches
-            from dvx.run.hash import compute_md5
-            try:
-                if compute_md5(out_path) == md5:
-                    continue  # Already up to date
-            except (FileNotFoundError, ValueError):
-                pass
-
-        # Copy from cache (DVC cache files are read-only, so copy, not link)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(cache_path), str(out_path))
-        checked_out += 1
-
-    click.echo(f"{fetched} file(s) fetched, {checked_out} file(s) checked out.")
+    return resolved
 
 
 @click.command()
@@ -285,8 +240,25 @@ def pull(targets, all_branches, all_commits, force, jobs, dry_run, remote, ref, 
         return
 
     if targets:
-        # Targeted pull: resolve .dvc files, fetch hashes, checkout
-        _pull_targets(list(targets), remote=remote, jobs=jobs, force=force)
+        # Targeted pull: resolve to .dvc file paths, pass to DVC
+        dvc_targets = _resolve_pull_targets(list(targets))
+        if not dvc_targets:
+            click.echo("Nothing to pull.")
+            return
+        try:
+            with Repo() as repo:
+                result = repo.pull(
+                    targets=dvc_targets,
+                    jobs=jobs,
+                    remote=remote,
+                    force=force,
+                )
+                stats = result.get("stats", {}) if isinstance(result, dict) else {}
+                fetched = stats.get("fetched", 0)
+                added = stats.get("added", 0)
+                click.echo(f"{fetched} file(s) fetched, {added} file(s) added.")
+        except Exception as e:
+            raise click.ClickException(str(e)) from e
     else:
         try:
             with Repo() as repo:

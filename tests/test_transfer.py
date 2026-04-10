@@ -197,6 +197,62 @@ class TestPullDryRun:
         assert "1 file(s)" in result.output
 
 
+class TestTargetedPull:
+    """Tests for dvx pull <target> (targeted pull via .dvc file resolution)."""
+
+    def test_pull_specific_file(self, runner, dvc_repo_with_files):
+        """Test pulling a specific file by output path."""
+        repo_path, remote_path, files = dvc_repo_with_files
+        os.chdir(repo_path)
+
+        # Push to remote, then remove the output file and clear cache
+        subprocess.run(["dvc", "push"], cwd=repo_path, capture_output=True, check=True)
+        (repo_path / "small.txt").unlink()
+        import shutil
+        cache_dir = repo_path / ".dvc" / "cache"
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
+
+        result = runner.invoke(cli, ["pull", "small.txt"])
+        assert result.exit_code == 0
+        assert "fetched" in result.output
+        assert (repo_path / "small.txt").exists()
+        assert (repo_path / "small.txt").read_text() == "hello world"
+
+    def test_pull_by_dvc_path(self, runner, dvc_repo_with_files):
+        """Test pulling by .dvc file path."""
+        repo_path, remote_path, files = dvc_repo_with_files
+        os.chdir(repo_path)
+
+        subprocess.run(["dvc", "push"], cwd=repo_path, capture_output=True, check=True)
+        (repo_path / "small.txt").unlink()
+        import shutil
+        cache_dir = repo_path / ".dvc" / "cache"
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
+
+        result = runner.invoke(cli, ["pull", "small.txt.dvc"])
+        assert result.exit_code == 0
+        assert (repo_path / "small.txt").exists()
+
+    def test_pull_nonexistent_target(self, runner, dvc_repo_with_files):
+        """Test pulling a target with no .dvc file."""
+        repo_path, remote_path, files = dvc_repo_with_files
+        os.chdir(repo_path)
+
+        result = runner.invoke(cli, ["pull", "nonexistent.txt"])
+        assert "no .dvc file found" in result.output or "Nothing to pull" in result.output
+
+    def test_pull_already_up_to_date(self, runner, dvc_repo_with_files):
+        """Test pulling when file already matches cache."""
+        repo_path, remote_path, files = dvc_repo_with_files
+        os.chdir(repo_path)
+
+        # File already exists and matches — should be a no-op
+        result = runner.invoke(cli, ["pull", "small.txt"])
+        assert result.exit_code == 0
+
+
 class TestDryRunDoesNotTransfer:
     """Tests to verify dry-run doesn't actually transfer files."""
 

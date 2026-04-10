@@ -314,6 +314,11 @@ dvx push --dry-run     # see what would be pushed
 dvx pull
 dvx pull --dry-run     # see what would be pulled
 
+# Pull specific targets (no dvc.yaml needed)
+dvx pull data.parquet          # by output path
+dvx pull data.parquet.dvc      # by .dvc path
+dvx pull njsp/data/            # all .dvc files in directory
+
 # Ref-specific operations
 dvx pull -r HEAD~3     # pull data as of 3 commits ago
 ```
