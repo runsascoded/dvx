@@ -1094,3 +1094,92 @@ def test_relative_paths_roundtrip():
     # Read: resolve back to repo-root-relative
     resolved = _resolve_dep_paths(written, dvc_dir)
     assert resolved == original_deps
+
+
+# =============================================================================
+# Raw file dep freshness tests
+# =============================================================================
+
+
+def test_raw_file_dep_stale_when_hash_differs(tmp_path):
+    """Dep on a raw file (no .dvc) is stale when recorded hash doesn't match."""
+    os.chdir(tmp_path)
+
+    # Create a raw dep file (no .dvc)
+    dep = tmp_path / "input.txt"
+    dep.write_text("actual content\n")
+
+    # Create output file
+    output = tmp_path / "output.txt"
+    output.write_text("result\n")
+
+    from dvx.run.hash import compute_md5
+    out_md5 = compute_md5(output)
+
+    # Write .dvc with a WRONG dep hash (e.g. all-zeros)
+    write_dvc_file(
+        output_path=output,
+        md5=out_md5,
+        size=output.stat().st_size,
+        cmd="process",
+        deps={"input.txt": "00000000000000000000000000000000"},
+    )
+
+    fresh, reason = is_output_fresh(Path("output.txt"), use_mtime_cache=False)
+    assert fresh is False
+    assert "dep changed: input.txt" == reason
+
+
+def test_raw_file_dep_fresh_when_hash_matches(tmp_path):
+    """Dep on a raw file (no .dvc) is fresh when recorded hash matches."""
+    os.chdir(tmp_path)
+
+    dep = tmp_path / "input.txt"
+    dep.write_text("content\n")
+
+    output = tmp_path / "output.txt"
+    output.write_text("result\n")
+
+    from dvx.run.hash import compute_md5
+    dep_md5 = compute_md5(dep)
+    out_md5 = compute_md5(output)
+
+    write_dvc_file(
+        output_path=output,
+        md5=out_md5,
+        size=output.stat().st_size,
+        cmd="process",
+        deps={"input.txt": dep_md5},
+    )
+
+    fresh, reason = is_output_fresh(Path("output.txt"), use_mtime_cache=False)
+    assert fresh is True
+
+
+def test_raw_file_dep_freshness_details_stale(tmp_path):
+    """get_freshness_details reports changed raw file dep with actual hash."""
+    os.chdir(tmp_path)
+
+    dep = tmp_path / "input.txt"
+    dep.write_text("content\n")
+
+    output = tmp_path / "output.txt"
+    output.write_text("result\n")
+
+    from dvx.run.hash import compute_md5
+    out_md5 = compute_md5(output)
+    actual_dep_md5 = compute_md5(dep)
+
+    write_dvc_file(
+        output_path=output,
+        md5=out_md5,
+        size=output.stat().st_size,
+        cmd="process",
+        deps={"input.txt": "00000000000000000000000000000000"},
+    )
+
+    details = get_freshness_details(Path("output.txt"), use_mtime_cache=False)
+    assert details.fresh is False
+    assert details.changed_deps is not None
+    assert "input.txt" in details.changed_deps
+    assert details.changed_deps["input.txt"]["actual"] == actual_dep_md5

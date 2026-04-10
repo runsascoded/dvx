@@ -639,10 +639,16 @@ def is_output_fresh(
             # Try to read dep's .dvc file
             dep_info = read_dvc_file(dep)
             if dep_info is None:
-                # No .dvc file - dep might be a raw file, check if it exists
+                # No .dvc file - dep might be a raw file
                 if not dep.exists():
                     return False, f"dep missing: {dep_path}"
-                # Raw file exists but no .dvc - can't verify hash, assume ok
+                # Raw file exists — compute actual hash and compare
+                try:
+                    actual_md5 = compute_md5(dep)
+                except (FileNotFoundError, ValueError) as e:
+                    return False, f"dep hash error: {dep_path}: {e}"
+                if actual_md5 != recorded_md5:
+                    return False, f"dep changed: {dep_path}"
                 continue
 
             # Compare our recorded hash against dep's .dvc expected hash
@@ -751,10 +757,18 @@ def get_freshness_details(
             # Try to read dep's .dvc file
             dep_info = read_dvc_file(dep)
             if dep_info is None:
-                # No .dvc file - dep might be a raw file, check if it exists
+                # No .dvc file - dep might be a raw file
                 if not dep.exists():
                     changed_deps[dep_path] = {"expected": recorded_md5, "expected_commit": None, "actual": "(missing)"}
-                # Raw file exists but no .dvc - can't verify hash, assume ok
+                    continue
+                # Raw file exists — compute actual hash and compare
+                try:
+                    actual_md5 = compute_md5(dep)
+                except (FileNotFoundError, ValueError):
+                    changed_deps[dep_path] = {"expected": recorded_md5, "expected_commit": None, "actual": "(error)"}
+                    continue
+                if actual_md5 != recorded_md5:
+                    changed_deps[dep_path] = {"expected": recorded_md5, "expected_commit": None, "actual": actual_md5}
                 continue
 
             # Compare our recorded hash against dep's .dvc expected hash
