@@ -8,6 +8,7 @@ DVX is a lightweight wrapper around [DVC] that provides core data versioning wit
 - **Fetch schedules** for periodic re-fetch of external data (daily/hourly/cron)
 - **Enhanced diff** with preprocessing pipelines and directory support
 - **Git-tracked imports** with URL provenance for small files
+- **Per-stage commits and push** with `dvx.stage` library and `.dvx/config.yml`
 - **Cache introspection** commands for examining cached data
 - **Performance optimizations** for large repos (batched git lookups, mtime caching)
 
@@ -208,7 +209,13 @@ dvx run --force
 
 # Auto-commit after each stage
 dvx run --commit
+
+# Push strategies
+dvx run --push each     # push after each per-stage commit
+dvx run --push end      # batch commits, single push at finish
 ```
+
+Commands run with CWD set to the `.dvc` file's directory, so `./deploy.sh` in `www/deploy.dvc` runs from `www/`.
 
 #### Per-Stage Commits
 
@@ -219,7 +226,34 @@ Stages can trigger commits by writing to `$DVX_COMMIT_MSG_FILE` (set by DVX befo
 echo "Refresh data: 5 new records" > "$DVX_COMMIT_MSG_FILE"
 ```
 
-With `dvx run --commit`, stages that don't write a commit message get a default one (e.g. "Run refresh"). DVX also sets `$DVX_SUMMARY_FILE` for short status output.
+Or using the Python library:
+
+```python
+from dvx.stage import stage
+
+stage.commit("Refresh data: 5 new records")
+stage.summary("5 new records found")
+stage.push()  # request immediate push for this stage
+```
+
+With `dvx run --commit`, stages that don't write a commit message get a default one (e.g. "Run refresh"). DVX also sets `$DVX_SUMMARY_FILE` and `$DVX_PUSH_FILE` env vars.
+
+#### Configuration
+
+Create `.dvx/config.yml` (or `dvx.yml`) for defaults and per-stage overrides:
+
+```yaml
+run:
+  commit: auto       # auto | always | never
+  push: end          # never | each | end
+  stages:
+    deploy.dvc:
+      push: each     # push immediately after deploy
+    import.dvc:
+      commit: never  # don't commit for this stage
+```
+
+Priority: CLI flags > `$DVX_PUSH`/`$DVX_COMMIT` env vars > per-stage config > global config.
 
 #### Error Output
 
