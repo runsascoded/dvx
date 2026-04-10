@@ -297,15 +297,21 @@ def status(targets, with_deps, jobs, verbose, as_json, no_transitive, as_yaml):
         click.echo(json_module.dumps(results, indent=2))
     else:
         # By default, only show non-fresh files (like git status)
+        status_style = {
+            "fresh": ("✓", "green"),
+            "stale": ("✗", "red"),
+            "missing": ("?", "red"),
+            "error": ("!", "red"),
+            "transitive": ("⚠", "yellow"),
+        }
         for r in results:
             if r["status"] == "fresh" and not verbose:
                 continue
-            icon = {"fresh": "✓", "stale": "✗", "missing": "?", "error": "!", "transitive": "⚠"}.get(
-                r["status"], "?"
-            )
-            line = f"{icon} {r['path']}"
+            icon, color = status_style.get(r["status"], ("?", "red"))
+            styled_icon = click.style(icon, fg=color)
+            line = f"{styled_icon} {r['path']}"
             if r.get("reason"):
-                line += f" ({r['reason']})"
+                line += click.style(f" ({r['reason']})", fg="bright_black")
             click.echo(line)
 
         # Summary line
