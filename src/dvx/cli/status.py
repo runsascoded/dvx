@@ -153,14 +153,76 @@ def _check_one_target(target, with_deps=True, detailed=False):
             return {"path": str(target), "status": "stale", "reason": reason}
 
 
+def _mark_transitive_staleness(results: list[dict], target_list: list) -> None:
+    """Mark fresh stages as transitively stale if an ancestor is stale.
+
+    Modifies results in-place, changing status to "transitive" for stages
+    whose upstream deps are stale.
+    """
+    from dvx.run.dvc_files import read_dvc_file
+
+    # Build a map of output_path → result for quick lookup
+    result_map: dict[str, dict] = {}
+    for r in results:
+        path = r["path"]
+        # Normalize: strip .dvc suffix for lookup
+        key = path[:-4] if path.endswith(".dvc") else path
+        result_map[key] = r
+
+    # Build reverse dep graph: for each dep, which stages depend on it
+    dependents: dict[str, list[str]] = {}
+    for target in target_list:
+        target_path = Path(target)
+        if target_path.suffix == ".dvc":
+            output_path = Path(str(target_path)[:-4])
+        else:
+            output_path = target_path
+
+        info = read_dvc_file(target_path)
+        if info is None or not info.cmd:
+            continue
+
+        output_key = str(output_path)
+        # All deps (both file and git)
+        for dep_path in list(info.deps.keys()) + list(info.git_deps.keys()):
+            dependents.setdefault(dep_path, []).append(output_key)
+
+        # after: constraints
+        for after_path in info.after:
+            after_key = after_path[:-4] if after_path.endswith(".dvc") else after_path
+            dependents.setdefault(after_key, []).append(output_key)
+
+    # BFS from stale stages to mark descendants
+    stale_keys = {
+        (r["path"][:-4] if r["path"].endswith(".dvc") else r["path"])
+        for r in results
+        if r["status"] in ("stale", "missing")
+    }
+
+    from collections import deque
+    queue = deque(stale_keys)
+    visited = set(stale_keys)
+    while queue:
+        current = queue.popleft()
+        for dependent in dependents.get(current, []):
+            if dependent not in visited:
+                visited.add(dependent)
+                if dependent in result_map and result_map[dependent]["status"] == "fresh":
+                    result_map[dependent]["status"] = "transitive"
+                    # Find nearest stale ancestor for the reason
+                    result_map[dependent]["reason"] = f"upstream stale: {current}"
+                queue.append(dependent)
+
+
 @click.command()
 @click.argument("targets", nargs=-1)
 @click.option("-d", "--with-deps", is_flag=True, default=True, help="Check upstream dependencies.")
 @click.option("-j", "--jobs", type=int, default=None, help="Number of parallel workers.")
 @click.option("-v", "--verbose", is_flag=True, help="Show all files including fresh.")
 @click.option("--json", "as_json", is_flag=True, help="Output results as JSON.")
+@click.option("-N", "--no-transitive", is_flag=True, help="Hide transitively stale stages.")
 @click.option("-y", "--yaml", "as_yaml", is_flag=True, help="Output detailed results as YAML (includes before/after hashes).")
-def status(targets, with_deps, jobs, verbose, as_json, as_yaml):
+def status(targets, with_deps, jobs, verbose, as_json, no_transitive, as_yaml):
     """Check freshness status of artifacts.
 
     By default, only shows stale/missing files (like git status).
@@ -208,7 +270,12 @@ def status(targets, with_deps, jobs, verbose, as_json, as_yaml):
             for future in as_completed(futures):
                 results.append(future.result())
 
+    # Mark transitively stale stages (unless disabled)
+    if not no_transitive:
+        _mark_transitive_staleness(results, target_list)
+
     results.sort(key=lambda r: r["path"])
+    transitive_count = sum(1 for r in results if r["status"] == "transitive")
     stale_count = sum(1 for r in results if r["status"] == "stale")
     missing_count = sum(1 for r in results if r["status"] == "missing")
     fresh_count = sum(1 for r in results if r["status"] == "fresh")
@@ -233,7 +300,7 @@ def status(targets, with_deps, jobs, verbose, as_json, as_yaml):
         for r in results:
             if r["status"] == "fresh" and not verbose:
                 continue
-            icon = {"fresh": "✓", "stale": "✗", "missing": "?", "error": "!"}.get(
+            icon = {"fresh": "✓", "stale": "✗", "missing": "?", "error": "!", "transitive": "⚠"}.get(
                 r["status"], "?"
             )
             line = f"{icon} {r['path']}"
@@ -242,7 +309,10 @@ def status(targets, with_deps, jobs, verbose, as_json, as_yaml):
             click.echo(line)
 
         # Summary line
-        click.echo(f"\nFresh: {fresh_count}, Stale: {stale_count}")
+        parts = [f"Fresh: {fresh_count}", f"Stale: {stale_count}"]
+        if transitive_count:
+            parts.append(f"Transitively stale: {transitive_count}")
+        click.echo(f"\n{', '.join(parts)}")
 
 
 # Export the command

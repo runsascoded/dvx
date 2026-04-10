@@ -455,3 +455,59 @@ def test_run_discovers_dvc_files_recursively(runner, tmp_path):
     assert "top.txt" in result.output
     assert "mid.txt" in result.output
     assert "deep.txt" in result.output
+
+
+def test_status_transitive_staleness(runner, tmp_path):
+    """dvx status shows transitively stale stages with ⚠ icon."""
+    os.chdir(tmp_path)
+
+    # Create .dvc dir
+    (tmp_path / ".dvc").mkdir()
+    (tmp_path / ".dvc" / "cache" / "files" / "md5").mkdir(parents=True)
+
+    # Stage A: a raw input file with wrong hash → directly stale
+    input_file = tmp_path / "input.txt"
+    input_file.write_text("data\n")
+
+    output_a = tmp_path / "step_a.txt"
+    output_a.write_text("result_a\n")
+
+    from dvx.run.hash import compute_md5
+    a_md5 = compute_md5(output_a)
+
+    dvc_a = {
+        "outs": [{"md5": a_md5, "size": output_a.stat().st_size, "path": "step_a.txt"}],
+        "meta": {"computation": {
+            "cmd": "cat input.txt > step_a.txt",
+            "deps": {"input.txt": "00000000000000000000000000000000"},  # Wrong hash → stale
+        }},
+    }
+    with open(tmp_path / "step_a.txt.dvc", "w") as f:
+        yaml.dump(dvc_a, f)
+
+    # Stage B: depends on step_a.txt, output matches → directly fresh
+    output_b = tmp_path / "step_b.txt"
+    output_b.write_text("result_b\n")
+    b_md5 = compute_md5(output_b)
+
+    dvc_b = {
+        "outs": [{"md5": b_md5, "size": output_b.stat().st_size, "path": "step_b.txt"}],
+        "meta": {"computation": {
+            "cmd": "cat step_a.txt > step_b.txt",
+            "deps": {"step_a.txt": a_md5},  # Matches current → directly fresh
+        }},
+    }
+    with open(tmp_path / "step_b.txt.dvc", "w") as f:
+        yaml.dump(dvc_b, f)
+
+    result = runner.invoke(cli, ["status", "-v"])
+    assert result.exit_code == 0
+
+    # step_a should be directly stale (✗)
+    assert "✗" in result.output
+    assert "step_a" in result.output
+
+    # step_b should be transitively stale (⚠)
+    assert "⚠" in result.output
+    assert "step_b" in result.output
+    assert "upstream stale" in result.output
