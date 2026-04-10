@@ -1014,3 +1014,83 @@ def test_read_dir_manifest_missing(tmp_path):
 
     result = read_dir_manifest("nonexistent", cache_dir)
     assert result == {}
+
+
+# =============================================================================
+# Relative path resolution tests
+# =============================================================================
+
+
+def test_resolve_dep_paths_subdirectory():
+    """Dep paths in subdirectory .dvc files are resolved to repo-root-relative."""
+    from dvx.run.dvc_files import _resolve_dep_paths
+
+    deps = {"crashes.parquet": "abc123", "config.json": "def456"}
+    resolved = _resolve_dep_paths(deps, Path("njsp/data"))
+
+    assert resolved == {
+        "njsp/data/crashes.parquet": "abc123",
+        "njsp/data/config.json": "def456",
+    }
+
+
+def test_resolve_dep_paths_repo_root_absolute():
+    """Leading / in dep paths means repo-root-absolute."""
+    from dvx.run.dvc_files import _resolve_dep_paths
+
+    deps = {"/njsp/data/crashes.parquet": "abc123"}
+    resolved = _resolve_dep_paths(deps, Path("www/public"))
+
+    assert resolved == {"njsp/data/crashes.parquet": "abc123"}
+
+
+def test_resolve_dep_paths_backward_compat():
+    """Paths already containing dvc_dir prefix are left as-is."""
+    from dvx.run.dvc_files import _resolve_dep_paths
+
+    deps = {"njsp/data/crashes.parquet": "abc123"}
+    resolved = _resolve_dep_paths(deps, Path("njsp/data"))
+
+    assert resolved == {"njsp/data/crashes.parquet": "abc123"}
+
+
+def test_resolve_dep_paths_repo_root():
+    """Paths in repo-root .dvc files are unchanged."""
+    from dvx.run.dvc_files import _resolve_dep_paths
+
+    deps = {"data.txt": "abc123"}
+    resolved = _resolve_dep_paths(deps, Path("."))
+
+    assert resolved == {"data.txt": "abc123"}
+
+
+def test_relativize_dep_paths():
+    """Repo-root-relative paths are converted to .dvc-dir-relative."""
+    from dvx.run.dvc_files import _relativize_dep_paths
+
+    deps = {"njsp/data/crashes.parquet": "abc123", "www/index.html": "def456"}
+    rel = _relativize_dep_paths(deps, Path("njsp/data"))
+
+    assert rel == {
+        "crashes.parquet": "abc123",
+        "../../www/index.html": "def456",
+    }
+
+
+def test_relative_paths_roundtrip():
+    """Write then read with subdirectory .dvc preserves dep paths."""
+    from dvx.run.dvc_files import _relativize_dep_paths, _resolve_dep_paths
+
+    original_deps = {
+        "njsp/data/crashes.parquet": "abc",
+        "www/public/data.json": "def",
+    }
+    dvc_dir = Path("njsp/data")
+
+    # Write: convert to relative
+    written = _relativize_dep_paths(original_deps, dvc_dir)
+    assert "crashes.parquet" in written  # Same dir → simple name
+
+    # Read: resolve back to repo-root-relative
+    resolved = _resolve_dep_paths(written, dvc_dir)
+    assert resolved == original_deps

@@ -26,6 +26,7 @@ Note: Computation info is stored in `meta.computation` for DVC compatibility
 (DVC allows arbitrary data in `meta`, but rejects unknown top-level keys).
 """
 
+import os
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -89,6 +90,67 @@ def is_fetch_due(schedule: str, last_run: str | None, now: datetime | None = Non
 
 # Cache for git blob SHAs (keyed by (repo_path, ref))
 _blob_cache: dict[tuple[str | None, str], dict[str, str]] = {}
+
+
+def _resolve_dep_paths(deps: dict[str, str], dvc_dir: Path) -> dict[str, str]:
+    """Resolve dep paths relative to a .dvc file's directory.
+
+    Paths in .dvc files are relative to the .dvc file's directory.
+    This converts them to repo-root-relative paths for internal use.
+
+    - Relative paths (no leading /): resolved relative to dvc_dir
+    - Leading /: repo-root-absolute (strip the /)
+    - If dvc_dir is "." (repo root): paths are already repo-root-relative
+
+    For backward compat: if a path already contains the dvc_dir prefix
+    (e.g. ``njsp/data/crashes.parquet`` in ``njsp/data/refresh.dvc``),
+    it's treated as repo-root-relative.
+    """
+    dvc_dir_str = str(dvc_dir)
+    # Only resolve if dvc_dir is a relative subdirectory (not "." or absolute)
+    if not deps or dvc_dir_str == "." or dvc_dir.is_absolute():
+        return dict(deps)
+
+    resolved = {}
+    for dep_path, dep_hash in deps.items():
+        if dep_path.startswith("/"):
+            # Repo-root-absolute
+            resolved[dep_path.lstrip("/")] = dep_hash
+        elif dep_path.startswith(dvc_dir_str + "/") or dep_path.startswith(dvc_dir_str + os.sep):
+            # Already repo-root-relative (backward compat)
+            resolved[dep_path] = dep_hash
+        else:
+            # Relative to .dvc dir (normalize to remove ../  segments)
+            resolved_path = os.path.normpath(str(Path(dvc_dir_str) / dep_path))
+            resolved[resolved_path] = dep_hash
+    return resolved
+
+
+def _relativize_dep_paths(deps: dict[str, str], dvc_dir: Path) -> dict[str, str]:
+    """Convert repo-root-relative dep paths to .dvc-dir-relative.
+
+    Inverse of ``_resolve_dep_paths``. If dvc_dir is "." (repo root),
+    paths are returned unchanged.
+    """
+    dvc_dir_str = str(dvc_dir)
+    # Only relativize if dvc_dir is a relative subdirectory (not "." or absolute)
+    if not deps or dvc_dir_str == "." or dvc_dir.is_absolute():
+        return dict(deps)
+
+    result = {}
+    for dep_path, dep_hash in deps.items():
+        if dep_path.startswith(dvc_dir_str + "/"):
+            # Strip dvc_dir prefix to make relative
+            result[dep_path[len(dvc_dir_str) + 1:]] = dep_hash
+        else:
+            # Outside dvc_dir — use os.path.relpath
+            try:
+                rel = os.path.relpath(dep_path, dvc_dir_str)
+                result[rel] = dep_hash
+            except ValueError:
+                # Different drives on Windows, keep absolute
+                result[dep_path] = dep_hash
+    return result
 
 
 def _get_blob_cache(ref: str = "HEAD", repo_path: Path | None = None) -> dict[str, str]:
@@ -358,6 +420,13 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
     fetch_schedule = fetch.get("schedule")
     fetch_last_run = fetch.get("last_run")
 
+    # Resolve dep/git_dep paths relative to .dvc file's directory
+    dvc_dir = dvc_path.parent
+    raw_deps = computation.get("deps") or {}
+    raw_git_deps = computation.get("git_deps") or {}
+    deps = _resolve_dep_paths(raw_deps, dvc_dir)
+    git_deps = _resolve_dep_paths(raw_git_deps, dvc_dir)
+
     if not has_outs:
         # Side-effect stage: no outputs, but must have computation
         if not computation.get("cmd"):
@@ -368,8 +437,8 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
             path=inferred_path,
             # md5=None, size=None → side-effect stage
             cmd=computation.get("cmd"),
-            deps=computation.get("deps") or {},
-            git_deps=computation.get("git_deps") or {},
+            deps=deps,
+            git_deps=git_deps,
             side_effect=explicit_side_effect,
             fetch_schedule=fetch_schedule,
             fetch_last_run=fetch_last_run,
@@ -389,8 +458,8 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
         size=out.get("size", 0),
         # Provenance from computation block
         cmd=computation.get("cmd"),
-        deps=computation.get("deps") or {},
-        git_deps=computation.get("git_deps") or {},
+        deps=deps,
+        git_deps=git_deps,
         # Directory metadata
         nfiles=out.get("nfiles"),
         is_dir=is_dir,
@@ -484,10 +553,12 @@ def write_dvc_file(
         computation = {}
         if cmd:
             computation["cmd"] = cmd
+        # Write dep paths relative to .dvc file's directory
+        dvc_dir = dvc_path.parent
         if deps:
-            computation["deps"] = deps
+            computation["deps"] = _relativize_dep_paths(deps, dvc_dir)
         if git_deps:
-            computation["git_deps"] = git_deps
+            computation["git_deps"] = _relativize_dep_paths(git_deps, dvc_dir)
         if side_effect is True:
             computation["side_effect"] = True
         if fetch_schedule:

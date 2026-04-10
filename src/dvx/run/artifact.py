@@ -413,7 +413,9 @@ def _run_one_artifact(
 
     # Execute computation
     cmd = artifact.computation.cmd
-    result = subprocess.run(cmd, check=False, shell=True, capture_output=True, text=True)
+    # Run cmd with CWD set to artifact's directory
+    cmd_cwd = str(path.parent) if str(path.parent) != "." else None
+    result = subprocess.run(cmd, check=False, shell=True, capture_output=True, text=True, cwd=cmd_cwd)
 
     if result.returncode != 0:
         return artifact, False, f"Command: {cmd}\nStderr: {result.stderr}"

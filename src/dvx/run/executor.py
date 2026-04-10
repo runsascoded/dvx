@@ -368,6 +368,10 @@ class ParallelExecutor:
         env["DVX_PUSH_FILE"] = push_file.name
         stage_env_extras = {"push_file": push_file.name}
 
+        # Run cmd with CWD set to .dvc file's directory
+        dvc_dir = Path(path).parent
+        cmd_cwd = str(dvc_dir) if str(dvc_dir) != "." else None
+
         result = subprocess.run(
             cmd,
             shell=True,
@@ -375,6 +379,7 @@ class ParallelExecutor:
             text=True,
             check=False,
             env=env,
+            cwd=cmd_cwd,
         )
         duration = time.time() - start_time
 
