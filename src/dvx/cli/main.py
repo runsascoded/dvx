@@ -147,27 +147,88 @@ cli.add_command(diff)
 
 
 @cli.command()
+@click.argument("targets", nargs=-1)
 @click.option("-a", "--all-branches", is_flag=True, help="Keep cache for all branches.")
 @click.option("-A", "--all-commits", is_flag=True, help="Keep cache for all commits.")
 @click.option("-c", "--cloud", is_flag=True, help="Also gc remote storage.")
 @click.option("-f", "--force", is_flag=True, help="Force gc without confirmation.")
 @click.option("-j", "--jobs", type=int, help="Number of parallel jobs.")
+@click.option("-k", "--keep", type=int, help="Keep the N most recent versions per artifact.")
 @click.option("-n", "--dry", is_flag=True, help="Dry run - show what would be removed.")
+@click.option("-o", "--older-than", help="Delete versions older than duration (e.g. 30d, 1w, 24h).")
 @click.option("-r", "--remote", help="Remote storage to gc.")
 @click.option("-s", "--safe", is_flag=True, help="Only delete files that exist in remote (verify before deleting).")
 @click.option("-T", "--all-tags", is_flag=True, help="Keep cache for all tags.")
 @click.option("-w", "--workspace", is_flag=True, help="Keep only cache for current workspace.")
-def gc(all_branches, all_commits, cloud, force, jobs, dry, remote, safe, all_tags, workspace):
+def gc(targets, all_branches, all_commits, cloud, force, jobs, keep, dry, older_than, remote, safe, all_tags, workspace):
     """Garbage collect unused cache files.
 
-    Use --safe to only delete files that are backed up to remote storage.
-    This prevents accidental data loss by verifying remote has each file
-    before deleting locally.
+    With --keep N or --older-than, uses version-aware retention: walks git
+    history to find all versions per artifact, keeps those matching the
+    policy, deletes the rest from local cache.
+
+    Without --keep/--older-than, delegates to DVC's gc (requires -w, -a,
+    -T, or -A).
+
+    Examples:
+        dvx gc -w                     # keep only HEAD-referenced blobs
+        dvx gc --keep 5               # keep 5 most recent versions per artifact
+        dvx gc --older-than 30d       # delete versions older than 30 days
+        dvx gc --keep 3 -a            # keep 3 newest, considering all branches
+        dvx gc --dry --keep 5         # show what would be deleted
+        dvx gc data.parquet.dvc       # GC specific artifact
     """
+    # Version-aware GC (--keep or --older-than)
+    if keep is not None or older_than is not None:
+        from dvx.gc import compute_gc_plan, format_size
+
+        try:
+            _keep_hashes, _delete_hashes, deletable = compute_gc_plan(
+                keep=keep,
+                older_than=older_than,
+                all_branches=all_branches,
+                targets=list(targets) if targets else None,
+            )
+        except ValueError as e:
+            raise click.ClickException(str(e)) from e
+
+        if not deletable:
+            click.echo("Nothing to delete.")
+            return
+
+        total_size = sum(s for _, s, _ in deletable)
+        click.echo(f"Would delete {len(deletable)} blob(s) ({format_size(total_size)}):")
+        for md5, size, path in sorted(deletable, key=lambda x: x[1], reverse=True):
+            click.echo(f"  {md5[:12]}...  {format_size(size)}")
+
+        if dry:
+            return
+
+        if not force:
+            click.confirm(f"\nDelete {len(deletable)} cached blob(s)?", abort=True)
+
+        deleted = 0
+        freed = 0
+        for md5, size, path in deletable:
+            try:
+                path.unlink()
+                deleted += 1
+                freed += size
+                # Remove empty parent dir
+                try:
+                    path.parent.rmdir()
+                except OSError:
+                    pass
+            except OSError as e:
+                click.echo(f"  ⚠ {md5[:12]}...: {e}", err=True)
+
+        click.echo(f"\nDeleted {deleted} blob(s), freed {format_size(freed)}.")
+        return
+
     if not any([workspace, all_branches, all_tags, all_commits]):
         raise click.ClickException(
             "One of -w/--workspace, -a/--all-branches, -T/--all-tags, "
-            "-A/--all-commits is required."
+            "-A/--all-commits is required (or use --keep/--older-than)."
         )
 
     if safe:
