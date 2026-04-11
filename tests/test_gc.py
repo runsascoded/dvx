@@ -164,3 +164,169 @@ def test_compute_gc_plan_no_flags(git_repo_with_versions):
 
     assert "cccc9999dddd0000eeee1111ffff2222" in keep_hashes
     assert len(deletable) == 2
+
+
+def test_compute_gc_plan_older_than(git_repo_with_versions):
+    """--older-than retains versions newer than the cutoff."""
+    repo = git_repo_with_versions
+    os.chdir(repo)
+
+    cache_dir = repo / ".dvc" / "cache" / "files" / "md5"
+    for md5 in [
+        "aaaa1111bbbb2222cccc3333dddd4444",
+        "eeee5555ffff6666aaaa7777bbbb8888",
+        "cccc9999dddd0000eeee1111ffff2222",
+    ]:
+        d = cache_dir / md5[:2]
+        d.mkdir(parents=True, exist_ok=True)
+        (d / md5[2:]).write_text("data")
+
+    # All commits just happened → all are within 1d
+    keep_hashes, delete_hashes, deletable = compute_gc_plan(
+        older_than="1d", repo_path=repo,
+    )
+    # Everything recent → nothing to delete
+    assert len(deletable) == 0
+
+    # older_than=0h → everything is "older than 0 hours"... but HEAD is always kept
+    keep_hashes, delete_hashes, deletable = compute_gc_plan(
+        older_than="0d", repo_path=repo,
+    )
+    # HEAD hash always kept (referenced), but older versions deletable
+    # Actually 0d means keep nothing by age, but HEAD is still referenced
+    assert "cccc9999dddd0000eeee1111ffff2222" in keep_hashes
+
+
+def test_compute_gc_plan_keep_and_older_than(git_repo_with_versions):
+    """--keep and --older-than combine: keep if EITHER criterion matches."""
+    repo = git_repo_with_versions
+    os.chdir(repo)
+
+    cache_dir = repo / ".dvc" / "cache" / "files" / "md5"
+    for md5 in [
+        "aaaa1111bbbb2222cccc3333dddd4444",
+        "eeee5555ffff6666aaaa7777bbbb8888",
+        "cccc9999dddd0000eeee1111ffff2222",
+    ]:
+        d = cache_dir / md5[:2]
+        d.mkdir(parents=True, exist_ok=True)
+        (d / md5[2:]).write_text("data")
+
+    # --keep 1 --older-than 1d: keep 1 newest by count + all within 1d by age
+    # Since all commits are recent, all 3 are within 1d → all kept
+    keep_hashes, _, deletable = compute_gc_plan(
+        keep=1, older_than="1d", repo_path=repo,
+    )
+    assert len(deletable) == 0
+
+
+def test_compute_gc_plan_target_specific(git_repo_with_versions):
+    """GC targeting a specific .dvc file only considers that artifact."""
+    repo = git_repo_with_versions
+    os.chdir(repo)
+
+    cache_dir = repo / ".dvc" / "cache" / "files" / "md5"
+    for md5 in [
+        "aaaa1111bbbb2222cccc3333dddd4444",
+        "eeee5555ffff6666aaaa7777bbbb8888",
+        "cccc9999dddd0000eeee1111ffff2222",
+    ]:
+        d = cache_dir / md5[:2]
+        d.mkdir(parents=True, exist_ok=True)
+        (d / md5[2:]).write_text("data")
+
+    keep_hashes, delete_hashes, deletable = compute_gc_plan(
+        keep=1, targets=["data.txt.dvc"], repo_path=repo,
+    )
+    # Keep newest + HEAD (same), delete 2 older
+    assert len(deletable) == 2
+    assert "cccc9999dddd0000eeee1111ffff2222" in keep_hashes
+
+
+def test_compute_gc_plan_all_branches(tmp_path):
+    """--all-branches considers hashes from all local branches."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    subprocess.run(["git", "init"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=repo, capture_output=True, check=True)
+    (repo / ".dvc").mkdir()
+
+    # Main branch: hash A
+    dvc = {"outs": [{"md5": "aaaa1111bbbb2222cccc3333dddd4444", "size": 100, "path": "data.txt"}]}
+    with open(repo / "data.txt.dvc", "w") as f:
+        yaml.dump(dvc, f)
+    subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "main"], cwd=repo, capture_output=True, check=True)
+
+    # Feature branch: hash B
+    subprocess.run(["git", "checkout", "-b", "feat"], cwd=repo, capture_output=True, check=True)
+    dvc["outs"][0]["md5"] = "bbbb2222cccc3333dddd4444eeee5555"
+    with open(repo / "data.txt.dvc", "w") as f:
+        yaml.dump(dvc, f)
+    subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "feat"], cwd=repo, capture_output=True, check=True)
+
+    subprocess.run(["git", "checkout", "main"], cwd=repo, capture_output=True, check=True)
+    os.chdir(repo)
+
+    # Create cache for both
+    cache_dir = repo / ".dvc" / "cache" / "files" / "md5"
+    for md5 in ["aaaa1111bbbb2222cccc3333dddd4444", "bbbb2222cccc3333dddd4444eeee5555"]:
+        d = cache_dir / md5[:2]
+        d.mkdir(parents=True, exist_ok=True)
+        (d / md5[2:]).write_text("data")
+
+    # Without --all-branches: only main's hash kept, feat's deleted
+    _, delete_hashes, deletable = compute_gc_plan(repo_path=repo)
+    assert "bbbb2222cccc3333dddd4444eeee5555" in delete_hashes
+    assert len(deletable) == 1
+
+    # With --all-branches: both kept
+    _, delete_hashes, deletable = compute_gc_plan(all_branches=True, repo_path=repo)
+    assert len(deletable) == 0
+
+
+def test_gc_cli_dry_run(tmp_path):
+    """CLI dvx gc --keep --dry shows plan without deleting."""
+    from click.testing import CliRunner
+    from dvx.cli import cli
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    subprocess.run(["git", "init"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=repo, capture_output=True, check=True)
+
+    subprocess.run(["dvc", "init"], cwd=repo, capture_output=True, check=True)
+
+    dvc = {"outs": [{"md5": "aaaa1111bbbb2222cccc3333dddd4444", "size": 100, "path": "d.txt"}]}
+    with open(repo / "d.txt.dvc", "w") as f:
+        yaml.dump(dvc, f)
+    subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "v1"], cwd=repo, capture_output=True, check=True)
+
+    dvc["outs"][0]["md5"] = "bbbb2222cccc3333dddd4444eeee5555"
+    with open(repo / "d.txt.dvc", "w") as f:
+        yaml.dump(dvc, f)
+    subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "v2"], cwd=repo, capture_output=True, check=True)
+
+    # Create cache blobs
+    cache_dir = repo / ".dvc" / "cache" / "files" / "md5"
+    for md5 in ["aaaa1111bbbb2222cccc3333dddd4444", "bbbb2222cccc3333dddd4444eeee5555"]:
+        d = cache_dir / md5[:2]
+        d.mkdir(parents=True, exist_ok=True)
+        (d / md5[2:]).write_text("data")
+
+    os.chdir(repo)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["gc", "--keep", "1", "--dry"])
+    assert result.exit_code == 0
+    assert "Would delete 1 blob" in result.output
+    assert "aaaa1111bbbb" in result.output
+
+    # Blob should NOT be deleted (dry run)
+    assert (cache_dir / "aa" / "aa1111bbbb2222cccc3333dddd4444").exists()
