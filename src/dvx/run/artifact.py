@@ -87,8 +87,12 @@ class Computation:
                 paths.append(Path(dep))
         return paths
 
-    def get_dep_hashes(self) -> dict[str, str]:
+    def get_dep_hashes(self, recompute: bool = False) -> dict[str, str]:
         """Compute MD5 hashes for all dependencies.
+
+        Args:
+            recompute: If True, always compute from disk (ignore cached md5).
+                Use after execution to get current hashes.
 
         Returns:
             Dict mapping path strings to MD5 hashes
@@ -97,8 +101,7 @@ class Computation:
         for dep in self.deps:
             if isinstance(dep, Artifact):
                 path = Path(dep.path)
-                # If artifact has a known hash, use it
-                if dep.md5:
+                if not recompute and dep.md5:
                     hashes[str(path)] = dep.md5
                 elif path.exists():
                     hashes[str(path)] = compute_md5(path)
@@ -108,10 +111,14 @@ class Computation:
                     hashes[str(path)] = compute_md5(path)
         return hashes
 
-    def get_git_dep_hashes(self) -> dict[str, str]:
+    def get_git_dep_hashes(self, recompute: bool = False) -> dict[str, str]:
         """Compute git object SHAs for all git dependencies.
 
         Returns blob SHAs for files, tree SHAs for directories.
+
+        Args:
+            recompute: If True, always look up from git (ignore cached md5).
+                Use after execution to get current SHAs.
 
         Returns:
             Dict mapping path strings to object SHAs at HEAD
@@ -120,7 +127,7 @@ class Computation:
         for dep in self.git_deps:
             if isinstance(dep, Artifact):
                 path = dep.path
-                if dep.md5:
+                if not recompute and dep.md5:
                     hashes[path] = dep.md5
                 else:
                     sha = get_git_object_sha(path, "HEAD")
