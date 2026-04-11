@@ -300,7 +300,7 @@ def status(targets, with_deps, jobs, verbose, as_json, no_transitive, as_yaml):
         status_style = {
             "fresh": ("✓", "green"),
             "stale": ("✗", "red"),
-            "missing": ("?", "red"),
+            "missing": ("?", "magenta"),
             "error": ("!", "red"),
             "transitive": ("⚠", "yellow"),
         }
