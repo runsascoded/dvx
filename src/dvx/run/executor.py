@@ -463,6 +463,9 @@ class ParallelExecutor:
             from datetime import datetime, timezone
             fetch_last_run = datetime.now(timezone.utc).isoformat()
 
+        # Preserve after: ordering constraints across rewrites
+        after = artifact.computation.after if artifact.computation else []
+
         if is_side_effect:
             # Side-effect: update dep hashes in .dvc, no output hash
             dvc_file = None
@@ -480,6 +483,7 @@ class ParallelExecutor:
                     git_deps=git_deps_hashes if self.config.provenance else None,
                     fetch_schedule=fetch_schedule,
                     fetch_last_run=fetch_last_run,
+                    after=after or None,
                 )
                 if self.config.verbose:
                     self._log(f"       → {dvc_file}")
@@ -536,6 +540,7 @@ class ParallelExecutor:
                 git_deps=git_deps_hashes if self.config.provenance else None,
                 fetch_schedule=fetch_schedule,
                 fetch_last_run=fetch_last_run,
+                after=after or None,
             )
             if self.config.verbose:
                 self._log(f"       → {dvc_file}")
@@ -587,6 +592,7 @@ class ParallelExecutor:
                 deps_hashes = artifact.computation.get_dep_hashes()
                 git_deps_hashes = artifact.computation.get_git_dep_hashes()
 
+            co_after = artifact.computation.after if artifact.computation else []
             dvc_file = write_dvc_file(
                 output_path=out,
                 md5=md5,
@@ -594,6 +600,7 @@ class ParallelExecutor:
                 cmd=cmd if self.config.provenance else None,
                 deps=deps_hashes if self.config.provenance else None,
                 git_deps=git_deps_hashes if self.config.provenance else None,
+                after=co_after or None,
             )
 
             self._log(f"  ✓ {path}: co-output ready")
