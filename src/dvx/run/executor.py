@@ -390,10 +390,11 @@ class ParallelExecutor:
         )
         duration = time.time() - start_time
 
-        if result.returncode != 0:
-            # Save full output to a log file
-            safe_name = Path(path).stem.replace("/", "-")
-            log_path = Path(f"tmp/dvx-run-{safe_name}.log")
+        # Always save output to log file (success or failure)
+        safe_name = Path(path).stem.replace("/", "-")
+        log_path = Path(f"tmp/dvx-run-{safe_name}.log")
+        has_output = bool(result.stdout or result.stderr)
+        if has_output:
             log_path.parent.mkdir(parents=True, exist_ok=True)
             with open(log_path, "w") as f:
                 if result.stdout:
@@ -403,6 +404,7 @@ class ParallelExecutor:
                     f.write("=== stderr ===\n")
                     f.write(result.stderr)
 
+        if result.returncode != 0:
             self._log(f"  ✗ {path}: failed (exit code {result.returncode})")
             # Show last N lines of stderr
             stderr_lines = (result.stderr or "").rstrip().split("\n")
@@ -417,7 +419,7 @@ class ParallelExecutor:
                     self._log(f"      {line}")
                 self._log(f"\n    Full output: {log_path}")
             elif self.config.verbose:
-                self._log(f"    (no stderr)")
+                self._log("    (no stderr)")
 
             error_msg = stderr_lines[-1] if stderr_lines and stderr_lines != [""] else f"exit code {result.returncode}"
 
@@ -485,6 +487,7 @@ class ParallelExecutor:
                 self._log(f"  ⚠ {path}: couldn't write .dvc: {e}")
 
             self._log(f"  ✓ {path}: side-effect completed ({duration:.1f}s)")
+            self._show_success_output(result, log_path, has_output)
             self._handle_stage_output(path, commit_msg_file.name, summary_file.name, stage_env_extras)
             return ExecutionResult(
                 path=path,
@@ -540,6 +543,7 @@ class ParallelExecutor:
             self._log(f"  ⚠ {path}: couldn't write .dvc: {e}")
 
         self._log(f"  ✓ {path}: completed ({duration:.1f}s)")
+        self._show_success_output(result, log_path, has_output)
         self._handle_stage_output(path, commit_msg_file.name, summary_file.name, stage_env_extras)
         return ExecutionResult(
             path=path,
@@ -704,6 +708,18 @@ class ParallelExecutor:
                         os.unlink(f)
                 except OSError:
                     pass
+
+    def _show_success_output(self, result, log_path, has_output):
+        """Show stage output on success (verbose: inline, otherwise: log path)."""
+        if not has_output:
+            return
+        if self.config.verbose:
+            for stream, label in [(result.stdout, "stdout"), (result.stderr, "stderr")]:
+                if stream and stream.strip():
+                    for line in stream.rstrip().split("\n"):
+                        self._log(f"    {label}: {line}")
+        else:
+            self._log(f"    output: {log_path}")
 
     def _log(self, message: str):
         """Write log message to output stream."""
