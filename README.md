@@ -9,6 +9,9 @@ DVX is a lightweight wrapper around [DVC] that provides core data versioning wit
 - **Enhanced diff** with preprocessing pipelines and directory support
 - **Git-tracked imports** with URL provenance for small files
 - **Per-stage commits and push** with `dvx.stage` library and `.dvx/config.yml`
+- **Stage ordering** via `after:` constraints (no data dep required)
+- **Transitive staleness** in `dvx status` (colored: `✗` red, `⚠` yellow, `✓` green)
+- **Version-aware GC** with `--keep N` and `--older-than` retention policies
 - **Cache introspection** commands for examining cached data
 - **Performance optimizations** for large repos (batched git lookups, mtime caching)
 
@@ -289,10 +292,11 @@ dvx add -r output.parquet
 
 ```bash
 # Check freshness (data vs deps)
-dvx status
-dvx status -v          # also show fresh files
-dvx status --yaml      # detailed YAML output with hashes
-dvx status -j4 data/   # parallel checking
+dvx status                 # colored: ✗ red, ⚠ yellow (transitive), ✓ green
+dvx status -v              # also show fresh files
+dvx status --yaml          # detailed YAML output with hashes
+dvx status -j4 data/       # parallel checking
+dvx status --no-transitive # hide transitively stale stages
 
 # Content diff
 dvx diff data.parquet
@@ -322,6 +326,30 @@ dvx pull njsp/data/            # all .dvc files in directory
 # Ref-specific operations
 dvx pull -r HEAD~3     # pull data as of 3 commits ago
 ```
+
+### Garbage Collection
+
+```bash
+# Keep only blobs referenced by HEAD
+dvx gc -w
+
+# Keep 5 most recent versions per artifact
+dvx gc --keep 5
+
+# Delete versions older than 30 days
+dvx gc --older-than 30d
+
+# Consider all local branches (not just HEAD)
+dvx gc --keep 10 -a
+
+# Dry-run: show what would be deleted
+dvx gc --keep 3 --dry
+
+# GC specific artifact
+dvx gc --keep 5 data.parquet.dvc
+```
+
+Version-aware GC walks git history to find all versions of each `.dvc` file, then applies retention policies to determine which cached blobs to keep.
 
 ### Python API
 
@@ -354,7 +382,7 @@ with Repo() as repo:
 | `pull` | Download data from remote storage |
 | `fetch` | Download to cache (no checkout) |
 | `checkout` | Restore data files from cache |
-| `gc` | Garbage collect unused cache |
+| `gc` | Garbage collect with `--keep N`, `--older-than`, version-aware retention |
 | `init` | Initialize a DVX repository |
 | `remote` | Manage remotes |
 | `config` | Configure settings |
@@ -376,7 +404,12 @@ with Repo() as repo:
 - Directory dependencies - Git tree SHA tracking for `git_deps`
 - `dvx import-url --git` - Git-tracked imports with URL provenance
 - Per-stage commits - `$DVX_COMMIT_MSG_FILE` env var + `--commit` flag
+- Stage ordering - `after:` constraints without data dependencies
+- Transitive staleness - `dvx status` shows `⚠` for indirectly stale stages
+- Version-aware GC - `dvx gc --keep N --older-than` with git history walk
+- Colored status output - `✗` red, `⚠` yellow, `?` magenta, `✓` green
 - Detailed error output - Exit code, stderr tail, log file on failure
+- Stage output on success - `-v` shows inline, always saves to log file
 - `dvx diff` preprocessing - Pipe through commands before diffing (with `{}` placeholder)
 - `dvx cache path/md5` - Cache introspection
 - `dvx cat` - View cached files directly
@@ -394,15 +427,17 @@ If you need these features, use DVC directly.
 
 ## Freshness Model
 
-DVX tracks two types of freshness for each artifact:
+DVX tracks three types of freshness for each artifact:
 
 1. **Data freshness**: Does the actual data match the hash in the `.dvc` file?
 2. **Dep freshness**: Do recorded dependency hashes match the deps' `.dvc` files?
+3. **Transitive freshness**: Are any upstream ancestors stale?
 
 ```bash
 $ dvx status s3/output/
 ✗ s3/output/result.parquet.dvc (data changed (abc123... vs def456...))
 ✗ s3/output/summary.json.dvc (dep changed: s3/input/data.parquet)
+⚠ s3/output/report.json.dvc (upstream stale: s3/output/summary.json.dvc)
 ✓ s3/output/metadata.json.dvc (up-to-date)
 ```
 
@@ -432,6 +467,21 @@ meta:
 - `dvx run` executes the command and updates dep hashes
 - No cache push/pull — the `.dvc` file itself is the receipt
 - Side-effect is inferred from no `outs` + having a `cmd` (optionally explicit via `computation.side_effect: true`)
+
+## Stage Ordering
+
+Stages can declare ordering constraints without data dependencies using `after:`:
+
+```yaml
+# summaries.dvc
+meta:
+  computation:
+    cmd: njsp refresh_summaries
+    after:
+      - njsp/data/refresh.dvc
+```
+
+DVX ensures `refresh.dvc` completes before `summaries.dvc` runs, even though there's no file dependency between them.
 
 ## Fetch Schedules
 
