@@ -1065,7 +1065,7 @@ def test_resolve_dep_paths_repo_root():
 
 
 def test_relativize_dep_paths():
-    """Repo-root-relative paths are converted to .dvc-dir-relative."""
+    """Deps inside dvc_dir → relative; outside → /-prefixed shorthand."""
     from dvx.run.dvc_files import _relativize_dep_paths
 
     deps = {"njsp/data/crashes.parquet": "abc123", "www/index.html": "def456"}
@@ -1073,8 +1073,28 @@ def test_relativize_dep_paths():
 
     assert rel == {
         "crashes.parquet": "abc123",
-        "../../www/index.html": "def456",
+        "/www/index.html": "def456",
     }
+
+
+def test_relativize_dep_paths_repo_root():
+    """When dvc_dir is '.', paths are unchanged (no /-prefix added)."""
+    from dvx.run.dvc_files import _relativize_dep_paths
+
+    deps = {"data.txt": "abc", "subdir/file.txt": "def"}
+    rel = _relativize_dep_paths(deps, Path("."))
+    assert rel == deps
+
+
+def test_relativize_dep_paths_deeply_nested():
+    """Deep .dvc files use /-prefix instead of long ../../../ chains."""
+    from dvx.run.dvc_files import _relativize_dep_paths
+
+    deps = {"njsp/data/crashes.parquet": "abc"}
+    rel = _relativize_dep_paths(deps, Path("www/public/njsp"))
+
+    # Should be /-prefixed, not ../../../njsp/data/crashes.parquet
+    assert rel == {"/njsp/data/crashes.parquet": "abc"}
 
 
 def test_relative_paths_roundtrip():

@@ -127,10 +127,15 @@ def _resolve_dep_paths(deps: dict[str, str], dvc_dir: Path) -> dict[str, str]:
 
 
 def _relativize_dep_paths(deps: dict[str, str], dvc_dir: Path) -> dict[str, str]:
-    """Convert repo-root-relative dep paths to .dvc-dir-relative.
+    """Convert repo-root-relative dep paths to .dvc-file-relative form.
 
-    Inverse of ``_resolve_dep_paths``. If dvc_dir is "." (repo root),
-    paths are returned unchanged.
+    Two output forms:
+    - Deps inside ``dvc_dir``: written .dvc-dir-relative (no leading ``/``).
+    - Deps outside ``dvc_dir``: written ``/repo-root-relative`` shorthand,
+      which avoids ``../../../`` clutter for deeply-nested .dvc files.
+
+    Inverse of ``_resolve_dep_paths`` (which accepts both forms).
+    Returns paths unchanged if dvc_dir is "." or absolute.
     """
     dvc_dir_str = str(dvc_dir)
     # Only relativize if dvc_dir is a relative subdirectory (not "." or absolute)
@@ -143,13 +148,9 @@ def _relativize_dep_paths(deps: dict[str, str], dvc_dir: Path) -> dict[str, str]
             # Strip dvc_dir prefix to make relative
             result[dep_path[len(dvc_dir_str) + 1:]] = dep_hash
         else:
-            # Outside dvc_dir — use os.path.relpath
-            try:
-                rel = os.path.relpath(dep_path, dvc_dir_str)
-                result[rel] = dep_hash
-            except ValueError:
-                # Different drives on Windows, keep absolute
-                result[dep_path] = dep_hash
+            # Outside dvc_dir — use /-prefixed repo-root-absolute shorthand
+            # instead of ../../../ chains
+            result["/" + dep_path] = dep_hash
     return result
 
 
