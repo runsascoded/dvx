@@ -248,7 +248,7 @@ def test_compute_gc_plan_all_branches(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
 
-    subprocess.run(["git", "init"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo, capture_output=True, check=True)
     subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=repo, capture_output=True, check=True)
     subprocess.run(["git", "config", "user.name", "T"], cwd=repo, capture_output=True, check=True)
     (repo / ".dvc").mkdir()
