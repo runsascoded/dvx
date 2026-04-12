@@ -422,3 +422,61 @@ def test_after_ordering(tmp_path):
     assert a_level is not None
     assert b_level is not None
     assert a_level < b_level, f"stage_a (level {a_level}) should be before stage_b (level {b_level})"
+
+
+def test_run_caches_output_blob(tmp_path):
+    """dvx run copies output blobs to local cache so historical versions persist."""
+    import os
+
+    os.chdir(tmp_path)
+
+    # Initialize a DVC repo (need .dvc dir for cache_blob)
+    subprocess.run(["dvc", "init", "--no-scm"], cwd=tmp_path, capture_output=True, check=True)
+
+    output = tmp_path / "result.txt"
+    artifact = Artifact(
+        path=str(output),
+        computation=Computation(cmd=f"echo 'hello world' > {output}"),
+    )
+
+    config = ExecutionConfig(max_workers=1)
+    output_log = StringIO()
+    executor = ParallelExecutor([artifact], config, output_log)
+    results = executor.execute()
+
+    assert all(r.success for r in results)
+    assert output.exists()
+
+    # Verify the output blob was added to cache
+    from dvx.run.hash import compute_md5
+    md5 = compute_md5(output)
+    cache_path = tmp_path / ".dvc" / "cache" / "files" / "md5" / md5[:2] / md5[2:]
+    assert cache_path.exists(), f"Output blob should be cached at {cache_path}"
+    assert cache_path.read_text() == output.read_text()
+
+
+def test_run_cache_idempotent(tmp_path):
+    """Caching is idempotent — re-running doesn't error if blob already cached."""
+    import os
+
+    os.chdir(tmp_path)
+    subprocess.run(["dvc", "init", "--no-scm"], cwd=tmp_path, capture_output=True, check=True)
+
+    output = tmp_path / "data.txt"
+    artifact = Artifact(
+        path=str(output),
+        computation=Computation(cmd=f"echo 'data' > {output}"),
+    )
+
+    # Run twice
+    for _ in range(2):
+        config = ExecutionConfig(max_workers=1, force=True)
+        executor = ParallelExecutor([artifact], config, StringIO())
+        results = executor.execute()
+        assert all(r.success for r in results)
+
+    # Blob should still be cached
+    from dvx.run.hash import compute_md5
+    md5 = compute_md5(output)
+    cache_path = tmp_path / ".dvc" / "cache" / "files" / "md5" / md5[:2] / md5[2:]
+    assert cache_path.exists()

@@ -531,6 +531,13 @@ class ParallelExecutor:
             md5 = compute_md5(out)
             size = compute_file_size(out)
 
+            # Cache the output blob so historical versions can be retrieved
+            try:
+                from dvx.cache import cache_blob
+                cache_blob(out, md5)
+            except Exception as e:
+                self._log(f"  ⚠ {path}: couldn't cache output: {e}")
+
             dvc_file = write_dvc_file(
                 output_path=out,
                 md5=md5,
@@ -585,6 +592,13 @@ class ParallelExecutor:
         try:
             md5 = compute_md5(out)
             size = compute_file_size(out)
+
+            # Cache the co-output blob
+            try:
+                from dvx.cache import cache_blob
+                cache_blob(out, md5)
+            except Exception as e:
+                self._log(f"  ⚠ {path}: couldn't cache co-output: {e}")
 
             deps_hashes = {}
             git_deps_hashes = {}

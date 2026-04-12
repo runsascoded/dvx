@@ -483,6 +483,35 @@ def _hash_single_file(file_path) -> str:
     return md5.hexdigest()
 
 
+def cache_blob(file_path, md5: str, force: bool = False):
+    """Copy a file into the DVC cache keyed by its MD5.
+
+    Idempotent: returns immediately if the blob is already cached
+    (unless force=True).
+
+    Args:
+        file_path: Path to the file to cache
+        md5: MD5 hash of the file (must be precomputed)
+        force: Overwrite existing cache entry
+
+    Returns:
+        Path to the cached blob
+    """
+    from pathlib import Path
+
+    from dvc.repo import Repo as DVCRepo
+
+    try:
+        root = DVCRepo.find_root()
+    except Exception:
+        root = "."
+    cache_dir = Path(root) / ".dvc" / "cache" / "files" / "md5"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    _cache_file(file_path, md5, cache_dir, force)
+    return cache_dir / md5[:2] / md5[2:]
+
+
 def _cache_file(file_path, file_hash: str, cache_dir, force: bool = False):
     """Copy a file to DVC cache atomically."""
     import shutil
