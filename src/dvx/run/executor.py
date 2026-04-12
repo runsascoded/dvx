@@ -522,8 +522,8 @@ class ParallelExecutor:
         deps_hashes = {}
         git_deps_hashes = {}
         if self.config.provenance and artifact.computation:
-            deps_hashes = artifact.computation.get_dep_hashes()
-            git_deps_hashes = artifact.computation.get_git_dep_hashes()
+            deps_hashes = artifact.computation.get_dep_hashes(recompute=True)
+            git_deps_hashes = artifact.computation.get_git_dep_hashes(recompute=True)
 
         # Write .dvc file for output
         dvc_file = None
