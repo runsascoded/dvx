@@ -79,7 +79,7 @@ def _group_into_levels(artifacts: list[Artifact]) -> list[list[Artifact]]:
                 # Leaf nodes are always ready
                 ready.append(artifact)
             else:
-                # Check if all deps (including git_deps and after constraints) are done
+                # Check if all deps (including git_deps) are done
                 deps_done = True
                 for dep in artifact.computation.deps:
                     dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
@@ -90,13 +90,6 @@ def _group_into_levels(artifacts: list[Artifact]) -> list[list[Artifact]]:
                     for dep in artifact.computation.git_deps:
                         dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
                         if dep_path not in done:
-                            deps_done = False
-                            break
-                if deps_done:
-                    for after_path in artifact.computation.after:
-                        # Normalize: strip .dvc suffix for comparison
-                        after_key = after_path[:-4] if after_path.endswith(".dvc") else after_path
-                        if after_key not in done:
                             deps_done = False
                             break
 
@@ -463,9 +456,6 @@ class ParallelExecutor:
             from datetime import datetime, timezone
             fetch_last_run = datetime.now(timezone.utc).isoformat()
 
-        # Preserve after: ordering constraints across rewrites
-        after = artifact.computation.after if artifact.computation else []
-
         if is_side_effect:
             # Side-effect: update dep hashes in .dvc, no output hash
             dvc_file = None
@@ -483,7 +473,6 @@ class ParallelExecutor:
                     git_deps=git_deps_hashes if self.config.provenance else None,
                     fetch_schedule=fetch_schedule,
                     fetch_last_run=fetch_last_run,
-                    after=after or None,
                 )
                 if self.config.verbose:
                     self._log(f"       → {dvc_file}")
@@ -547,7 +536,6 @@ class ParallelExecutor:
                 git_deps=git_deps_hashes if self.config.provenance else None,
                 fetch_schedule=fetch_schedule,
                 fetch_last_run=fetch_last_run,
-                after=after or None,
             )
             if self.config.verbose:
                 self._log(f"       → {dvc_file}")
@@ -606,7 +594,6 @@ class ParallelExecutor:
                 deps_hashes = artifact.computation.get_dep_hashes(recompute=True)
                 git_deps_hashes = artifact.computation.get_git_dep_hashes(recompute=True)
 
-            co_after = artifact.computation.after if artifact.computation else []
             dvc_file = write_dvc_file(
                 output_path=out,
                 md5=md5,
@@ -614,7 +601,6 @@ class ParallelExecutor:
                 cmd=cmd if self.config.provenance else None,
                 deps=deps_hashes if self.config.provenance else None,
                 git_deps=git_deps_hashes if self.config.provenance else None,
-                after=co_after or None,
             )
 
             self._log(f"  ✓ {path}: co-output ready")
@@ -810,16 +796,6 @@ def run(
                 if dep_path not in artifacts:
                     artifacts[dep_path] = Artifact(path=dep_path)
 
-            # after: ordering constraints (load referenced .dvc files)
-            for after_path in artifact.computation.after:
-                after_key = after_path[:-4] if after_path.endswith(".dvc") else after_path
-                if after_key not in artifacts:
-                    dvc_file = Path(after_path if after_path.endswith(".dvc") else after_path + ".dvc")
-                    if dvc_file.exists():
-                        pending.append(dvc_file)
-                    else:
-                        artifacts[after_key] = Artifact(path=after_key)
-
     # Topological sort (deps first)
     sorted_artifacts = _topological_sort(artifacts)
 
@@ -847,10 +823,6 @@ def _topological_sort(artifacts: dict[str, Artifact]) -> list[Artifact]:
                 dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
                 if dep_path in artifacts:
                     visit(artifacts[dep_path])
-            for after_path in artifact.computation.after:
-                after_key = after_path[:-4] if after_path.endswith(".dvc") else after_path
-                if after_key in artifacts:
-                    visit(artifacts[after_key])
 
         result.append(artifact)
 

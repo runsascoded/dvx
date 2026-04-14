@@ -382,48 +382,6 @@ def test_env_vars_are_set(tmp_workdir):
     assert commit_val != summary_val, "Commit and summary files should be different paths"
 
 
-def test_after_ordering(tmp_path):
-    """Stages with after: constraints run after the referenced stage."""
-    import os
-
-    os.chdir(tmp_path)
-
-    # Create two stages: stage_a and stage_b (b runs after a)
-    log_file = tmp_path / "order.log"
-
-    stage_a = Artifact(
-        path="stage_a",
-        computation=Computation(cmd=f"echo A >> {log_file}"),
-    )
-    stage_b = Artifact(
-        path="stage_b",
-        computation=Computation(
-            cmd=f"echo B >> {log_file}",
-            after=["stage_a"],
-        ),
-    )
-
-    # Put b before a to test that after: reorders them
-    artifacts = [stage_b, stage_a]
-
-    from dvx.run.executor import _group_into_levels
-    levels = _group_into_levels(artifacts)
-
-    # stage_a should be in an earlier level than stage_b
-    a_level = None
-    b_level = None
-    for i, level in enumerate(levels):
-        for a in level:
-            if a.path == "stage_a":
-                a_level = i
-            if a.path == "stage_b":
-                b_level = i
-
-    assert a_level is not None
-    assert b_level is not None
-    assert a_level < b_level, f"stage_a (level {a_level}) should be before stage_b (level {b_level})"
-
-
 def test_run_caches_output_blob(tmp_path):
     """dvx run copies output blobs to local cache so historical versions persist."""
     import os

@@ -187,11 +187,6 @@ def _mark_transitive_staleness(results: list[dict], target_list: list) -> None:
         for dep_path in list(info.deps.keys()) + list(info.git_deps.keys()):
             dependents.setdefault(dep_path, []).append(output_key)
 
-        # after: constraints
-        for after_path in info.after:
-            after_key = after_path[:-4] if after_path.endswith(".dvc") else after_path
-            dependents.setdefault(after_key, []).append(output_key)
-
     # BFS from stale stages to mark descendants
     stale_keys = {
         (r["path"][:-4] if r["path"].endswith(".dvc") else r["path"])

@@ -9,7 +9,6 @@ DVX is a lightweight wrapper around [DVC] that provides core data versioning wit
 - **Enhanced diff** with preprocessing pipelines and directory support
 - **Git-tracked imports** with URL provenance for small files
 - **Per-stage commits and push** with `dvx.stage` library and `.dvx/config.yml`
-- **Stage ordering** via `after:` constraints (no data dep required)
 - **Transitive staleness** in `dvx status` (colored: `✗` red, `⚠` yellow, `✓` green)
 - **Version-aware GC** with `--keep N` and `--older-than` retention policies
 - **Cache introspection** commands for examining cached data
@@ -404,7 +403,6 @@ with Repo() as repo:
 - Directory dependencies - Git tree SHA tracking for `git_deps`
 - `dvx import-url --git` - Git-tracked imports with URL provenance
 - Per-stage commits - `$DVX_COMMIT_MSG_FILE` env var + `--commit` flag
-- Stage ordering - `after:` constraints without data dependencies
 - Transitive staleness - `dvx status` shows `⚠` for indirectly stale stages
 - Version-aware GC - `dvx gc --keep N --older-than` with git history walk
 - Colored status output - `✗` red, `⚠` yellow, `?` magenta, `✓` green
@@ -467,21 +465,6 @@ meta:
 - `dvx run` executes the command and updates dep hashes
 - No cache push/pull — the `.dvc` file itself is the receipt
 - Side-effect is inferred from no `outs` + having a `cmd` (optionally explicit via `computation.side_effect: true`)
-
-## Stage Ordering
-
-Stages can declare ordering constraints without data dependencies using `after:`:
-
-```yaml
-# summaries.dvc
-meta:
-  computation:
-    cmd: njsp refresh_summaries
-    after:
-      - njsp/data/refresh.dvc
-```
-
-DVX ensures `refresh.dvc` completes before `summaries.dvc` runs, even though there's no file dependency between them.
 
 ## Fetch Schedules
 
