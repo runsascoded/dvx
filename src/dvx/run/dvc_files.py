@@ -70,22 +70,27 @@ def is_fetch_due(schedule: str, last_run: str | None, now: datetime | None = Non
     if last.tzinfo is None:
         last = last.replace(tzinfo=timezone.utc)
 
-    # Simple interval schedules
+    # Simple interval schedules — no croniter needed
     interval = _SCHEDULE_INTERVALS.get(schedule)
     if interval is not None:
         return now >= last + interval
 
-    # Cron expression: find next fire time after last_run
+    # Cron expression — require croniter; raise on missing/invalid
     try:
         from croniter import croniter
+    except ImportError as e:
+        raise RuntimeError(
+            f"Cron-expression schedule {schedule!r} requires croniter. "
+            "Install `dvx[cron]` or add croniter to your project deps."
+        ) from e
+    try:
         cron = croniter(schedule, last)
-        next_fire = cron.get_next(datetime)
-        if next_fire.tzinfo is None:
-            next_fire = next_fire.replace(tzinfo=timezone.utc)
-        return now >= next_fire
-    except Exception:
-        # If croniter not installed or invalid expression, treat as due
-        return True
+    except (ValueError, KeyError) as e:
+        raise ValueError(f"Invalid cron expression in schedule: {schedule!r}") from e
+    next_fire = cron.get_next(datetime)
+    if next_fire.tzinfo is None:
+        next_fire = next_fire.replace(tzinfo=timezone.utc)
+    return now >= next_fire
 
 
 # Cache for git blob SHAs (keyed by (repo_path, ref))
