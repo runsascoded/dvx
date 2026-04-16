@@ -340,7 +340,7 @@ def test_status_shows_fresh_and_stale(runner, temp_dvc_repo):
     lines = result.output.strip().split("\n")
 
     # Find the stale.txt line - should have ✗ and show data changed
-    stale_lines = [l for l in lines if "stale.txt" in l]
+    stale_lines = [l.lstrip() for l in lines if "stale.txt" in l]
     assert len(stale_lines) == 1
     stale_line = stale_lines[0]
     assert stale_line.startswith("✗")
@@ -365,7 +365,7 @@ def test_status_json_output(runner, temp_dvc_repo):
             "outs": [{"md5": file_hash, "size": 10, "hash": "md5", "path": "data.txt"}]
         }, f)
 
-    result = runner.invoke(cli, ["status", "--json"])
+    result = runner.invoke(cli, ["status", "--json", "-v"])
     assert result.exit_code == 0
 
     assert json.loads(result.output) == [
@@ -415,7 +415,7 @@ def test_status_dep_changed(runner, temp_dvc_repo):
     lines = result.output.strip().split("\n")
 
     # Find output.txt line - should show dep changed, not data changed
-    output_lines = [l for l in lines if "output.txt" in l]
+    output_lines = [l.lstrip() for l in lines if "output.txt" in l]
     assert len(output_lines) == 1
     output_line = output_lines[0]
     assert output_line.startswith("✗")
@@ -511,3 +511,119 @@ def test_status_transitive_staleness(runner, tmp_path):
     assert "⚠" in result.output
     assert "step_b" in result.output
     assert "upstream stale" in result.output
+
+
+@pytest.fixture
+def mixed_status_repo(tmp_path):
+    """Repo with one stale, one missing, one fresh .dvc file."""
+    os.chdir(tmp_path)
+    (tmp_path / ".dvc").mkdir()
+
+    from dvx.run.hash import compute_md5
+
+    # Fresh
+    f = tmp_path / "fresh.txt"
+    f.write_text("fresh\n")
+    with open(tmp_path / "fresh.txt.dvc", "w") as fp:
+        yaml.dump({"outs": [{"md5": compute_md5(f), "size": f.stat().st_size, "path": "fresh.txt"}]}, fp)
+
+    # Stale
+    s = tmp_path / "stale.txt"
+    s.write_text("stale\n")
+    with open(tmp_path / "stale.txt.dvc", "w") as fp:
+        yaml.dump({"outs": [{"md5": "0" * 32, "size": 5, "path": "stale.txt"}]}, fp)
+
+    # Missing
+    with open(tmp_path / "missing.txt.dvc", "w") as fp:
+        yaml.dump({"outs": [{"md5": "1" * 32, "size": 10, "path": "missing.txt"}]}, fp)
+
+    return tmp_path
+
+
+def test_status_grouped_by_default(runner, mixed_status_repo):
+    """Default output groups stale / missing under headers."""
+    result = runner.invoke(cli, ["status"])
+    assert result.exit_code == 0
+
+    out = result.output
+    stale_idx = out.index("Stale (1)")
+    missing_idx = out.index("Missing (1)")
+    # Stale group appears before missing per GROUP_ORDER
+    assert stale_idx < missing_idx
+    assert "stale.txt.dvc" in out
+    assert "missing.txt.dvc" in out
+    # Fresh hidden by default
+    assert "Fresh (" not in out
+    assert "fresh.txt.dvc" not in out
+
+
+def test_status_no_group(runner, mixed_status_repo):
+    """-G disables grouping; no headers."""
+    result = runner.invoke(cli, ["status", "-G"])
+    assert result.exit_code == 0
+    assert "Stale (" not in result.output
+    assert "Missing (" not in result.output
+    assert "stale.txt.dvc" in result.output
+    assert "missing.txt.dvc" in result.output
+
+
+def test_status_omit_missing(runner, mixed_status_repo):
+    """-x missing hides missing paths."""
+    result = runner.invoke(cli, ["status", "-x", "missing"])
+    assert result.exit_code == 0
+    assert "stale.txt.dvc" in result.output
+    assert "missing.txt.dvc" not in result.output
+    assert "Missing (" not in result.output
+
+
+def test_status_omit_prefix(runner, mixed_status_repo):
+    """-x m (prefix) also hides missing."""
+    result = runner.invoke(cli, ["status", "-x", "m"])
+    assert result.exit_code == 0
+    assert "missing.txt.dvc" not in result.output
+
+
+def test_status_include_only(runner, mixed_status_repo):
+    """-s stale shows only stale, hides missing even though not omitted."""
+    result = runner.invoke(cli, ["status", "-s", "stale"])
+    assert result.exit_code == 0
+    assert "stale.txt.dvc" in result.output
+    assert "missing.txt.dvc" not in result.output
+    assert "fresh.txt.dvc" not in result.output
+
+
+def test_status_include_prefix_comma_sep(runner, mixed_status_repo):
+    """-s s,m accepts comma-separated prefixes."""
+    result = runner.invoke(cli, ["status", "-s", "s,m"])
+    assert result.exit_code == 0
+    assert "stale.txt.dvc" in result.output
+    assert "missing.txt.dvc" in result.output
+    assert "fresh.txt.dvc" not in result.output
+
+
+def test_status_unknown_status(runner, mixed_status_repo):
+    """Unknown status name is rejected."""
+    result = runner.invoke(cli, ["status", "-s", "bogus"])
+    assert result.exit_code != 0
+    assert "unknown status" in result.output
+
+
+def test_status_json_respects_filter(runner, mixed_status_repo):
+    """JSON output respects -s filter."""
+    import json
+    result = runner.invoke(cli, ["status", "-s", "stale", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    statuses = {r["status"] for r in data}
+    assert statuses == {"stale"}
+
+
+def test_status_summary_includes_all_counts(runner, mixed_status_repo):
+    """Summary line reflects full unfiltered set even when filtered."""
+    result = runner.invoke(cli, ["status", "-s", "stale"])
+    assert result.exit_code == 0
+    summary = result.output.strip().split("\n")[-1]
+    # Full counts: 1 fresh, 1 stale, 1 missing
+    assert "Fresh: 1" in summary
+    assert "Stale: 1" in summary
+    assert "Missing: 1" in summary

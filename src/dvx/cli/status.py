@@ -209,19 +209,51 @@ def _mark_transitive_staleness(results: list[dict], target_list: list) -> None:
                 queue.append(dependent)
 
 
+STATUS_NAMES = ["fresh", "stale", "missing", "error", "transitive"]
+GROUP_ORDER = ["stale", "missing", "transitive", "error", "fresh"]
+
+
+def _resolve_status_list(value: str | None) -> set[str] | None:
+    """Resolve a comma-separated list of status names (with prefix matching) to a set.
+
+    Returns None if value is None/empty. Raises click.BadParameter on ambiguous or unknown prefixes.
+    """
+    if not value:
+        return None
+    result = set()
+    for raw in value.split(","):
+        token = raw.strip().lower()
+        if not token:
+            continue
+        matches = [s for s in STATUS_NAMES if s.startswith(token)]
+        if not matches:
+            raise click.BadParameter(f"unknown status {token!r} (expected one of {STATUS_NAMES})")
+        if len(matches) > 1:
+            raise click.BadParameter(f"ambiguous status prefix {token!r}: matches {matches}")
+        result.add(matches[0])
+    return result
+
+
 @click.command()
 @click.argument("targets", nargs=-1)
 @click.option("-d", "--with-deps", is_flag=True, default=True, help="Check upstream dependencies.")
+@click.option("-G", "--no-group", is_flag=True, help="Don't group output by status.")
 @click.option("-j", "--jobs", type=int, default=None, help="Number of parallel workers.")
-@click.option("-v", "--verbose", is_flag=True, help="Show all files including fresh.")
-@click.option("--json", "as_json", is_flag=True, help="Output results as JSON.")
 @click.option("-N", "--no-transitive", is_flag=True, help="Hide transitively stale stages.")
+@click.option("-s", "--status", "status_filter", default=None, help="Show only these statuses (comma-sep, prefix-matched, e.g. 's,m').")
+@click.option("-v", "--verbose", is_flag=True, help="Show all files including fresh.")
+@click.option("-x", "--omit", default=None, help="Exclude these statuses (comma-sep, prefix-matched, e.g. 'm').")
+@click.option("--json", "as_json", is_flag=True, help="Output results as JSON.")
 @click.option("-y", "--yaml", "as_yaml", is_flag=True, help="Output detailed results as YAML (includes before/after hashes).")
-def status(targets, with_deps, jobs, verbose, as_json, no_transitive, as_yaml):
+def status(targets, with_deps, no_group, jobs, no_transitive, status_filter, verbose, omit, as_json, as_yaml):
     """Check freshness status of artifacts.
 
-    By default, only shows stale/missing files (like git status).
-    Use -v/--verbose to show all files including fresh ones.
+    By default, only shows stale/missing files (like git status), grouped by status.
+    Use -v/--verbose to also include fresh files.
+    Use -s/--status to include only specific statuses (e.g. -s stale,missing).
+    Use -x/--omit to exclude specific statuses (e.g. -x missing).
+    Status names support prefix matching: 's' → stale, 'm' → missing, etc.
+    Use -G/--no-group to flatten output (paths sorted, no per-status sections).
     Use -y/--yaml for detailed output with before/after hashes for changed deps.
 
     Examples:
@@ -231,10 +263,15 @@ def status(targets, with_deps, jobs, verbose, as_json, no_transitive, as_yaml):
         dvx status -j 4              # Use 4 parallel workers
         dvx status --json            # Output as JSON
         dvx status -y                # Detailed YAML with hashes
+        dvx status -x m              # Hide missing files
+        dvx status -s s,t            # Show only stale and transitive
     """
     import json as json_module
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from functools import partial
+
+    include = _resolve_status_list(status_filter)
+    exclude = _resolve_status_list(omit) or set()
 
     # Find targets - expand directories to .dvc files
     if targets:
@@ -270,50 +307,78 @@ def status(targets, with_deps, jobs, verbose, as_json, no_transitive, as_yaml):
         _mark_transitive_staleness(results, target_list)
 
     results.sort(key=lambda r: r["path"])
-    transitive_count = sum(1 for r in results if r["status"] == "transitive")
-    stale_count = sum(1 for r in results if r["status"] == "stale")
-    missing_count = sum(1 for r in results if r["status"] == "missing")
-    fresh_count = sum(1 for r in results if r["status"] == "fresh")
-    error_count = sum(1 for r in results if r["status"] == "error")
+
+    # Counts from the full, unfiltered set (for the summary line)
+    counts = {s: sum(1 for r in results if r["status"] == s) for s in STATUS_NAMES}
+
+    # Compute the visible set. Precedence: -s overrides default; -v adds fresh to default;
+    # -x always subtracts.
+    if include is not None:
+        visible = set(include)
+    else:
+        visible = set(STATUS_NAMES) if verbose else {"stale", "missing", "error", "transitive"}
+    visible -= exclude
+
+    filtered = [r for r in results if r["status"] in visible]
 
     if as_yaml:
         import yaml
-        # Filter to non-fresh unless verbose
-        if not verbose:
-            results = [r for r in results if r["status"] != "fresh"]
-        # Convert to dict keyed by path for nicer YAML
         yaml_data = {}
-        for r in results:
+        for r in filtered:
             path = r.pop("path")
-            # Remove None values for cleaner output
             yaml_data[path] = {k: v for k, v in r.items() if v is not None}
         click.echo(yaml.dump(yaml_data, default_flow_style=False, sort_keys=False))
-    elif as_json:
-        click.echo(json_module.dumps(results, indent=2))
-    else:
-        # By default, only show non-fresh files (like git status)
-        status_style = {
-            "fresh": ("✓", "green"),
-            "stale": ("✗", "red"),
-            "missing": ("?", "magenta"),
-            "error": ("!", "red"),
-            "transitive": ("⚠", "yellow"),
-        }
-        for r in results:
-            if r["status"] == "fresh" and not verbose:
-                continue
-            icon, color = status_style.get(r["status"], ("?", "red"))
-            styled_icon = click.style(icon, fg=color)
-            line = f"{styled_icon} {r['path']}"
-            if r.get("reason"):
-                line += click.style(f" ({r['reason']})", fg="bright_black")
-            click.echo(line)
+        return
 
-        # Summary line
-        parts = [f"Fresh: {fresh_count}", f"Stale: {stale_count}"]
-        if transitive_count:
-            parts.append(f"Transitively stale: {transitive_count}")
-        click.echo(f"\n{', '.join(parts)}")
+    if as_json:
+        click.echo(json_module.dumps(filtered, indent=2))
+        return
+
+    status_style = {
+        "fresh": ("✓", "green"),
+        "stale": ("✗", "red"),
+        "missing": ("?", "magenta"),
+        "error": ("!", "red"),
+        "transitive": ("⚠", "yellow"),
+    }
+
+    def _render(r):
+        icon, color = status_style.get(r["status"], ("?", "red"))
+        styled_icon = click.style(icon, fg=color)
+        line = f"{styled_icon} {r['path']}"
+        if r.get("reason"):
+            line += click.style(f" ({r['reason']})", fg="bright_black")
+        return line
+
+    if no_group:
+        for r in filtered:
+            click.echo(_render(r))
+    else:
+        first = True
+        for s in GROUP_ORDER:
+            if s not in visible:
+                continue
+            group = [r for r in filtered if r["status"] == s]
+            if not group:
+                continue
+            if not first:
+                click.echo()
+            first = False
+            _, color = status_style[s]
+            header = click.style(f"{s.capitalize()} ({len(group)}):", fg=color, bold=True)
+            click.echo(header)
+            for r in group:
+                click.echo(f"  {_render(r)}")
+
+    # Summary line (always reflects the full set, not filtered)
+    parts = [f"Fresh: {counts['fresh']}", f"Stale: {counts['stale']}"]
+    if counts["missing"]:
+        parts.append(f"Missing: {counts['missing']}")
+    if counts["transitive"]:
+        parts.append(f"Transitively stale: {counts['transitive']}")
+    if counts["error"]:
+        parts.append(f"Error: {counts['error']}")
+    click.echo(f"\n{', '.join(parts)}")
 
 
 # Export the command
