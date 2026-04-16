@@ -42,6 +42,7 @@ class ExecutionConfig:
     verbose: bool = False
     commit: str = "auto"  # Commit strategy: "auto", "always", "never"
     push: str = "never"  # Push strategy: "never", "each", "end"
+    cache_push: bool = True  # When push != "never", also push cache blobs to remote
 
 
 def _matches_patterns(path: str, patterns: list[str]) -> bool:
@@ -213,6 +214,7 @@ class ParallelExecutor:
                     self._log("\n📤 pushed all commits")
                 else:
                     self._log(f"\n⚠ push failed: {push_result.stderr.strip()}")
+                self._push_cache_blobs([f"{r.path}.dvc" for r in executed])
 
         return results
 
@@ -703,6 +705,7 @@ class ParallelExecutor:
                                 self._log("    📤 pushed")
                             else:
                                 self._log(f"    ⚠ push failed: {push_result.stderr.strip()}")
+                            self._push_cache_blobs([f"{path}.dvc"], indent="    ")
                     elif "nothing to commit" in result.stdout:
                         pass  # No changes to commit
                     else:
@@ -731,6 +734,24 @@ class ParallelExecutor:
     def _log(self, message: str):
         """Write log message to output stream."""
         print(message, file=self.output)
+
+    def _push_cache_blobs(self, dvc_paths: list[str], indent: str = "") -> None:
+        """Push cache blobs for the given .dvc files to the configured remote.
+
+        Non-fatal: logs warnings on failure but never raises. No-op if
+        `cache_push` is disabled or `dvc_paths` is empty.
+        """
+        if not self.config.cache_push or not dvc_paths:
+            return
+        try:
+            from dvx import Repo
+            with Repo() as repo:
+                pushed = repo.push(targets=dvc_paths)
+            n = len(dvc_paths)
+            stage_word = "blob" if n == 1 else "blobs"
+            self._log(f"{indent}📤 cache pushed ({pushed} {stage_word})")
+        except Exception as e:
+            self._log(f"{indent}⚠ cache push failed: {e}")
 
 
 def run(

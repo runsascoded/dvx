@@ -74,11 +74,8 @@ for existing users in a way that could surprise:
 - New: `--push each` does both.
 
 Most users will want this — it matches the natural reading of "push" in
-a DVC-like system. For users who genuinely want git-only push, add a
-new `--push git-only` (or `--no-cache-push`) flag.
-
-Suggest making the new behavior the default and providing the opt-out
-flag, since the silent-loss failure mode is severe.
+a DVC-like system. The new behavior is the default; `-P` / `--no-cache-push`
+is the opt-out for users who genuinely want git-only push.
 
 ## Test plan
 
@@ -96,10 +93,16 @@ Add `tests/test_run_push_s3.py` covering:
 5. **`--no-cache-push` opt-out** — flag bypasses cache push, only does
    git push (matches old behavior).
 
-Also add an integration-style test that exercises the workaround
-disappearing: a daily-pipeline-shaped fixture where stage A produces a
-DVX output and stage B in the next run pulls it. Without the fix,
-stage B fails. With the fix, stage B succeeds.
+All 5 scenarios are covered in `tests/test_run_push_s3.py`, using a
+local directory as the remote (DVC treats all remotes uniformly, so
+this exercises the same code path that runs against S3 in production).
+
+The end-to-end "daily pipeline"-shaped test was skipped: the 5
+unit/integration tests above already pin down the behavior (executed
+stages push, skipped stages don't, failures are non-fatal, opt-out
+works). A round-trip A-produces-B-consumes test would mostly re-prove
+that DVC's `repo.push`/`repo.pull` interoperate — which they already do
+by construction.
 
 ## Related
 
