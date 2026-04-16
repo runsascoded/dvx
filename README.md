@@ -8,7 +8,7 @@ DVX is a lightweight wrapper around [DVC] that provides core data versioning wit
 - **Fetch schedules** for periodic re-fetch of external data (daily/hourly/cron)
 - **Enhanced diff** with preprocessing pipelines and directory support
 - **Git-tracked imports** with URL provenance for small files
-- **Per-stage commits and push** with `dvx.stage` library and `.dvx/config.yml`
+- **Per-stage commits and push** (git + cache blobs) with `dvx.stage` library and `.dvx/config.yml`
 - **Transitive staleness** in `dvx status` (colored: `✗` red, `⚠` yellow, `✓` green)
 - **Version-aware GC** with `--keep N` and `--older-than` retention policies
 - **Cache introspection** commands for examining cached data
@@ -213,9 +213,20 @@ dvx run --force
 dvx run --commit
 
 # Push strategies
-dvx run --push each     # push after each per-stage commit
-dvx run --push end      # batch commits, single push at finish
+dvx run --push each     # git-push + cache-push after each per-stage commit
+dvx run --push end      # batch commits, single git-push + cache-push at finish
+dvx run --push each -P  # -P/--no-cache-push: git-push only, skip blob upload
 ```
+
+With `--push each|end`, DVX does both `git push` and the equivalent of
+`dvx push <target>` (uploading the just-produced blob to the configured
+remote). This prevents downstream runs / fresh clones from hitting
+"cache files do not exist neither locally nor on remote". Use
+`-P`/`--no-cache-push` to opt out.
+
+Outputs are also copied into the local DVC cache on every `dvx run`, so
+historical versions remain retrievable after subsequent runs overwrite
+the workspace file.
 
 Commands run with CWD set to the `.dvc` file's directory, so `./deploy.sh` in `www/deploy.dvc` runs from `www/`.
 
@@ -235,7 +246,7 @@ from dvx.stage import stage
 
 stage.commit("Refresh data: 5 new records")
 stage.summary("5 new records found")
-stage.push()  # request immediate push for this stage
+stage.push()  # request immediate git-push + cache-push for this stage
 ```
 
 With `dvx run --commit`, stages that don't write a commit message get a default one (e.g. "Run refresh"). DVX also sets `$DVX_SUMMARY_FILE` and `$DVX_PUSH_FILE` env vars.
@@ -290,12 +301,18 @@ dvx add -r output.parquet
 ### Status and Diff
 
 ```bash
-# Check freshness (data vs deps)
-dvx status                 # colored: ✗ red, ⚠ yellow (transitive), ✓ green
+# Check freshness (data vs deps). Output is grouped by status
+# (Stale → Missing → Transitive → Error → Fresh) with colored headers.
+dvx status                 # ✗ red, ? magenta, ⚠ yellow (transitive), ✓ green
 dvx status -v              # also show fresh files
+dvx status -G              # -G/--no-group: flatten, no per-status headers
 dvx status --yaml          # detailed YAML output with hashes
 dvx status -j4 data/       # parallel checking
 dvx status --no-transitive # hide transitively stale stages
+
+# Filter by status (comma-sep, prefix-matched: s/m/f/e/t)
+dvx status -x m            # -x/--omit: hide missing (? paths)
+dvx status -s s,t          # -s/--status: show only stale + transitive
 
 # Content diff
 dvx diff data.parquet
@@ -403,7 +420,10 @@ with Repo() as repo:
 - Directory dependencies - Git tree SHA tracking for `git_deps`
 - `dvx import-url --git` - Git-tracked imports with URL provenance
 - Per-stage commits - `$DVX_COMMIT_MSG_FILE` env var + `--commit` flag
+- Per-stage push (`--push each|end`) - both `git push` and cache-blob push, opt out with `-P`
+- `dvx run` caches outputs locally - historical versions stay retrievable
 - Transitive staleness - `dvx status` shows `⚠` for indirectly stale stages
+- `dvx status` grouping + `-s`/`-x` filters (prefix-matched status names)
 - Version-aware GC - `dvx gc --keep N --older-than` with git history walk
 - Colored status output - `✗` red, `⚠` yellow, `?` magenta, `✓` green
 - Detailed error output - Exit code, stderr tail, log file on failure
