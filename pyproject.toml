@@ -28,7 +28,7 @@ dependencies = [
     "click>=8.0",
     "dffs>=0.1.1",
     "dvc>=3.50",
-    "dvc-data @ git+https://github.com/runsascoded/dvc-data.git@9d3ef02c2c1e6752f897d2885f467d12fe934646",
+    "dvc-data>=3.18.3",
 ]
 
 [project.optional-dependencies]
@@ -68,9 +68,6 @@ dvx = "dvx.cli:main"
 [project.urls]
 Homepage = "https://github.com/runsascoded/dvx"
 Repository = "https://github.com/runsascoded/dvx"
-
-[tool.hatch.metadata]
-allow-direct-references = true
 
 [tool.hatch.version]
 source = "vcs"

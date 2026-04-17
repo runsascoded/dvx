@@ -1,13 +1,13 @@
-"""Patch DVC to support HTTP `Last-Modified` as `mtime` in `.dvc` files.
+"""Patch DVC/dvc-data to support HTTP `Last-Modified` as `mtime` in `.dvc` files.
 
-dvc-data's `Meta.from_info()` captures HTTP `Last-Modified` into `mtime`, but:
-1. DVC's voluptuous schema doesn't allow `mtime` in deps/outs
-2. `Meta.to_dict()` doesn't serialize `mtime` (doing so breaks local files)
+Upstream dvc-data's `Meta.from_info()` doesn't capture HTTP `Last-Modified`.
+DVC's voluptuous schema doesn't allow `mtime` in deps/outs. And
+`Meta.to_dict()` doesn't serialize `mtime` (doing so breaks local files).
 
-This module patches both: adds `mtime` to the schema, and extends `to_dict()`
-to include `mtime` as an ISO 8601 string when the source is HTTP (distinguished
-from local fs mtime by absence of `inode`). Also patches `Meta.from_dict()` to
-parse ISO strings back to float timestamps.
+This module patches all three: `from_info()` to capture `Last-Modified`,
+the schema to allow `mtime`, and `to_dict()` to serialize it as ISO 8601
+for HTTP sources (distinguished from local fs mtime by absence of `inode`).
+Also patches `Meta.from_dict()` to parse ISO strings back to float timestamps.
 """
 
 from datetime import datetime, timezone
@@ -46,7 +46,25 @@ def _patch():
     DEP_SCHEMA["checksum"] = str
     DEP_SCHEMA["user_agent"] = str
 
-    # 2. Extend Meta.to_dict() to serialize mtime as ISO 8601 for HTTP sources.
+    # 2. Patch Meta.from_info() to capture HTTP Last-Modified as mtime.
+    #    Upstream dvc-data doesn't do this; our fork (9b27dc6) does, but we
+    #    can't ship a git+ dep to PyPI, so we monkeypatch instead.
+    _orig_from_info = Meta.from_info.__func__
+
+    @classmethod  # type: ignore[misc]
+    def _from_info_with_mtime(cls, info, protocol=None):
+        result = _orig_from_info(cls, info, protocol=protocol)
+        if result.mtime is None and protocol and protocol.startswith("http"):
+            last_modified = info.get("Last-Modified")
+            if last_modified:
+                from email.utils import parsedate_to_datetime
+
+                result.mtime = parsedate_to_datetime(last_modified).timestamp()
+        return result
+
+    Meta.from_info = _from_info_with_mtime
+
+    # 3. Extend Meta.to_dict() to serialize mtime as ISO 8601 for HTTP sources.
     #    Local filesystems always have inode set; HTTP sources never do.
     #    Use this to distinguish HTTP mtime (from Last-Modified) from
     #    local filesystem mtime (which DVC uses internally but shouldn't
@@ -61,7 +79,7 @@ def _patch():
 
     Meta.to_dict = _to_dict_with_mtime
 
-    # 3. Extend Meta.from_dict() to parse ISO 8601 mtime strings back to float.
+    # 4. Extend Meta.from_dict() to parse ISO 8601 mtime strings back to float.
     _orig_from_dict = Meta.from_dict
 
     @classmethod  # type: ignore[misc]
