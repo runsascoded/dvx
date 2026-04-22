@@ -392,6 +392,7 @@ with Repo() as repo:
 | `add` | Track file(s) with optional provenance |
 | `status` | Show freshness of tracked files (data & deps) |
 | `diff` | Content diff with preprocessing support |
+| `audit` | Blob classification, lineage, and cache analysis |
 | `cache` | Inspect cache (path, md5, dir) |
 | `cat` | View cached file contents |
 | `push` | Upload data to remote storage |
@@ -429,6 +430,7 @@ with Repo() as repo:
 - Detailed error output - Exit code, stderr tail, log file on failure
 - Stage output on success - `-v` shows inline, always saves to log file
 - `dvx diff` preprocessing - Pipe through commands before diffing (with `{}` placeholder)
+- `dvx audit` - Blob classification (input/generated/foreign), lineage, orphan detection
 - `dvx cache path/md5` - Cache introspection
 - `dvx cat` - View cached files directly
 - `dvx status --yaml` - Detailed status with hashes
