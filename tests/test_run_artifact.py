@@ -512,3 +512,21 @@ def test_walk_upstream_prune_skips_missing_raw_dep(tmp_path):
     # With pruning (default), only b is visited — a's missing raw never gets checked.
     walked = b_artifact.walk_upstream()
     assert [a.path for a in walked] == [str(b_path)]
+
+
+def test_get_dep_hashes_recompute_falls_back_to_recorded(tmp_path):
+    """recompute=True must not drop deps whose files aren't on disk locally.
+
+    Reproduces the spec's bonus footgun: a no-op rebuild used to silently
+    strip the deps map from the .dvc file when the upstream wasn't materialized
+    locally (e.g. with --cached or pruned upstream).
+    """
+    os.chdir(tmp_path)
+
+    # Dep with a known md5 but no file on disk
+    dep = Artifact(path=str(tmp_path / "missing.txt"), md5="recorded-md5")
+    comp = Computation(cmd="noop", deps=[dep])
+
+    hashes = comp.get_dep_hashes(recompute=True)
+
+    assert hashes == {str(tmp_path / "missing.txt"): "recorded-md5"}

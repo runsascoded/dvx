@@ -90,8 +90,11 @@ class Computation:
         """Compute MD5 hashes for all dependencies.
 
         Args:
-            recompute: If True, always compute from disk (ignore cached md5).
-                Use after execution to get current hashes.
+            recompute: If True, prefer hashes computed from disk (used after
+                execution to capture any newly-built deps). Falls back to the
+                recorded md5 when the file isn't materialized locally — e.g.
+                with ``--cached`` or pruned-upstream chains. Without that
+                fallback, the rewritten .dvc would silently drop the dep.
 
         Returns:
             Dict mapping path strings to MD5 hashes
@@ -104,6 +107,8 @@ class Computation:
                     hashes[str(path)] = dep.md5
                 elif path.exists():
                     hashes[str(path)] = compute_md5(path)
+                elif dep.md5:
+                    hashes[str(path)] = dep.md5
             else:
                 path = Path(dep)
                 if path.exists():
@@ -132,6 +137,8 @@ class Computation:
                     sha = get_git_object_sha(path, "HEAD")
                     if sha:
                         hashes[path] = sha
+                    elif dep.md5:
+                        hashes[path] = dep.md5
             else:
                 path = str(dep)
                 sha = get_git_object_sha(path, "HEAD")
