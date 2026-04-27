@@ -299,11 +299,18 @@ class Artifact:
             return []
         return [d for d in self.computation.deps if isinstance(d, Artifact)]
 
-    def walk_upstream(self) -> list[Artifact]:
+    def walk_upstream(self, prune_fresh: bool = True) -> list[Artifact]:
         """Recursively collect all upstream Artifacts.
 
         Returns artifacts in dependency order (leaves first).
+
+        Args:
+            prune_fresh: If True (default), don't recurse past artifacts whose
+                own .dvc file says they're fresh. Their further-upstream state
+                can't affect anything downstream that's already up-to-date.
         """
+        from dvx.run.dvc_files import is_output_fresh
+
         visited = set()
         result = []
 
@@ -311,6 +318,13 @@ class Artifact:
             if artifact.path in visited:
                 return
             visited.add(artifact.path)
+
+            if prune_fresh and artifact.computation:
+                fresh, _ = is_output_fresh(Path(artifact.path))
+                if fresh:
+                    result.append(artifact)
+                    return
+
             for upstream in artifact.get_upstream():
                 visit(upstream)
             result.append(artifact)
@@ -373,12 +387,14 @@ def write_all_dvc(artifacts: list[Artifact]) -> list[Path]:
     Returns:
         List of paths to created .dvc files
     """
-    # Collect all artifacts including upstream dependencies
+    # Collect all artifacts including upstream dependencies.
+    # Don't prune fresh: write_all_dvc is the prep phase — generate every .dvc
+    # file regardless of current freshness state.
     all_artifacts = []
     seen = set()
 
     for artifact in artifacts:
-        for a in artifact.walk_upstream():
+        for a in artifact.walk_upstream(prune_fresh=False):
             if a.path not in seen:
                 seen.add(a.path)
                 all_artifacts.append(a)
@@ -442,6 +458,7 @@ def materialize(
     parallel: int = 1,
     force: bool = False,
     update_dvc: bool = True,
+    prune_fresh: bool = True,
 ) -> list[Artifact]:
     """Execute computations for all stale artifacts.
 
@@ -453,6 +470,9 @@ def materialize(
         parallel: Number of parallel workers (default: 1, use -1 for CPU count)
         force: Force recomputation even if fresh (default: False)
         update_dvc: Whether to update .dvc files after computation (default: True)
+        prune_fresh: If True (default), stop traversing upstream once a fresh
+            artifact is reached; further-upstream state can't affect anything
+            downstream that's already up-to-date.
 
     Returns:
         List of artifacts that were computed
@@ -466,7 +486,7 @@ def materialize(
     seen = set()
 
     for artifact in artifacts:
-        for a in artifact.walk_upstream():
+        for a in artifact.walk_upstream(prune_fresh=prune_fresh):
             if a.path not in seen:
                 seen.add(a.path)
                 all_artifacts.append(a)

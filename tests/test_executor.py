@@ -413,6 +413,104 @@ def test_run_caches_output_blob(tmp_path):
     assert cache_path.read_text() == output.read_text()
 
 
+def test_run_prunes_at_fresh_artifact(tmp_workdir):
+    """`dvx run` shouldn't walk past a fresh target into an unrelated upstream chain.
+
+    Reproduces the spec scenario: A.txt -> A.pqt -> B.parquet -> C.dvc (side-effect).
+    With every link's md5s already aligned, running C.dvc should skip everything
+    cleanly even when A.txt has been deleted from disk.
+    """
+    from dvx.run.dvc_files import write_dvc_file
+    from dvx.run.hash import compute_md5
+
+    a_txt = tmp_workdir / "a.txt"
+    a_txt.write_text("raw\n")
+    a_md5 = compute_md5(a_txt)
+
+    a_pqt = tmp_workdir / "a.pqt"
+    a_pqt.write_text("processed-a\n")
+    a_pqt_md5 = compute_md5(a_pqt)
+    write_dvc_file(
+        output_path=a_pqt,
+        md5=a_pqt_md5,
+        size=a_pqt.stat().st_size,
+        cmd="false",  # would fail if executed
+        deps={str(a_txt): a_md5},
+    )
+
+    b_pq = tmp_workdir / "b.parquet"
+    b_pq.write_text("combined\n")
+    b_md5 = compute_md5(b_pq)
+    write_dvc_file(
+        output_path=b_pq,
+        md5=b_md5,
+        size=b_pq.stat().st_size,
+        cmd="false",
+        deps={str(a_pqt): a_pqt_md5},
+    )
+
+    # Side-effect stage C with only B as a dep — no outs hash
+    c_path = tmp_workdir / "sync"
+    write_dvc_file(
+        output_path=c_path,
+        cmd="false",
+        deps={str(b_pq): b_md5},
+        side_effect=True,
+    )
+
+    # Now wipe the raw input — would normally cause A.pqt's freshness check
+    # to fail (and its cmd to be (re-)run), even though C is fresh.
+    a_txt.unlink()
+
+    config = ExecutionConfig(max_workers=1, dry_run=True)
+    output = StringIO()
+    results = run([Path(str(c_path) + ".dvc")], config=config, output=output)
+
+    paths = {r.path for r in results}
+    assert paths == {str(c_path)}, f"expected only {c_path} in plan, got {paths}"
+    assert all(r.success for r in results)
+    assert all(r.skipped for r in results)
+
+
+def test_run_no_prune_fresh_walks_full_chain(tmp_workdir):
+    """--no-prune-fresh restores the old behavior of walking the full upstream chain."""
+    from dvx.run.dvc_files import write_dvc_file
+    from dvx.run.hash import compute_md5
+
+    a_txt = tmp_workdir / "a.txt"
+    a_txt.write_text("raw\n")
+    a_md5 = compute_md5(a_txt)
+
+    a_pqt = tmp_workdir / "a.pqt"
+    a_pqt.write_text("processed-a\n")
+    a_pqt_md5 = compute_md5(a_pqt)
+    write_dvc_file(
+        output_path=a_pqt,
+        md5=a_pqt_md5,
+        size=a_pqt.stat().st_size,
+        cmd="true",
+        deps={str(a_txt): a_md5},
+    )
+
+    b_pq = tmp_workdir / "b.parquet"
+    b_pq.write_text("combined\n")
+    b_md5 = compute_md5(b_pq)
+    write_dvc_file(
+        output_path=b_pq,
+        md5=b_md5,
+        size=b_pq.stat().st_size,
+        cmd="true",
+        deps={str(a_pqt): a_pqt_md5},
+    )
+
+    config = ExecutionConfig(max_workers=1, dry_run=True, prune_fresh=False)
+    output = StringIO()
+    results = run([Path(str(b_pq) + ".dvc")], config=config, output=output)
+
+    paths = {r.path for r in results}
+    assert paths == {str(a_pqt), str(b_pq)}
+
+
 def test_run_cache_idempotent(tmp_path):
     """Caching is idempotent — re-running doesn't error if blob already cached."""
     import os

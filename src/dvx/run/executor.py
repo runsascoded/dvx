@@ -43,6 +43,10 @@ class ExecutionConfig:
     commit: str = "auto"  # Commit strategy: "auto", "always", "never"
     push: str = "never"  # Push strategy: "never", "each", "end"
     cache_push: bool = True  # When push != "never", also push cache blobs to remote
+    # Stop traversing upstream once a fresh artifact is reached. Default True;
+    # auto-disabled when --force-upstream patterns are set (we have to walk to
+    # find pattern matches).
+    prune_fresh: bool = True
 
 
 def _matches_patterns(path: str, patterns: list[str]) -> bool:
@@ -777,6 +781,12 @@ def run(
     artifacts: dict[str, Artifact] = {}
     pending = list(targets)
 
+    # Pruning: skip walking past artifacts that are fresh per their own .dvc.
+    # Disabled when --force-upstream patterns are set, since those need a full
+    # walk to discover which upstream artifacts to force.
+    cfg = config or ExecutionConfig()
+    prune_fresh = cfg.prune_fresh and not cfg.force_patterns
+
     while pending:
         target = pending.pop(0)
 
@@ -799,11 +809,25 @@ def run(
 
         artifacts[output_str] = artifact
 
+        # If this artifact is fresh per its own .dvc, stop traversing upstream:
+        # any further-upstream state is irrelevant to anything downstream that's
+        # already up-to-date. Add deps as bare leaves so _group_into_levels
+        # treats them as already satisfied.
+        prune_here = (
+            prune_fresh
+            and artifact.computation is not None
+            and is_output_fresh(output_path)[0]
+        )
+
         # Queue dependencies
         if artifact.computation:
             for dep in artifact.computation.deps:
                 dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
                 if dep_path not in artifacts:
+                    if prune_here:
+                        # Don't traverse — register as bare leaf
+                        artifacts[dep_path] = Artifact(path=dep_path)
+                        continue
                     dvc_file = Path(str(dep_path) + ".dvc")
                     if dvc_file.exists():
                         pending.append(dvc_file)

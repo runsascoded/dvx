@@ -403,3 +403,112 @@ def test_materialize_error_raises(tmp_path):
 
     with pytest.raises(RuntimeError, match="Computation failed"):
         materialize([artifact], update_dvc=False)
+
+
+def test_walk_upstream_prunes_at_fresh(tmp_path):
+    """walk_upstream stops at fresh artifacts; further-upstream is not visited."""
+    os.chdir(tmp_path)
+
+    from dvx.run.dvc_files import write_dvc_file
+    from dvx.run.hash import compute_md5
+
+    # Build chain bottom-up: leaf.txt -> mid.txt -> top.txt
+    leaf_path = tmp_path / "leaf.txt"
+    leaf_path.write_text("leaf-data\n")
+    leaf_md5 = compute_md5(leaf_path)
+    # leaf has no .dvc — simulate raw input file
+    leaf = Artifact(path=str(leaf_path), md5=leaf_md5)
+
+    mid_path = tmp_path / "mid.txt"
+    mid_path.write_text("mid-data\n")
+    mid_md5 = compute_md5(mid_path)
+    write_dvc_file(
+        output_path=mid_path,
+        md5=mid_md5,
+        size=mid_path.stat().st_size,
+        cmd="touch mid.txt",
+        deps={str(leaf_path): leaf_md5},
+    )
+    mid = Artifact(
+        path=str(mid_path),
+        md5=mid_md5,
+        computation=Computation(cmd="touch mid.txt", deps=[leaf]),
+    )
+
+    top_path = tmp_path / "top.txt"
+    top_path.write_text("top-data\n")
+    top_md5 = compute_md5(top_path)
+    write_dvc_file(
+        output_path=top_path,
+        md5=top_md5,
+        size=top_path.stat().st_size,
+        cmd="touch top.txt",
+        deps={str(mid_path): mid_md5},
+    )
+    top = Artifact(
+        path=str(top_path),
+        md5=top_md5,
+        computation=Computation(cmd="touch top.txt", deps=[mid]),
+    )
+
+    # Default: prune at fresh — top is fresh, so mid (and leaf) are not visited
+    walked = top.walk_upstream()
+    assert [a.path for a in walked] == [str(top_path)]
+
+    # Disable pruning: full chain is walked
+    walked_full = top.walk_upstream(prune_fresh=False)
+    assert [a.path for a in walked_full] == [str(leaf_path), str(mid_path), str(top_path)]
+
+
+def test_walk_upstream_prune_skips_missing_raw_dep(tmp_path):
+    """A fresh chain stays prunable even when an ancestor's raw input is gone."""
+    os.chdir(tmp_path)
+
+    from dvx.run.dvc_files import write_dvc_file
+    from dvx.run.hash import compute_md5
+
+    raw = tmp_path / "raw.txt"
+    raw.write_text("raw-data\n")
+    raw_md5 = compute_md5(raw)
+
+    a_path = tmp_path / "a.txt"
+    a_path.write_text("a-data\n")
+    a_md5 = compute_md5(a_path)
+    write_dvc_file(
+        output_path=a_path,
+        md5=a_md5,
+        size=a_path.stat().st_size,
+        cmd="touch a.txt",
+        deps={str(raw): raw_md5},
+    )
+
+    b_path = tmp_path / "b.txt"
+    b_path.write_text("b-data\n")
+    b_md5 = compute_md5(b_path)
+    write_dvc_file(
+        output_path=b_path,
+        md5=b_md5,
+        size=b_path.stat().st_size,
+        cmd="touch b.txt",
+        deps={str(a_path): a_md5},
+    )
+
+    # Now delete the raw input — `a` would no longer be runnable from sources,
+    # but `b` is fresh w.r.t. its recorded dep on `a`, so walking from `b`
+    # should not trip over the missing raw.
+    raw.unlink()
+
+    a_artifact = Artifact(
+        path=str(a_path),
+        md5=a_md5,
+        computation=Computation(cmd="touch a.txt", deps=[Artifact(path=str(raw), md5=raw_md5)]),
+    )
+    b_artifact = Artifact(
+        path=str(b_path),
+        md5=b_md5,
+        computation=Computation(cmd="touch b.txt", deps=[a_artifact]),
+    )
+
+    # With pruning (default), only b is visited — a's missing raw never gets checked.
+    walked = b_artifact.walk_upstream()
+    assert [a.path for a in walked] == [str(b_path)]
