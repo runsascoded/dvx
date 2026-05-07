@@ -26,7 +26,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from threading import local
+from threading import Lock, local
 
 
 @dataclass
@@ -58,7 +58,12 @@ class ArtifactStatusDB:
             db_path = self._find_db_path()
         self.db_path = db_path
         self._local = local()  # Thread-local storage for connections
-        self._ensure_schema()
+        # One-shot init: enable WAL on the file and create schema. WAL mode
+        # is persistent in the file, so subsequent per-thread connections
+        # inherit it without re-running `PRAGMA journal_mode=WAL` (which
+        # requires an exclusive lock and ignores `busy_timeout`, racing on
+        # cold start when multiple threads each open their own connection).
+        self._init_db()
 
     def _find_db_path(self) -> Path:
         """Find or create .dvc/dvx.db path."""
@@ -71,40 +76,45 @@ class ArtifactStatusDB:
         # Fall back to cwd/.dvc/dvx.db (will be created)
         return cwd / ".dvc" / "dvx.db"
 
+    def _init_db(self) -> None:
+        """Run one-shot DB setup: WAL mode + schema. Idempotent."""
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(self.db_path), timeout=30.0, isolation_level=None)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS artifact_status (
+                    path TEXT PRIMARY KEY,
+                    mtime REAL NOT NULL,
+                    hash TEXT NOT NULL,
+                    size INTEGER NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_artifact_status_path
+                ON artifact_status(path)
+            """)
+        finally:
+            conn.close()
+
     def _get_connection(self) -> sqlite3.Connection:
-        """Get thread-local database connection."""
+        """Get thread-local database connection.
+
+        WAL mode is already set persistently on the file (see ``_init_db``).
+        Per-thread connections only need ``timeout`` (= ``busy_timeout``)
+        for serializing writers under contention.
+        """
         if not hasattr(self._local, "conn") or self._local.conn is None:
-            # Ensure parent directory exists
-            self.db_path.parent.mkdir(parents=True, exist_ok=True)
             conn = sqlite3.connect(
                 str(self.db_path),
-                timeout=30.0,  # Wait up to 30s for locks
+                timeout=30.0,  # busy_timeout — wait up to 30s for write locks
                 isolation_level=None,  # Autocommit mode
             )
-            # Enable WAL mode for better concurrent access
-            conn.execute("PRAGMA journal_mode=WAL")
-            # Enable foreign keys
             conn.execute("PRAGMA foreign_keys=ON")
             self._local.conn = conn
         return self._local.conn
-
-    def _ensure_schema(self):
-        """Create tables if they don't exist."""
-        conn = self._get_connection()
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS artifact_status (
-                path TEXT PRIMARY KEY,
-                mtime REAL NOT NULL,
-                hash TEXT NOT NULL,
-                size INTEGER NOT NULL,
-                updated_at REAL NOT NULL
-            )
-        """)
-        # Index for quick lookups
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_artifact_status_path
-            ON artifact_status(path)
-        """)
 
     def get(self, path: str | Path) -> ArtifactStatus | None:
         """Get cached status for an artifact.
@@ -193,13 +203,22 @@ class ArtifactStatusDB:
 
 # Module-level singleton for convenience
 _default_db: ArtifactStatusDB | None = None
+_default_db_lock = Lock()
 
 
 def get_status_db() -> ArtifactStatusDB:
-    """Get the default status database instance."""
+    """Get the default status database instance.
+
+    Thread-safe via double-checked locking — multiple worker threads
+    can race here on cold start, and racing constructors used to fight
+    over ``PRAGMA journal_mode=WAL`` (which ignores ``busy_timeout``)
+    and surface as ``database is locked``.
+    """
     global _default_db
     if _default_db is None:
-        _default_db = ArtifactStatusDB()
+        with _default_db_lock:
+            if _default_db is None:
+                _default_db = ArtifactStatusDB()
     return _default_db
 
 
