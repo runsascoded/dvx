@@ -252,6 +252,35 @@ class TestTargetedPull:
         result = runner.invoke(cli, ["pull", "small.txt"])
         assert result.exit_code == 0
 
+    def test_pull_glob_expands_pattern(self, runner, dvc_repo_with_files):
+        """`dvx pull --glob '<pattern>' <target>` must expand the pattern.
+
+        Regression: introduced in 65f993aa8 ("Fix targeted dvx pull for .dvc
+        files"), persisted through 536816f1b's refactor. The targeted-pull
+        path dropped the ``glob`` flag, so the literal pattern string was
+        passed to DVC as a path target → "<pattern> does not exist".
+        """
+        repo_path, _remote_path, _files = dvc_repo_with_files
+        os.chdir(repo_path)
+
+        # Push to remote, remove outputs + clear cache so a real pull is needed
+        subprocess.run(["dvc", "push"], cwd=repo_path, capture_output=True, check=True)
+        for name in ("small.txt", "medium.txt", "large.txt"):
+            (repo_path / name).unlink()
+        import shutil
+        cache_dir = repo_path / ".dvc" / "cache"
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
+
+        # `--glob 'small*.dvc'` must match `small.txt.dvc` only
+        result = runner.invoke(cli, ["pull", "--glob", "small*.dvc"])
+        assert result.exit_code == 0, f"output:\n{result.output}"
+        assert "does not exist" not in result.output
+        assert (repo_path / "small.txt").exists()
+        assert (repo_path / "small.txt").read_text() == "hello world"
+        assert not (repo_path / "medium.txt").exists()
+        assert not (repo_path / "large.txt").exists()
+
 
 class TestDryRunDoesNotTransfer:
     """Tests to verify dry-run doesn't actually transfer files."""

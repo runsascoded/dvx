@@ -7,12 +7,27 @@ import click
 from dvx import Repo
 
 
-def _resolve_pull_targets(targets: list[str]) -> list[str]:
+def _resolve_pull_targets(targets: list[str], glob: bool = False) -> list[str]:
     """Resolve pull targets to .dvc file paths.
 
     Accepts output paths, .dvc paths, and directories.
     DVC's pull accepts .dvc files as targets directly.
+
+    With ``glob=True``, each target is treated as a shell-style pattern
+    and expanded via :func:`glob.glob` (recursive) before resolution.
     """
+    if glob:
+        from glob import glob as _glob
+
+        expanded: list[str] = []
+        for target in targets:
+            matches = sorted(_glob(target, recursive=True))
+            if matches:
+                expanded.extend(matches)
+            else:
+                click.echo(f"  ⚠ {target}: no matches", err=True)
+        targets = expanded
+
     resolved = []
     for target in targets:
         target_path = Path(target)
@@ -241,7 +256,7 @@ def pull(targets, all_branches, all_commits, force, jobs, dry_run, remote, ref, 
 
     if targets:
         # Targeted pull: resolve to .dvc file paths, pass to DVC
-        dvc_targets = _resolve_pull_targets(list(targets))
+        dvc_targets = _resolve_pull_targets(list(targets), glob=glob)
         if not dvc_targets:
             click.echo("Nothing to pull.")
             return
