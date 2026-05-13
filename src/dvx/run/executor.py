@@ -142,6 +142,21 @@ class ParallelExecutor:
         self._cmd_events: dict[str, threading.Event] = {}  # cmd -> completion event
         self._cmd_results: dict[str, bool] = {}  # cmd -> success
 
+        # Co-output coordination. The primary stage (the one that runs the
+        # cmd) waits for every co-output to finish writing its .dvc before
+        # committing + cache-pushing — otherwise ``git add -u`` would miss
+        # late co-outputs and the cache push manifest would drop their
+        # blobs (see specs/done/co-output-push-half-blob.md).
+        # Requires ``max_workers`` ≥ largest cmd-group size; with -j 1 and
+        # a multi-output cmd, the primary's wait would deadlock the pool.
+        self._cmd_artifact_paths: dict[str, list[str]] = {}
+        for a in artifacts:
+            if a.computation and a.computation.cmd:
+                self._cmd_artifact_paths.setdefault(a.computation.cmd, []).append(a.path)
+        self._dvc_done_events: dict[str, threading.Event] = {
+            a.path: threading.Event() for a in artifacts if a.computation is not None
+        }
+
     def execute(self) -> list[ExecutionResult]:
         """Execute all artifacts, respecting dependencies.
 
@@ -487,7 +502,12 @@ class ParallelExecutor:
 
             self._log(f"  ✓ {path}: side-effect completed ({duration:.1f}s)")
             self._show_success_output(result, log_path, has_output)
-            self._handle_stage_output(path, commit_msg_file.name, summary_file.name, stage_env_extras)
+            self._signal_dvc_done(path)
+            co_paths = self._wait_for_co_outputs(cmd, path)
+            self._handle_stage_output(
+                path, commit_msg_file.name, summary_file.name, stage_env_extras,
+                co_paths=co_paths,
+            )
             return ExecutionResult(
                 path=path,
                 success=True,
@@ -550,7 +570,12 @@ class ParallelExecutor:
 
         self._log(f"  ✓ {path}: completed ({duration:.1f}s)")
         self._show_success_output(result, log_path, has_output)
-        self._handle_stage_output(path, commit_msg_file.name, summary_file.name, stage_env_extras)
+        self._signal_dvc_done(path)
+        co_paths = self._wait_for_co_outputs(cmd, path)
+        self._handle_stage_output(
+            path, commit_msg_file.name, summary_file.name, stage_env_extras,
+            co_paths=co_paths,
+        )
         return ExecutionResult(
             path=path,
             success=True,
@@ -559,10 +584,35 @@ class ParallelExecutor:
             dvc_file=dvc_file,
         )
 
+    def _signal_dvc_done(self, path: str) -> None:
+        """Mark ``path``'s .dvc as written, releasing any primary waiting on it."""
+        ev = self._dvc_done_events.get(path)
+        if ev is not None:
+            ev.set()
+
+    def _wait_for_co_outputs(self, cmd: str | None, my_path: str) -> list[str]:
+        """Block until every co-output of ``cmd`` (other than ``my_path``) has
+        finished writing its .dvc. Returns the list of co-output paths.
+
+        Called from the primary stage's thread before commit + cache push so
+        that ``git add -u`` captures every co-output's md5 update and the
+        push manifest includes every co-output's blob.
+        """
+        if not cmd:
+            return []
+        co_paths = [p for p in self._cmd_artifact_paths.get(cmd, []) if p != my_path]
+        for co_path in co_paths:
+            ev = self._dvc_done_events.get(co_path)
+            if ev is not None:
+                ev.wait()
+        return co_paths
+
     def _handle_co_output(self, artifact: Artifact, cmd: str) -> ExecutionResult:
         """Handle an artifact whose command was already run by another artifact.
 
-        Verifies the output exists and updates its .dvc file.
+        Verifies the output exists and updates its .dvc file. Always signals
+        ``_dvc_done_events[path]`` on exit so the primary can proceed even
+        if this co-output fails.
 
         Args:
             artifact: The co-output artifact
@@ -571,6 +621,15 @@ class ParallelExecutor:
         Returns:
             ExecutionResult for this artifact
         """
+        path = artifact.path
+        try:
+            return self._handle_co_output_inner(artifact, cmd)
+        finally:
+            ev = self._dvc_done_events.get(path)
+            if ev is not None:
+                ev.set()
+
+    def _handle_co_output_inner(self, artifact: Artifact, cmd: str) -> ExecutionResult:
         path = artifact.path
         out = Path(path)
 
@@ -625,7 +684,14 @@ class ParallelExecutor:
                 reason=f"co-output error: {e}",
             )
 
-    def _handle_stage_output(self, path: str, commit_msg_path: str, summary_path: str, env_extras: dict | None = None):
+    def _handle_stage_output(
+        self,
+        path: str,
+        commit_msg_path: str,
+        summary_path: str,
+        env_extras: dict | None = None,
+        co_paths: list[str] | None = None,
+    ):
         """Handle post-cmd stage output: commit message, summary, push.
 
         Args:
@@ -633,6 +699,10 @@ class ParallelExecutor:
             commit_msg_path: Path to commit message temp file
             summary_path: Path to summary temp file
             env_extras: Additional temp file paths (e.g. push_file)
+            co_paths: Other artifact paths sharing this cmd (co-outputs).
+                Their .dvc files are included in the cache push manifest
+                so their blobs aren't silently left behind in the local
+                cache (see specs/done/co-output-push-half-blob.md).
         """
         import os
 
@@ -709,7 +779,10 @@ class ParallelExecutor:
                                 self._log("    📤 pushed")
                             else:
                                 self._log(f"    ⚠ push failed: {push_result.stderr.strip()}")
-                            self._push_cache_blobs([f"{path}.dvc"], indent="    ")
+                            dvc_paths = [f"{path}.dvc"]
+                            if co_paths:
+                                dvc_paths.extend(f"{p}.dvc" for p in co_paths)
+                            self._push_cache_blobs(dvc_paths, indent="    ")
                     elif "nothing to commit" in result.stdout:
                         pass  # No changes to commit
                     else:

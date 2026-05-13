@@ -80,6 +80,126 @@ def test_push_end_batches_cache_pushes(runner, repo_with_remote):
         assert _remote_has_blob(remote, md5), f"blob for {name} ({md5}) missing; output:\n{result.output}"
 
 
+def test_push_each_uploads_all_co_output_blobs(runner, repo_with_remote):
+    """``--push each`` must push EVERY co-output's blob, not just the primary's.
+
+    Regression: when one cmd produces multiple outputs (co-outputs), the
+    primary stage's ``_handle_stage_output`` builds the cache-push manifest
+    from only its own ``.dvc``, dropping the co-output's blob. The git
+    commit + git-push pick up both ``.dvc`` files (``git add -u``), so the
+    bug is silent: the .dvc updates land on the remote git ref with new
+    md5s, but the co-output's blob never reaches the data remote. The
+    next day's ``dvx pull`` fails on the dangling md5.
+
+    See ``specs/done/co-output-push-half-blob.md``.
+    """
+    repo, remote = repo_with_remote
+    # Same cmd in both .dvc files triggers the co-output dedup path.
+    # ``sleep`` widens the race window so the second artifact reliably
+    # enters the dedup check while the first is still running.
+    cmd = "sleep 0.1 && echo aaa > a.txt && echo bbb > b.txt"
+    _write_stage(repo, "a.txt", cmd)
+    _write_stage(repo, "b.txt", cmd)
+    # Track the .dvc stubs so ``git add -u`` (in ``_handle_stage_output``)
+    # picks up the md5 updates when DVX rewrites the files.
+    subprocess.run(["git", "add", "a.txt.dvc", "b.txt.dvc"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "stubs"], cwd=repo, check=True, capture_output=True)
+
+    result = runner.invoke(cli, ["run", "--commit", "--push", "each"])
+    assert result.exit_code == 0, result.output
+    # Sanity: the co-output dedup path actually fired (vs. both stages
+    # racing through ``run cmd`` independently — which would also
+    # produce 2 blobs, masking the bug).
+    assert "co-output ready" in result.output, (
+        f"co-output dedup path did not fire — test is invalid:\n{result.output}"
+    )
+
+    md5_a = compute_md5(repo / "a.txt")
+    md5_b = compute_md5(repo / "b.txt")
+    missing = [
+        name for name, md5 in [("a.txt", md5_a), ("b.txt", md5_b)]
+        if not _remote_has_blob(remote, md5)
+    ]
+    assert not missing, (
+        f"co-output blob(s) missing from remote: {missing}\n"
+        f"a.txt md5={md5_a} b.txt md5={md5_b}\n"
+        f"output:\n{result.output}"
+    )
+
+
+def test_push_each_uploads_all_co_output_blobs_3way(runner, repo_with_remote):
+    """Same cmd → 3 outputs. All 3 blobs must reach the remote.
+
+    Generalizes ``test_push_each_uploads_all_co_output_blobs`` past the
+    2-output case the spec reported: ``_wait_for_co_outputs`` has to
+    barrier on every co-output, not just the first one to finish.
+    """
+    repo, remote = repo_with_remote
+    cmd = "sleep 0.1 && echo aaa > a.txt && echo bbb > b.txt && echo ccc > c.txt"
+    for name in ("a.txt", "b.txt", "c.txt"):
+        _write_stage(repo, name, cmd)
+    subprocess.run(
+        ["git", "add", "a.txt.dvc", "b.txt.dvc", "c.txt.dvc"],
+        cwd=repo, check=True, capture_output=True,
+    )
+    subprocess.run(["git", "commit", "-m", "stubs"], cwd=repo, check=True, capture_output=True)
+
+    result = runner.invoke(cli, ["run", "--commit", "--push", "each"])
+    assert result.exit_code == 0, result.output
+    # Two co-outputs (one primary + two waiters).
+    assert result.output.count("co-output ready") == 2, (
+        f"expected 2 co-outputs, got {result.output.count('co-output ready')}:\n{result.output}"
+    )
+
+    missing = [
+        name for name in ("a.txt", "b.txt", "c.txt")
+        if not _remote_has_blob(remote, compute_md5(repo / name))
+    ]
+    assert not missing, f"missing blobs: {missing}\noutput:\n{result.output}"
+
+
+def test_push_each_co_output_failure_does_not_hang(runner, repo_with_remote):
+    """If one co-output isn't produced by the cmd, the primary must still
+    commit + push its own blob — not hang waiting on a dvc-done event
+    that would never fire without the ``try/finally`` in
+    ``_handle_co_output``.
+    """
+    repo, remote = repo_with_remote
+    # cmd produces a.txt but NOT b.txt — b's `_handle_co_output` returns
+    # ``co-output not produced``, must still set its dvc-done event so
+    # the primary's ``_wait_for_co_outputs`` returns.
+    cmd = "sleep 0.1 && echo aaa > a.txt"
+    _write_stage(repo, "a.txt", cmd)
+    _write_stage(repo, "b.txt", cmd)
+    subprocess.run(["git", "add", "a.txt.dvc", "b.txt.dvc"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "stubs"], cwd=repo, check=True, capture_output=True)
+
+    # Run the executor in a worker thread with a hard timeout — without
+    # the ``try/finally`` in ``_handle_co_output``, the primary's wait
+    # would block forever and a regression would hang CI rather than
+    # fail.
+    import threading
+    result_holder: list = []
+    def _go():
+        result_holder.append(runner.invoke(cli, ["run", "--commit", "--push", "each"]))
+    t = threading.Thread(target=_go, daemon=True)
+    t.start()
+    t.join(timeout=30)
+    assert not t.is_alive(), (
+        "executor hung — likely missing dvc-done signal from a failed "
+        "co-output (regression of try/finally in _handle_co_output)"
+    )
+    assert result_holder, "worker produced no result"
+    result = result_holder[0]
+    # The run reports a partial failure (b.txt missing), so exit != 0
+    # is expected. What matters: a.txt's blob still made it to remote.
+    assert "co-output not produced" in result.output, result.output
+    md5_a = compute_md5(repo / "a.txt")
+    assert _remote_has_blob(remote, md5_a), (
+        f"a.txt blob missing despite primary's stage completing:\n{result.output}"
+    )
+
+
 def test_no_cache_push_opt_out(runner, repo_with_remote):
     repo, remote = repo_with_remote
     _write_stage(repo, "out.txt", "echo opt-out > out.txt")
