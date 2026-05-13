@@ -111,6 +111,37 @@ This is simpler but adds freshness-check overhead for each output.
 
 4. **Partial failures**: If the command runs but only produces some outputs, mark the missing ones as failed.
 
+## Commit + Push Semantics
+
+A multi-output cmd is one unit of work: one commit, one cache push.
+
+When `dvx run --commit --push each` (or `--push end`) executes a cmd
+with co-outputs:
+
+- **Primary stage** (the artifact whose thread runs the cmd) writes its
+  `.dvc`, then **blocks until every co-output's `.dvc` is on disk**.
+- `git add -u` then captures every co-output's md5 update, so the
+  commit covers the full set in one go.
+- The cache push manifest is built from `[primary.dvc, *co_outputs.dvc]`,
+  so every co-output's blob — sitting in `.dvc/cache/` from
+  `_handle_co_output` — reaches the remote.
+
+If a co-output fails (its output wasn't produced by the cmd), it still
+signals its dvc-done event via `try/finally`, so the primary's wait
+returns rather than hanging. The failed co-output isn't included in
+the commit (its `.dvc` wasn't rewritten); the primary's blob is still
+pushed.
+
+Requires `max_workers ≥ largest cmd-group size`. With `-j 1` and a
+multi-output cmd, the primary's wait would deadlock the single worker.
+The default `max_workers=None` resolves to `min(32, cpu_count + 4)`, so
+this is safe in practice.
+
+See [specs/done/co-output-push-half-blob.md] for the regression that
+motivated this design.
+
+[specs/done/co-output-push-half-blob.md]: ../specs/done/co-output-push-half-blob.md
+
 ## Future Considerations
 
 - **Explicit multi-output syntax**: Could add optional `co_outputs` field to make the relationship explicit

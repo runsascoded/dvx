@@ -224,6 +224,12 @@ remote). This prevents downstream runs / fresh clones from hitting
 "cache files do not exist neither locally nor on remote". Use
 `-P`/`--no-cache-push` to opt out.
 
+When a single cmd produces multiple outputs (see [`docs/MULTI_OUTPUT.md`]),
+all co-outputs land in one commit and one batched cache push — the
+primary stage waits for every co-output's `.dvc` before committing.
+
+[`docs/MULTI_OUTPUT.md`]: docs/MULTI_OUTPUT.md
+
 Outputs are also copied into the local DVC cache on every `dvx run`, so
 historical versions remain retrievable after subsequent runs overwrite
 the workspace file.
