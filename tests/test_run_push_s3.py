@@ -272,18 +272,19 @@ def test_push_end_batches_cache_pushes(runner, repo_with_remote):
         Stage("b.txt", "running"),
     ]
     # Pre-existing race: per-stage ``git add -u`` + ``git commit`` runs
-    # from each artifact's thread in parallel; the second one's
-    # ``git add -u`` races on ``.git/index.lock`` and is silently
-    # dropped. With ``--push end`` this is harmless — the end-of-run
+    # from each artifact's thread in parallel. On Linux both commits
+    # consistently succeed (each picks up its own .dvc, separate
+    # commits); on macOS the second one's ``git add -u`` sometimes
+    # races on ``.git/index.lock`` and is silently dropped (1 commit).
+    # Both outcomes are valid for ``--push end`` since the end-of-run
     # cache push uses ``executed`` from all results, not the commits.
-    # We assert it observably: 1 commit succeeded, with no per-stage
-    # push or cache push (those are deferred to end).
-    assert len(run.actions) == 1
-    committed = run.actions[0]
-    assert committed.committed in ("Run a", "Run b")
-    assert committed.pushed is None
-    assert committed.cache_blobs is None
-    assert committed.cache_failed is None
+    committed_subjects = {a.committed for a in run.actions}
+    assert committed_subjects in ({"Run a"}, {"Run b"}, {"Run a", "Run b"})
+    for a in run.actions:
+        # No per-stage push / cache push under ``--push end``.
+        assert a.pushed is None
+        assert a.cache_blobs is None
+        assert a.cache_failed is None
     # End-of-run: git push attempted (fails, no remote) + cache push of both blobs.
     assert run.end_pushed is False
     assert run.end_cache_blobs == 2
