@@ -57,8 +57,7 @@ def test_list_cache_blobs(tmp_path):
     assert len(blobs) == 2
 
     md5s = {md5 for md5, _, _ in blobs}
-    assert "abc123def456" in md5s
-    assert "cde789f01234" in md5s
+    assert md5s == {"abc123def456", "cde789f01234"}
 
 
 @pytest.fixture
@@ -114,9 +113,8 @@ def test_get_referenced_hashes(git_repo_with_versions):
     """Get hashes referenced at HEAD."""
     hashes = get_referenced_hashes(repo_path=git_repo_with_versions)
 
-    # Only the current (v3) hash should be referenced at HEAD
-    assert "cccc9999dddd0000eeee1111ffff2222" in hashes
-    assert "aaaa1111bbbb2222cccc3333dddd4444" not in hashes
+    # Only the current (v3) hash should be referenced at HEAD.
+    assert hashes == {"cccc9999dddd0000eeee1111ffff2222"}
 
 
 def test_compute_gc_plan_keep(git_repo_with_versions):
@@ -138,9 +136,11 @@ def test_compute_gc_plan_keep(git_repo_with_versions):
     # Keep 2 → oldest version should be deletable
     keep_hashes, delete_hashes, deletable = compute_gc_plan(keep=2, repo_path=repo)
 
-    assert "aaaa1111bbbb2222cccc3333dddd4444" in delete_hashes
-    assert "eeee5555ffff6666aaaa7777bbbb8888" in keep_hashes
-    assert "cccc9999dddd0000eeee1111ffff2222" in keep_hashes
+    assert keep_hashes == {
+        "eeee5555ffff6666aaaa7777bbbb8888",
+        "cccc9999dddd0000eeee1111ffff2222",
+    }
+    assert delete_hashes == {"aaaa1111bbbb2222cccc3333dddd4444"}
     assert len(deletable) == 1
 
 
@@ -162,7 +162,11 @@ def test_compute_gc_plan_no_flags(git_repo_with_versions):
     # No retention flags → only HEAD hash kept
     keep_hashes, delete_hashes, deletable = compute_gc_plan(repo_path=repo)
 
-    assert "cccc9999dddd0000eeee1111ffff2222" in keep_hashes
+    assert keep_hashes == {"cccc9999dddd0000eeee1111ffff2222"}
+    assert delete_hashes == {
+        "aaaa1111bbbb2222cccc3333dddd4444",
+        "eeee5555ffff6666aaaa7777bbbb8888",
+    }
     assert len(deletable) == 2
 
 
@@ -188,13 +192,16 @@ def test_compute_gc_plan_older_than(git_repo_with_versions):
     # Everything recent → nothing to delete
     assert len(deletable) == 0
 
-    # older_than=0h → everything is "older than 0 hours"... but HEAD is always kept
+    # older_than=0d → everything is "older than 0 days"... but HEAD is always kept
     keep_hashes, delete_hashes, deletable = compute_gc_plan(
         older_than="0d", repo_path=repo,
     )
-    # HEAD hash always kept (referenced), but older versions deletable
-    # Actually 0d means keep nothing by age, but HEAD is still referenced
-    assert "cccc9999dddd0000eeee1111ffff2222" in keep_hashes
+    # HEAD hash always kept (referenced), older versions become deletable.
+    assert keep_hashes == {"cccc9999dddd0000eeee1111ffff2222"}
+    assert delete_hashes == {
+        "aaaa1111bbbb2222cccc3333dddd4444",
+        "eeee5555ffff6666aaaa7777bbbb8888",
+    }
 
 
 def test_compute_gc_plan_keep_and_older_than(git_repo_with_versions):
@@ -238,9 +245,13 @@ def test_compute_gc_plan_target_specific(git_repo_with_versions):
     keep_hashes, delete_hashes, deletable = compute_gc_plan(
         keep=1, targets=["data.txt.dvc"], repo_path=repo,
     )
-    # Keep newest + HEAD (same), delete 2 older
+    # Keep newest + HEAD (same hash), delete 2 older
+    assert keep_hashes == {"cccc9999dddd0000eeee1111ffff2222"}
+    assert delete_hashes == {
+        "aaaa1111bbbb2222cccc3333dddd4444",
+        "eeee5555ffff6666aaaa7777bbbb8888",
+    }
     assert len(deletable) == 2
-    assert "cccc9999dddd0000eeee1111ffff2222" in keep_hashes
 
 
 def test_compute_gc_plan_all_branches(tmp_path):
@@ -279,12 +290,18 @@ def test_compute_gc_plan_all_branches(tmp_path):
         (d / md5[2:]).write_text("data")
 
     # Without --all-branches: only main's hash kept, feat's deleted
-    _, delete_hashes, deletable = compute_gc_plan(repo_path=repo)
-    assert "bbbb2222cccc3333dddd4444eeee5555" in delete_hashes
+    keep_hashes, delete_hashes, deletable = compute_gc_plan(repo_path=repo)
+    assert keep_hashes == {"aaaa1111bbbb2222cccc3333dddd4444"}
+    assert delete_hashes == {"bbbb2222cccc3333dddd4444eeee5555"}
     assert len(deletable) == 1
 
     # With --all-branches: both kept
-    _, delete_hashes, deletable = compute_gc_plan(all_branches=True, repo_path=repo)
+    keep_hashes, delete_hashes, deletable = compute_gc_plan(all_branches=True, repo_path=repo)
+    assert keep_hashes == {
+        "aaaa1111bbbb2222cccc3333dddd4444",
+        "bbbb2222cccc3333dddd4444eeee5555",
+    }
+    assert delete_hashes == set()
     assert len(deletable) == 0
 
 
@@ -325,8 +342,14 @@ def test_gc_cli_dry_run(tmp_path):
     runner = CliRunner()
     result = runner.invoke(cli, ["gc", "--keep", "1", "--dry"])
     assert result.exit_code == 0
-    assert "Would delete 1 blob" in result.output
-    assert "aaaa1111bbbb" in result.output
+
+    # Output shape: "Would delete N blob(s) (<size>):" then one line per
+    # blob ("  <md5-prefix>...  <size>"). md5s are truncated to 12 chars.
+    import re
+    listed_prefixes = set(re.findall(r"^  ([0-9a-f]{12})\.\.\.", result.output, re.M))
+    assert listed_prefixes == {"aaaa1111bbbb"}
+    count_match = re.search(r"Would delete (\d+) blob", result.output)
+    assert count_match is not None and count_match.group(1) == "1"
 
     # Blob should NOT be deleted (dry run)
     assert (cache_dir / "aa" / "aa1111bbbb2222cccc3333dddd4444").exists()

@@ -1,7 +1,13 @@
-"""Tests for dvx CLI commands."""
+"""Tests for dvx CLI commands.
+
+Assertions parse CLI output into structured forms and assert exact
+equality / set equality / regex match. Avoid bare ``in result.output``.
+"""
 
 import os
+import re
 import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -9,6 +15,134 @@ import yaml
 from click.testing import CliRunner
 
 from dvx.cli import cli
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# CLI output parsers
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class ClickHelp:
+    """Structured ``--help`` output. Click renders to a fixed shape.
+
+    ``description`` is the indented prose paragraph(s) after ``Usage:``;
+    ``options`` and ``commands`` are the names parsed from their
+    respective sections.
+    """
+    usage: str
+    description: str  # collapsed multi-line description (newlines → spaces)
+    options: list[str] = field(default_factory=list)        # ["--help", "--force", ...]
+    commands: list[str] = field(default_factory=list)        # ["cache", "run", ...]
+
+
+def parse_click_help(output: str) -> ClickHelp:
+    """Parse a Click ``--help`` output into structured form.
+
+    Click's format:
+        Usage: <usage line>
+
+          <description paragraph, indented 2 spaces>
+
+        Options:
+          --name [args]   <description>
+          ...
+
+        Commands:
+          name  <description>
+          ...
+    """
+    lines = output.split("\n")
+    usage = ""
+    desc_lines: list[str] = []
+    options: list[str] = []
+    commands: list[str] = []
+    section: str | None = None  # "desc" | "options" | "commands"
+    for line in lines:
+        if line.startswith("Usage:"):
+            usage = line[len("Usage:"):].strip()
+            section = "desc"
+            continue
+        if line == "Options:":
+            section = "options"
+            continue
+        if line == "Commands:":
+            section = "commands"
+            continue
+        if section == "desc":
+            stripped = line.strip()
+            if stripped:
+                desc_lines.append(stripped)
+        elif section == "options":
+            m = re.match(r"^  (-{1,2}[\w-]+(?:, -{1,2}[\w-]+)*)", line)
+            if m:
+                # Take the long form (last comma-separated name) for stable IDs.
+                options.append(m.group(1).split(",")[-1].strip())
+        elif section == "commands":
+            m = re.match(r"^  (\S+)", line)
+            if m:
+                commands.append(m.group(1))
+    return ClickHelp(
+        usage=usage,
+        description=" ".join(desc_lines),
+        options=options,
+        commands=commands,
+    )
+
+
+@dataclass
+class Version:
+    dvx: str  # full version string
+    dvc: str
+
+
+_VERSION_RE = re.compile(r"^DVX version: (\S+)\nDVC version: (\S+)\n?$")
+
+
+def parse_version(output: str) -> Version:
+    m = _VERSION_RE.match(output)
+    assert m is not None, f"unexpected version output:\n{output!r}"
+    return Version(dvx=m.group(1), dvc=m.group(2))
+
+
+@dataclass(frozen=True)
+class StatusItem:
+    icon: str  # ✓ | ✗ | ? | ⚠
+    name: str  # e.g. "stale.txt.dvc"
+    reason: str  # the parenthesized cause
+
+
+@dataclass
+class StatusOutput:
+    """Parsed ``dvx status`` output.
+
+    ``groups`` is the count per heading ("Stale (1):"); empty when ``-G``
+    flattens the output. ``items`` is every per-stage line. ``summary``
+    is the trailing ``Fresh: X, Stale: Y, Missing: Z`` counts.
+    """
+    groups: dict[str, int] = field(default_factory=dict)
+    items: list[StatusItem] = field(default_factory=list)
+    summary: dict[str, int] = field(default_factory=dict)
+
+
+_STATUS_GROUP_RE = re.compile(r"^([A-Z][a-z]+) \((\d+)\):$")
+_STATUS_ITEM_RE = re.compile(r"^ *([✓✗⚠?]) (\S+)(?: \((.*)\))?$")
+_STATUS_SUMMARY_RE = re.compile(r"^([A-Z][a-z]+: \d+(?:, [A-Z][a-z]+: \d+)*)$")
+_STATUS_PAIR_RE = re.compile(r"([A-Z][a-z]+): (\d+)")
+
+
+def parse_status(output: str) -> StatusOutput:
+    r = StatusOutput()
+    for line in output.split("\n"):
+        if (m := _STATUS_GROUP_RE.match(line)):
+            r.groups[m.group(1)] = int(m.group(2))
+        elif (m := _STATUS_ITEM_RE.match(line)):
+            r.items.append(StatusItem(
+                icon=m.group(1), name=m.group(2), reason=m.group(3) or "",
+            ))
+        elif _STATUS_SUMMARY_RE.match(line):
+            r.summary = {k: int(v) for k, v in _STATUS_PAIR_RE.findall(line)}
+    return r
 
 
 @pytest.fixture
@@ -45,22 +179,36 @@ def test_cli_help(runner):
     """Test CLI shows help."""
     result = runner.invoke(cli, ["--help"])
     assert result.exit_code == 0
-    assert "DVX - Minimal data version control" in result.output
+
+    help = parse_click_help(result.output)
+    assert help.usage == "cli [OPTIONS] COMMAND [ARGS]..."
+    assert help.description.startswith("DVX - Minimal data version control.")
+    # Top-level CLI exposes these commands. Order is alphabetical via Click.
+    assert set(help.commands) >= {
+        "add", "cache", "cat", "checkout", "diff", "init", "pull", "push",
+        "root", "run", "status", "version",
+    }
 
 
 def test_cli_version(runner):
     """Test version command."""
     result = runner.invoke(cli, ["version"])
     assert result.exit_code == 0
-    assert "DVX version:" in result.output
-    assert "DVC version:" in result.output
+    version = parse_version(result.output)
+    # DVX uses setuptools-scm; version starts with a digit. DVC is pinned via uv.
+    assert re.match(r"^\d", version.dvx), version.dvx
+    assert re.match(r"^\d+\.\d+\.\d+", version.dvc), version.dvc
 
 
 def test_cache_help(runner):
     """Test cache subcommand help."""
     result = runner.invoke(cli, ["cache", "--help"])
     assert result.exit_code == 0
-    assert "Manage DVC cache" in result.output
+
+    help = parse_click_help(result.output)
+    assert help.usage == "cli cache [OPTIONS] COMMAND [ARGS]..."
+    assert help.description.startswith("Manage DVC cache and inspect cached files.")
+    assert set(help.commands) == {"dir", "md5", "path"}
 
 
 def test_cache_md5(runner, tmp_path):
@@ -132,10 +280,16 @@ def test_run_help(runner):
     """Test run command help."""
     result = runner.invoke(cli, ["run", "--help"])
     assert result.exit_code == 0
-    assert "Execute artifact computations" in result.output
-    assert "--dry-run" in result.output
-    assert "--force" in result.output
-    assert "--jobs" in result.output
+    help = parse_click_help(result.output)
+    assert help.usage == "cli run [OPTIONS] [TARGETS]..."
+    assert help.description.startswith("Execute artifact computations from .dvc files.")
+    # The `run` command exposes these flags. Exact set match guards
+    # against unintended additions / removals to the CLI surface.
+    assert set(help.options) == {
+        "--force", "--force-upstream", "--cached", "--jobs", "--commit",
+        "--dry-run", "--no-provenance", "--push", "--no-cache-push",
+        "--no-prune-fresh", "--verbose", "--help",
+    }
 
 
 def test_run_no_dvc_files(runner, tmp_path):
@@ -144,7 +298,11 @@ def test_run_no_dvc_files(runner, tmp_path):
 
     result = runner.invoke(cli, ["run"])
     assert result.exit_code != 0
-    assert "No .dvc files found" in result.output
+    # ClickException renders as "Error: <msg>" + trailing newlines.
+    assert result.output.rstrip().split("\n") == [
+        "Error: No .dvc files found.",
+        "Specify targets or run from a directory with .dvc files.",
+    ]
 
 
 def test_run_dry_run(runner, tmp_path):
@@ -171,8 +329,23 @@ def test_run_dry_run(runner, tmp_path):
         yaml.dump(dvc_content, f)
 
     result = runner.invoke(cli, ["run", "--dry-run"])
-    # Dry run should succeed (even if file doesn't exist)
-    assert "Dry run" in result.output or "Summary" in result.output
+    assert result.exit_code == 0
+    # The Summary block (echoed via click) appears before the stderr
+    # writes from the executor in CliRunner's captured output. Assert
+    # the full literal layout — both blocks present with exact counts
+    # and the per-stage "would run" status line.
+    assert result.output.split("\n") == [
+        "",
+        "Summary:",
+        "  Total: 1",
+        "  Executed: 1",
+        "  Skipped: 0",
+        "Execution plan: 1 levels, 1 computations",
+        "",
+        "Dry run - showing what would execute:",
+        "  output.txt: would run",
+        "",
+    ]
 
 
 def test_cat_missing_cache(runner, tmp_path):
@@ -199,7 +372,8 @@ def test_cat_missing_cache(runner, tmp_path):
 
     result = runner.invoke(cli, ["cat", "data.txt"])
     assert result.exit_code != 0
-    assert "Cache file not found" in result.output
+    # ClickException prefixes "Error: " on stderr; captured into result.output.
+    assert result.output.startswith("Error: Cache file not found"), result.output
 
 
 def test_init_command(runner, tmp_path):
@@ -211,7 +385,10 @@ def test_init_command(runner, tmp_path):
 
     result = runner.invoke(cli, ["init"])
     assert result.exit_code == 0
-    assert "Initialized DVX repository" in result.output
+    # DVC's "Initialized DVC repository." goes to the OS stderr stream
+    # directly (DVC's logger bypasses Click capture); ``result.output``
+    # contains only DVX's click.echo.
+    assert result.output == "Initialized DVX repository.\n"
     assert (tmp_path / ".dvc").exists()
 
 
@@ -243,7 +420,9 @@ def test_diff_help(runner):
     """Test diff command help."""
     result = runner.invoke(cli, ["diff", "--help"])
     assert result.exit_code == 0
-    assert "Diff DVC-tracked files between commits" in result.output
+    help = parse_click_help(result.output)
+    assert help.usage == "cli diff [OPTIONS] [cmd...] <path>"
+    assert help.description.startswith("Diff DVC-tracked files between commits.")
 
 
 def test_add_recursive_flag(runner, temp_dvc_repo):
@@ -411,16 +590,13 @@ def test_status_dep_changed(runner, temp_dvc_repo):
     result = runner.invoke(cli, ["status"])
     assert result.exit_code == 0
 
-    # Parse output lines
-    lines = result.output.strip().split("\n")
-
-    # Find output.txt line - should show dep changed, not data changed
-    output_lines = [l.lstrip() for l in lines if "output.txt" in l]
-    assert len(output_lines) == 1
-    output_line = output_lines[0]
-    assert output_line.startswith("✗")
-    assert "dep changed" in output_line
-    assert "input.txt" in output_line
+    status = parse_status(result.output)
+    by_name = {item.name: item for item in status.items}
+    # output.txt.dvc is stale with dep-changed reason (not data-changed).
+    output_item = by_name["output.txt.dvc"]
+    assert output_item == StatusItem(
+        icon="✗", name="output.txt.dvc", reason="dep changed: input.txt",
+    )
 
 
 def test_run_discovers_dvc_files_recursively(runner, tmp_path):
@@ -451,10 +627,9 @@ def test_run_discovers_dvc_files_recursively(runner, tmp_path):
     result = runner.invoke(cli, ["run", "--dry-run"])
     assert result.exit_code == 0
 
-    # All three .dvc files should be discovered
-    assert "top.txt" in result.output
-    assert "mid.txt" in result.output
-    assert "deep.txt" in result.output
+    # Parse "<artifact>: would run" lines from dry-run output.
+    discovered = re.findall(r"^  (\S+): would run$", result.output, re.M)
+    assert set(discovered) == {"top.txt", "sub1/mid.txt", "sub1/sub2/deep.txt"}
 
 
 def test_status_transitive_staleness(runner, tmp_path):
@@ -503,14 +678,14 @@ def test_status_transitive_staleness(runner, tmp_path):
     result = runner.invoke(cli, ["status", "-v"])
     assert result.exit_code == 0
 
-    # step_a should be directly stale (✗)
-    assert "✗" in result.output
-    assert "step_a" in result.output
-
-    # step_b should be transitively stale (⚠)
-    assert "⚠" in result.output
-    assert "step_b" in result.output
-    assert "upstream stale" in result.output
+    status = parse_status(result.output)
+    by_name = {item.name: item for item in status.items}
+    # step_a is directly stale (✗ icon, "data changed" reason).
+    assert by_name["step_a.txt.dvc"].icon == "✗"
+    # step_b is transitively stale (⚠ icon, "upstream stale: <ancestor>" reason).
+    step_b = by_name["step_b.txt.dvc"]
+    assert step_b.icon == "⚠"
+    assert step_b.reason == "upstream stale: step_a.txt"
 
 
 @pytest.fixture
@@ -545,67 +720,70 @@ def test_status_grouped_by_default(runner, mixed_status_repo):
     result = runner.invoke(cli, ["status"])
     assert result.exit_code == 0
 
-    out = result.output
-    stale_idx = out.index("Stale (1)")
-    missing_idx = out.index("Missing (1)")
-    # Stale group appears before missing per GROUP_ORDER
-    assert stale_idx < missing_idx
-    assert "stale.txt.dvc" in out
-    assert "missing.txt.dvc" in out
-    # Fresh hidden by default
-    assert "Fresh (" not in out
-    assert "fresh.txt.dvc" not in out
+    status = parse_status(result.output)
+    # Stale group appears before Missing per GROUP_ORDER; dict preserves
+    # insertion order so comparing the list of group keys captures that.
+    assert list(status.groups.keys()) == ["Stale", "Missing"]
+    assert status.groups == {"Stale": 1, "Missing": 1}
+    # Items are the per-stage lines. Fresh is hidden by default → not listed.
+    assert sorted(item.name for item in status.items) == ["missing.txt.dvc", "stale.txt.dvc"]
+    assert status.summary == {"Fresh": 1, "Stale": 1, "Missing": 1}
 
 
 def test_status_no_group(runner, mixed_status_repo):
     """-G disables grouping; no headers."""
     result = runner.invoke(cli, ["status", "-G"])
     assert result.exit_code == 0
-    assert "Stale (" not in result.output
-    assert "Missing (" not in result.output
-    assert "stale.txt.dvc" in result.output
-    assert "missing.txt.dvc" in result.output
+    status = parse_status(result.output)
+    assert status.groups == {}
+    assert sorted(item.name for item in status.items) == ["missing.txt.dvc", "stale.txt.dvc"]
 
 
 def test_status_omit_missing(runner, mixed_status_repo):
     """-x missing hides missing paths."""
     result = runner.invoke(cli, ["status", "-x", "missing"])
     assert result.exit_code == 0
-    assert "stale.txt.dvc" in result.output
-    assert "missing.txt.dvc" not in result.output
-    assert "Missing (" not in result.output
+    status = parse_status(result.output)
+    assert status.groups == {"Stale": 1}
+    assert [item.name for item in status.items] == ["stale.txt.dvc"]
 
 
 def test_status_omit_prefix(runner, mixed_status_repo):
     """-x m (prefix) also hides missing."""
     result = runner.invoke(cli, ["status", "-x", "m"])
     assert result.exit_code == 0
-    assert "missing.txt.dvc" not in result.output
+    assert [item.name for item in parse_status(result.output).items] == ["stale.txt.dvc"]
 
 
 def test_status_include_only(runner, mixed_status_repo):
     """-s stale shows only stale, hides missing even though not omitted."""
     result = runner.invoke(cli, ["status", "-s", "stale"])
     assert result.exit_code == 0
-    assert "stale.txt.dvc" in result.output
-    assert "missing.txt.dvc" not in result.output
-    assert "fresh.txt.dvc" not in result.output
+    assert [item.name for item in parse_status(result.output).items] == ["stale.txt.dvc"]
 
 
 def test_status_include_prefix_comma_sep(runner, mixed_status_repo):
     """-s s,m accepts comma-separated prefixes."""
     result = runner.invoke(cli, ["status", "-s", "s,m"])
     assert result.exit_code == 0
-    assert "stale.txt.dvc" in result.output
-    assert "missing.txt.dvc" in result.output
-    assert "fresh.txt.dvc" not in result.output
+    names = sorted(item.name for item in parse_status(result.output).items)
+    assert names == ["missing.txt.dvc", "stale.txt.dvc"]
 
 
 def test_status_unknown_status(runner, mixed_status_repo):
     """Unknown status name is rejected."""
     result = runner.invoke(cli, ["status", "-s", "bogus"])
     assert result.exit_code != 0
-    assert "unknown status" in result.output
+    # Click renders ``Usage:`` + ``Try 'cli status --help' for help.`` +
+    # ``Error: Invalid value: unknown status 'bogus' (...)`` on validation
+    # failure. Assert the full layout.
+    assert result.output.rstrip().split("\n") == [
+        "Usage: cli status [OPTIONS] [TARGETS]...",
+        "Try 'cli status --help' for help.",
+        "",
+        "Error: Invalid value: unknown status 'bogus' "
+        "(expected one of ['fresh', 'stale', 'missing', 'error', 'transitive'])",
+    ]
 
 
 def test_status_json_respects_filter(runner, mixed_status_repo):
