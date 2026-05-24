@@ -219,6 +219,84 @@ def _get_cache_path_for_ref(
         return CacheResult(CacheStatus.NOT_TRACKED, error=str(e))
 
 
+def _is_git_tracked_at_ref(dvc_path: str, ref: str | None) -> bool:
+    """Return True if the .dvc file at the given ref has ``meta.git_tracked: true``.
+
+    For ``ref=None``, reads from the worktree; otherwise reads via ``git show``.
+    Missing .dvc / parse errors return False (so callers fall back to cache lookup).
+    """
+    import subprocess
+
+    import yaml
+
+    try:
+        if ref:
+            r = subprocess.run(
+                ["git", "show", f"{ref}:{dvc_path}"],
+                capture_output=True,
+                text=True,
+                check=False,
+                cwd=_find_dvc_root(),
+            )
+            if r.returncode != 0:
+                return False
+            content = r.stdout
+        else:
+            if not os.path.exists(dvc_path):
+                return False
+            with open(dvc_path) as f:
+                content = f.read()
+        loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+        data = yaml.load(content, Loader=loader)  # noqa: S506
+        return bool(data and data.get("meta", {}).get("git_tracked"))
+    except Exception:
+        return False
+
+
+def _materialize_from_git(data_path: str, ref: str, tmp_dir) -> CacheResult:
+    """Write ``git show <ref>:<data_path>`` to a file in ``tmp_dir``.
+
+    The temp filename is keyed on the git blob OID, so identical content
+    across refs reuses the same file and different content always gets
+    distinct files (truncating ``ref`` directly would collide on e.g.
+    ``HEAD^`` vs ``HEAD^^``).
+    """
+    import subprocess
+
+    root_dir = _find_dvc_root()
+    # Resolve to blob OID for unique-and-stable filename.
+    blob_oid_r = subprocess.run(
+        ["git", "rev-parse", f"{ref}:{data_path}"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=root_dir,
+    )
+    if blob_oid_r.returncode != 0:
+        return CacheResult(
+            CacheStatus.NOT_TRACKED,
+            error=f"{data_path} not tracked in git at {ref}: {blob_oid_r.stderr.strip()}",
+        )
+    blob_oid = blob_oid_r.stdout.strip()
+    safe_name = data_path.replace(os.sep, "__")
+    out_path = tmp_dir / f"{blob_oid}__{safe_name}"
+    if out_path.exists():
+        return CacheResult(CacheStatus.OK, path=str(out_path))
+    r = subprocess.run(
+        ["git", "cat-file", "blob", blob_oid],
+        capture_output=True,
+        check=False,
+        cwd=root_dir,
+    )
+    if r.returncode != 0:
+        return CacheResult(
+            CacheStatus.NOT_TRACKED,
+            error=f"git cat-file failed for {blob_oid}: {r.stderr.decode(errors='replace').strip()}",
+        )
+    out_path.write_bytes(r.stdout)
+    return CacheResult(CacheStatus.OK, path=str(out_path))
+
+
 def _resolve_with_pull(
     dvc_path: str,
     ref: str | None,
@@ -568,81 +646,93 @@ def diff(
     # Check if this is a file inside a DVC-tracked directory
     parent_dvc_info = _find_parent_dvc_file(data_path)
 
-    # Get cache paths with better error handling
-    def _resolve(dvc_path_: str, ref_: str | None) -> CacheResult:
-        return _resolve_with_pull(dvc_path_, ref_, None, pull, remote)
+    # Resolve cache paths. For git-tracked files (``meta.git_tracked: true``),
+    # the content is in git rather than DVC's cache/remote — materialize via
+    # ``git show <ref>:<data_path>`` into a temp dir and bypass the cache lookup.
+    import tempfile
+    from pathlib import Path as _Path
 
-    def _resolve_in_dir(parent_dvc_: str, ref_: str | None, rel_: str) -> CacheResult:
-        return _resolve_with_pull(parent_dvc_, ref_, rel_, pull, remote)
+    with tempfile.TemporaryDirectory(prefix="dvx-diff-") as _tmp:
+        tmp_dir = _Path(_tmp)
 
-    result1 = _resolve(dvc_path, before)
-    if result1.status == CacheStatus.NOT_TRACKED and parent_dvc_info:
-        # Try looking up as file inside directory
-        parent_dvc, rel = parent_dvc_info
-        result1 = _resolve_in_dir(parent_dvc, before, rel)
+        def _resolve(dvc_path_: str, ref_: str | None) -> CacheResult:
+            if ref_ is not None and _is_git_tracked_at_ref(dvc_path_, ref_):
+                return _materialize_from_git(data_path, ref_, tmp_dir)
+            return _resolve_with_pull(dvc_path_, ref_, None, pull, remote)
 
-    if after is None:
-        # Compare to working tree - use the actual file if it exists
-        if os.path.exists(data_path):
-            path2 = data_path
-            result2 = None  # Using actual file, not cache
+        def _resolve_in_dir(parent_dvc_: str, ref_: str | None, rel_: str) -> CacheResult:
+            if ref_ is not None and _is_git_tracked_at_ref(parent_dvc_, ref_):
+                return _materialize_from_git(data_path, ref_, tmp_dir)
+            return _resolve_with_pull(parent_dvc_, ref_, rel_, pull, remote)
+
+        result1 = _resolve(dvc_path, before)
+        if result1.status == CacheStatus.NOT_TRACKED and parent_dvc_info:
+            # Try looking up as file inside directory
+            parent_dvc, rel = parent_dvc_info
+            result1 = _resolve_in_dir(parent_dvc, before, rel)
+
+        if after is None:
+            # Compare to working tree - use the actual file if it exists
+            if os.path.exists(data_path):
+                path2 = data_path
+                result2 = None  # Using actual file, not cache
+            else:
+                result2 = _resolve(dvc_path, None)
+                if result2.status == CacheStatus.NOT_TRACKED and parent_dvc_info:
+                    parent_dvc, rel = parent_dvc_info
+                    result2 = _resolve_in_dir(parent_dvc, None, rel)
+                path2 = result2.path if result2 and result2.exists else None
         else:
-            result2 = _resolve(dvc_path, None)
+            result2 = _resolve(dvc_path, after)
             if result2.status == CacheStatus.NOT_TRACKED and parent_dvc_info:
                 parent_dvc, rel = parent_dvc_info
-                result2 = _resolve_in_dir(parent_dvc, None, rel)
-            path2 = result2.path if result2 and result2.exists else None
-    else:
-        result2 = _resolve(dvc_path, after)
-        if result2.status == CacheStatus.NOT_TRACKED and parent_dvc_info:
-            parent_dvc, rel = parent_dvc_info
-            result2 = _resolve_in_dir(parent_dvc, after, rel)
-        path2 = result2.path if result2.exists else None
+                result2 = _resolve_in_dir(parent_dvc, after, rel)
+            path2 = result2.path if result2.exists else None
 
-    # Check for cache missing errors (distinct from "file doesn't exist at revision")
-    hint = "Cache is missing from the remote." if pull else "Run with -p/--pull to fetch from remote (or 'dvx pull -R <ref> <path>')."
-    if result1.status == CacheStatus.CACHE_MISSING:
-        raise click.ClickException(f"Cache missing for '{before}': {result1.error}\n{hint}")
-    if result2 is not None and result2.status == CacheStatus.CACHE_MISSING:
-        after_ref = after or "working tree"
-        raise click.ClickException(f"Cache missing for '{after_ref}': {result2.error}\n{hint}")
+        # Check for cache missing errors (distinct from "file doesn't exist at revision")
+        hint = "Cache is missing from the remote." if pull else "Run with -p/--pull to fetch from remote (or 'dvx pull -R <ref> <path>')."
+        if result1.status == CacheStatus.CACHE_MISSING:
+            raise click.ClickException(f"Cache missing for '{before}': {result1.error}\n{hint}")
+        if result2 is not None and result2.status == CacheStatus.CACHE_MISSING:
+            after_ref = after or "working tree"
+            raise click.ClickException(f"Cache missing for '{after_ref}': {result2.error}\n{hint}")
 
-    # Extract path1 (None means file doesn't exist at that revision - legitimate add/delete)
-    path1 = result1.path if result1.exists else None
+        # Extract path1 (None means file doesn't exist at that revision - legitimate add/delete)
+        path1 = result1.path if result1.exists else None
 
-    if result1.status == CacheStatus.NOT_TRACKED and (result2 is None or result2.status == CacheStatus.NOT_TRACKED):
-        raise click.ClickException(f"Could not find {dvc_path} at either revision")
+        if result1.status == CacheStatus.NOT_TRACKED and (result2 is None or result2.status == CacheStatus.NOT_TRACKED):
+            raise click.ClickException(f"Could not find {dvc_path} at either revision")
 
-    # Check if it's a directory (cache paths for dirs end with .dir)
-    is_dir = (path1 and path1.endswith(".dir")) or (path2 and path2.endswith(".dir"))
-    if is_dir:
-        ctx.exit(_diff_directory(path1, path2, data_path, after))
+        # Check if it's a directory (cache paths for dirs end with .dir)
+        is_dir = (path1 and path1.endswith(".dir")) or (path2 and path2.endswith(".dir"))
+        if is_dir:
+            ctx.exit(_diff_directory(path1, path2, data_path, after))
 
-    # Run diff
-    if cmds:
-        returncode = _run_pipeline_diff(
-            path1,
-            path2,
-            cmds,
-            color=color,
-            unified=unified,
-            ignore_whitespace=ignore_whitespace,
-            verbose=verbose,
-            shell=not no_shell,
-            shell_executable=shell_executable,
-            both=both,
-            pipefail=pipefail,
-        )
-    else:
-        returncode = _run_diff(
-            path1,
-            path2,
-            color=color,
-            unified=unified,
-            ignore_whitespace=ignore_whitespace,
-        )
+        # Run diff
+        if cmds:
+            returncode = _run_pipeline_diff(
+                path1,
+                path2,
+                cmds,
+                color=color,
+                unified=unified,
+                ignore_whitespace=ignore_whitespace,
+                verbose=verbose,
+                shell=not no_shell,
+                shell_executable=shell_executable,
+                both=both,
+                pipefail=pipefail,
+            )
+        else:
+            returncode = _run_diff(
+                path1,
+                path2,
+                color=color,
+                unified=unified,
+                ignore_whitespace=ignore_whitespace,
+            )
 
-    ctx.exit(returncode)
+        ctx.exit(returncode)
 
 
 # Export the command

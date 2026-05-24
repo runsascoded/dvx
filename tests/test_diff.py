@@ -102,6 +102,67 @@ def two_commits(dvc_repo_with_remote):
     return repo_path, remote_path, sha_v1, sha_v2
 
 
+@pytest.fixture
+def git_tracked_two_commits(dvc_repo_with_remote):
+    """Two commits of ``data.txt`` (``v1``, ``v2``) tracked by BOTH git and
+    DVC (``meta.git_tracked: true``), with NO cache/remote round-trips.
+
+    Returns ``(repo, sha_v1, sha_v2)``. The fixture verifies that no DVC
+    cache blobs are populated for either revision — this proves the diff
+    must come from git, not from the cache.
+    """
+    repo_path, _remote = dvc_repo_with_remote
+
+    def run(*args):
+        subprocess.run(args, cwd=repo_path, capture_output=True, check=True)
+
+    def rev(spec):
+        return subprocess.run(
+            ["git", "rev-parse", spec],
+            cwd=repo_path, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+    def write_dvc(md5: str, size: int):
+        # Minimal .dvc with meta.git_tracked: true (mirrors `dvx import-url --git`'s output).
+        (repo_path / "data.txt.dvc").write_text(
+            "outs:\n"
+            f"- md5: {md5}\n"
+            f"  size: {size}\n"
+            "  hash: md5\n"
+            "  path: data.txt\n"
+            "meta:\n"
+            "  git_tracked: true\n"
+        )
+
+    import hashlib
+
+    def md5_of(text: str) -> str:
+        return hashlib.md5(text.encode()).hexdigest()
+
+    v1_text = "line A\nline B\n"
+    (repo_path / "data.txt").write_text(v1_text)
+    write_dvc(md5_of(v1_text), len(v1_text))
+    run("git", "add", "data.txt", "data.txt.dvc")
+    run("git", "commit", "-m", "v1 (git-tracked)")
+    sha_v1 = rev("HEAD")
+
+    v2_text = "line A\nline C\n"
+    (repo_path / "data.txt").write_text(v2_text)
+    write_dvc(md5_of(v2_text), len(v2_text))
+    run("git", "add", "data.txt", "data.txt.dvc")
+    run("git", "commit", "-m", "v2 (git-tracked)")
+    sha_v2 = rev("HEAD")
+
+    # Sanity: neither blob should be in the cache (git_tracked files don't
+    # use the DVC cache by default).
+    cache_root = repo_path / ".dvc" / "cache"
+    if cache_root.exists():
+        files = [p for p in cache_root.rglob("*") if p.is_file()]
+        assert files == [], f"expected no cache files, got: {files}"
+
+    return repo_path, sha_v1, sha_v2
+
+
 def _cache_md5_for_ref(repo_path: Path, dvc_path: str, ref: str) -> str:
     """Read the md5 from a ``.dvc`` file at a git ref."""
     out = subprocess.run(
@@ -221,3 +282,91 @@ class TestDiffPull:
                 "Cache is missing from the remote.",
             ],
         )
+
+
+class TestDiffGitTracked:
+    """``meta.git_tracked: true`` .dvc files: content lives in git, so diff
+    must use ``git show <ref>:<path>`` and never touch the cache/remote."""
+
+    def test_git_tracked_diff_without_cache_or_remote(self, runner, git_tracked_two_commits):
+        """``dvx diff`` resolves git-tracked files via ``git show``, with
+        no cache populated and no pull attempted (no ``-p`` needed)."""
+        repo_path, sha_v1, sha_v2 = git_tracked_two_commits
+
+        result = _run_diff_in(repo_path, runner, "-r", f"{sha_v1}..{sha_v2}", "data.txt")
+
+        # Exit 1 = diff(1) reported the files differ. Confirms git_tracked
+        # path resolution worked end-to-end without needing the cache.
+        assert result.exit_code == 1
+        # Cache is still empty after the diff (we never went near it).
+        cache_root = repo_path / ".dvc" / "cache"
+        files = [p for p in cache_root.rglob("*") if p.is_file()] if cache_root.exists() else []
+        assert files == []
+
+    def test_git_tracked_diff_no_remote_configured(self, runner, git_tracked_two_commits):
+        """A repo with no remote configured at all should still diff
+        git-tracked files happily (no cache/remote interaction needed)."""
+        repo_path, sha_v1, sha_v2 = git_tracked_two_commits
+        subprocess.run(
+            ["dvc", "remote", "remove", "local"],
+            cwd=repo_path, capture_output=True, check=True,
+        )
+
+        result = _run_diff_in(repo_path, runner, "-r", f"{sha_v1}..{sha_v2}", "data.txt")
+        assert result.exit_code == 1
+
+    def test_git_tracked_diff_adjacent_caret_refs(self, runner, dvc_repo_with_remote):
+        """Regression: `<sha-prefix>^` (12 chars) and `<sha-prefix>^^`
+        (13 chars) used to truncate to the same temp filename — the second
+        materialization would overwrite the first and ``diff(1)`` saw two
+        identical files (exit 0 instead of 1)."""
+        repo_path, _remote = dvc_repo_with_remote
+
+        def run(*args):
+            subprocess.run(args, cwd=repo_path, capture_output=True, check=True)
+
+        def rev(spec):
+            return subprocess.run(
+                ["git", "rev-parse", spec],
+                cwd=repo_path, capture_output=True, text=True, check=True,
+            ).stdout.strip()
+
+        import hashlib
+        def md5_of(t): return hashlib.md5(t.encode()).hexdigest()
+
+        def commit_version(text, msg):
+            (repo_path / "data.txt").write_text(text)
+            (repo_path / "data.txt.dvc").write_text(
+                "outs:\n"
+                f"- md5: {md5_of(text)}\n"
+                f"  size: {len(text)}\n"
+                "  hash: md5\n"
+                "  path: data.txt\n"
+                "meta:\n"
+                "  git_tracked: true\n"
+            )
+            run("git", "add", "data.txt", "data.txt.dvc")
+            run("git", "commit", "-m", msg)
+            return rev("HEAD")
+
+        commit_version("v1\n", "v1")
+        commit_version("v2\n", "v2")
+        sha_v3 = commit_version("v3\n", "v3")
+
+        # `<11>^` (12 chars) ≠ `<11>^^` (13 chars), but the old code's
+        # `ref[:12]` truncation collapsed both to `<11>^`. Asserting both
+        # refs map to distinct content (v1 vs v2) here proves the bug is
+        # fixed.
+        prefix11 = sha_v3[:11]
+        result = _run_diff_in(repo_path, runner, "-r", f"{prefix11}^^..{prefix11}^", "data.txt")
+        assert result.exit_code == 1
+
+    def test_git_tracked_diff_vs_worktree(self, runner, git_tracked_two_commits):
+        """Default refspec (HEAD vs worktree) on a git-tracked file: the
+        worktree side just uses the on-disk file, the HEAD side comes from
+        ``git show``. Modify the worktree and assert exit 1."""
+        repo_path, _sha_v1, _sha_v2 = git_tracked_two_commits
+        (repo_path / "data.txt").write_text("line A\nline Z\nline X\n")
+
+        result = _run_diff_in(repo_path, runner, "data.txt")
+        assert result.exit_code == 1
