@@ -219,6 +219,36 @@ def _get_cache_path_for_ref(
         return CacheResult(CacheStatus.NOT_TRACKED, error=str(e))
 
 
+def _resolve_with_pull(
+    dvc_path: str,
+    ref: str | None,
+    file_in_dir: str | None,
+    pull: bool,
+    remote: str | None,
+) -> CacheResult:
+    """Resolve cache path, optionally pulling missing blobs from remote.
+
+    Retries up to 3 times so a directory miss (manifest, then inner-file blob)
+    can resolve in one call. Stops if the same md5 fails to materialize after a
+    pull (i.e. it's missing from the remote too).
+    """
+    result = _get_cache_path_for_ref(dvc_path, ref, file_in_dir)
+    if not pull:
+        return result
+    from dvx.cache import pull_hashes
+
+    pulled: set[str] = set()
+    for _ in range(3):
+        if result.status != CacheStatus.CACHE_MISSING or not result.md5:
+            break
+        if result.md5 in pulled:
+            break
+        pull_hashes([result.md5], remote=remote)
+        pulled.add(result.md5)
+        result = _get_cache_path_for_ref(dvc_path, ref, file_in_dir)
+    return result
+
+
 def _run_diff(
     path1: str | None,
     path2: str | None,
@@ -416,9 +446,11 @@ def _diff_directory(path1: str | None, path2: str | None, data_path: str, after:
 @click.command()
 @click.option("-b", "--both", is_flag=True, help="Merge stderr into stdout in pipeline commands.")
 @click.option("-c/-C", "--color/--no-color", default=None, help="Force or prevent colorized output.")
+@click.option("-p", "--pull", is_flag=True, help="If cache blobs for either revision are missing locally, fetch them from the remote (uses default remote unless --remote is set).")
 @click.option("-P", "--pipefail", is_flag=True, help="Check all pipeline commands for errors (like bash's `set -o pipefail`); default only checks last command.")
 @click.option("-r", "--refspec", help="<commit1>..<commit2> or <commit> (compare to worktree).")
 @click.option("-R", "--ref", help="Shorthand for -r <ref>^..<ref> (compare commit to parent).")
+@click.option("--remote", help="Remote storage to pull from when -p/--pull is set (defaults to the configured default remote).")
 @click.option("-e", "--shell-executable", help="Shell to use for executing commands.")
 @click.option("-S", "--no-shell", is_flag=True, help="Don't use shell for subprocess execution.")
 @click.option("-s", "--summary", is_flag=True, help="Show summary of changes (files and hashes) instead of content diff.")
@@ -432,9 +464,11 @@ def diff(
     ctx,
     both,
     color,
+    pull,
     pipefail,
     refspec,
     ref,
+    remote,
     shell_executable,
     no_shell,
     summary,
@@ -466,6 +500,10 @@ def diff(
     \b
       dvx diff -R abc123 wc -l data.csv
         Compare line count of data.csv at commit abc123 vs its parent.
+
+    \b
+      dvx diff -p -R abc123 data.csv
+        Auto-pull missing cache blobs for either revision from the remote.
     """
     import json as json_module
 
@@ -531,11 +569,17 @@ def diff(
     parent_dvc_info = _find_parent_dvc_file(data_path)
 
     # Get cache paths with better error handling
-    result1 = _get_cache_path_for_ref(dvc_path, before)
+    def _resolve(dvc_path_: str, ref_: str | None) -> CacheResult:
+        return _resolve_with_pull(dvc_path_, ref_, None, pull, remote)
+
+    def _resolve_in_dir(parent_dvc_: str, ref_: str | None, rel_: str) -> CacheResult:
+        return _resolve_with_pull(parent_dvc_, ref_, rel_, pull, remote)
+
+    result1 = _resolve(dvc_path, before)
     if result1.status == CacheStatus.NOT_TRACKED and parent_dvc_info:
         # Try looking up as file inside directory
         parent_dvc, rel = parent_dvc_info
-        result1 = _get_cache_path_for_ref(parent_dvc, before, file_in_dir=rel)
+        result1 = _resolve_in_dir(parent_dvc, before, rel)
 
     if after is None:
         # Compare to working tree - use the actual file if it exists
@@ -543,30 +587,25 @@ def diff(
             path2 = data_path
             result2 = None  # Using actual file, not cache
         else:
-            result2 = _get_cache_path_for_ref(dvc_path, None)
+            result2 = _resolve(dvc_path, None)
             if result2.status == CacheStatus.NOT_TRACKED and parent_dvc_info:
                 parent_dvc, rel = parent_dvc_info
-                result2 = _get_cache_path_for_ref(parent_dvc, None, file_in_dir=rel)
+                result2 = _resolve_in_dir(parent_dvc, None, rel)
             path2 = result2.path if result2 and result2.exists else None
     else:
-        result2 = _get_cache_path_for_ref(dvc_path, after)
+        result2 = _resolve(dvc_path, after)
         if result2.status == CacheStatus.NOT_TRACKED and parent_dvc_info:
             parent_dvc, rel = parent_dvc_info
-            result2 = _get_cache_path_for_ref(parent_dvc, after, file_in_dir=rel)
+            result2 = _resolve_in_dir(parent_dvc, after, rel)
         path2 = result2.path if result2.exists else None
 
     # Check for cache missing errors (distinct from "file doesn't exist at revision")
+    hint = "Cache is missing from the remote." if pull else "Run with -p/--pull to fetch from remote (or 'dvx pull -R <ref> <path>')."
     if result1.status == CacheStatus.CACHE_MISSING:
-        raise click.ClickException(
-            f"Cache missing for '{before}': {result1.error}\n"
-            "Run 'dvc pull' to fetch from remote."
-        )
+        raise click.ClickException(f"Cache missing for '{before}': {result1.error}\n{hint}")
     if result2 is not None and result2.status == CacheStatus.CACHE_MISSING:
         after_ref = after or "working tree"
-        raise click.ClickException(
-            f"Cache missing for '{after_ref}': {result2.error}\n"
-            "Run 'dvc pull' to fetch from remote."
-        )
+        raise click.ClickException(f"Cache missing for '{after_ref}': {result2.error}\n{hint}")
 
     # Extract path1 (None means file doesn't exist at that revision - legitimate add/delete)
     path1 = result1.path if result1.exists else None

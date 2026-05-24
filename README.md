@@ -58,6 +58,9 @@ dvx diff -R abc123 data.csv
 # Summary mode: show changed files with hashes
 dvx diff -s
 dvx diff -s -r HEAD~5..HEAD
+
+# Auto-pull missing cache blobs for either revision from the remote
+dvx diff -p -R abc123 data.csv
 ```
 
 #### Preprocessing Pipelines
