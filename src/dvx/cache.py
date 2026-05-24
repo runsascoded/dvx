@@ -746,7 +746,7 @@ def pull_hashes(
 
     with DVCRepo() as repo:
         remote_odb = repo.cloud.get_remote_odb(name=remote)
-        local_odb = repo.odb.local
+        local_odb = repo.cache.local
 
         # Filter to hashes not already in local cache
         to_fetch = [h for h in hashes if not check_local_cache(h)]
@@ -754,24 +754,28 @@ def pull_hashes(
         if not to_fetch:
             return 0
 
-        # Use DVC's transfer mechanism
-        from dvc.fs import Callback
+        # Use DVC's transfer mechanism. Ensure local cache directories exist
+        # (the underlying fs.get requires parent dirs to exist for some
+        # backends), then bulk-transfer; fall back to one-by-one on failure
+        # so a single bad blob doesn't drop the rest.
+        import os
 
-        callback = Callback.as_tqdm_callback(desc="Fetching", unit="file")
+        local_paths = [local_odb.oid_to_path(h) for h in to_fetch]
+        for p in local_paths:
+            os.makedirs(os.path.dirname(p), exist_ok=True)
         try:
-            transferred = remote_odb.fs.get(
+            remote_odb.fs.get(
                 [remote_odb.oid_to_path(h) for h in to_fetch],
-                [local_odb.oid_to_path(h) for h in to_fetch],
-                callback=callback,
+                local_paths,
             )
             return len(to_fetch)
         except Exception:
-            # Fallback to one-by-one transfer
             count = 0
             for h in to_fetch:
                 try:
                     src = remote_odb.oid_to_path(h)
                     dst = local_odb.oid_to_path(h)
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
                     remote_odb.fs.get(src, dst)
                     count += 1
                 except Exception:
