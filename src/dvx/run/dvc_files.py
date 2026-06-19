@@ -243,6 +243,53 @@ def get_git_blob_sha(path: str, ref: str = "HEAD", repo_path: Path | None = None
         return None
 
 
+def get_git_dep_sha(path: str, repo_path: Path | None = None) -> str | None:
+    """Get the git object SHA for a ``git_dep`` from the **working tree**.
+
+    For files: hashes the on-disk content via ``git hash-object`` — the same
+    SHA-1 git would assign on ``git add``. This is the semantically correct
+    target for ``git_deps`` freshness: stages depend on what's on disk *now*,
+    not what was last committed. Comparing against ``HEAD`` instead silently
+    treats staged-but-uncommitted dep changes as no-change, breaking any
+    "build artifact, then commit" workflow.
+
+    For directories: falls back to the HEAD tree SHA (``git hash-object``
+    only operates on files; computing an uncommitted tree SHA would require
+    ``git write-tree`` against a temporary index, which we don't need yet).
+
+    Returns None if the path doesn't exist on disk and isn't recoverable
+    from HEAD — callers treat that as "git dep missing".
+
+    Args:
+        path: Path to the file or directory (relative to repo root)
+        repo_path: Path to git repository (default: current directory)
+
+    Returns:
+        Object SHA string (blob for files, tree for dirs), or None if path
+        is not present in the worktree or at HEAD.
+    """
+    fs_path = (repo_path / path) if repo_path else Path(path)
+    if fs_path.is_file():
+        try:
+            result = subprocess.run(
+                ["git", "hash-object", str(fs_path)],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return result.stdout.strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return None
+    if fs_path.is_dir():
+        # Directory — `git hash-object` doesn't take dirs; fall back to the
+        # HEAD tree SHA (matches the pre-worktree-fix behavior for dirs).
+        return get_git_object_sha(path, "HEAD", repo_path)
+    # Missing from worktree — surface as a missing dep so callers don't
+    # silently run a stage whose inputs are gone, even if HEAD still has them.
+    return None
+
+
 def get_git_object_sha(path: str, ref: str = "HEAD", repo_path: Path | None = None) -> str | None:
     """Get the git object SHA for a path at a specific ref.
 
@@ -662,10 +709,11 @@ def is_output_fresh(
                 return False, f"dep changed: {dep_path}"
 
     # Check git dependencies if requested
-    # Compare recorded SHAs against current HEAD (blob for files, tree for dirs)
+    # Compare recorded SHAs against the worktree (blob via `git hash-object`
+    # for files, HEAD tree SHA fallback for directories).
     if check_deps and info.git_deps:
         for dep_path, recorded_sha in info.git_deps.items():
-            current_sha = get_git_object_sha(dep_path, "HEAD")
+            current_sha = get_git_dep_sha(dep_path)
             if current_sha is None:
                 return False, f"git dep missing: {dep_path}"
             if current_sha != recorded_sha:
@@ -802,12 +850,13 @@ def get_freshness_details(
             )
 
     # Check git dependencies if requested
-    # Compare recorded SHAs against current HEAD (blob for files, tree for dirs)
+    # Compare recorded SHAs against the worktree (blob via `git hash-object`
+    # for files, HEAD tree SHA fallback for directories).
     if check_deps and info.git_deps:
         changed_deps = {}
 
         for dep_path, recorded_sha in info.git_deps.items():
-            current_sha = get_git_object_sha(dep_path, "HEAD")
+            current_sha = get_git_dep_sha(dep_path)
             if current_sha is None:
                 changed_deps[dep_path] = {"expected": recorded_sha, "expected_commit": None, "actual": "(missing)"}
             elif current_sha != recorded_sha:

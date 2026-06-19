@@ -811,6 +811,143 @@ def test_directory_git_dep_freshness(git_repo):
 
 
 # =============================================================================
+# Worktree-based git_deps freshness (file deps)
+# =============================================================================
+
+
+def test_file_git_dep_stale_when_worktree_edited_unstaged(git_repo):
+    """File git_dep edited in the worktree but not staged is detected as stale.
+
+    Regression for the "build artifact, then commit" workflow: when a stage
+    runs after a dep file has been edited but before the edit is committed,
+    freshness must compare against the worktree (`git hash-object`), not HEAD.
+    """
+    from dvx.run.dvc_files import get_git_dep_sha
+    from dvx.run.hash import compute_md5
+
+    os.chdir(git_repo)
+
+    # Record current worktree SHA for script.py (= HEAD at this point).
+    initial_sha = get_git_dep_sha("script.py")
+    assert initial_sha is not None
+
+    output = git_repo / "out.txt"
+    output.write_text("built\n")
+
+    write_dvc_file(
+        output_path=output,
+        md5=compute_md5(output),
+        size=output.stat().st_size,
+        cmd="build",
+        git_deps={"script.py": initial_sha},
+    )
+
+    fresh, _ = is_output_fresh(Path("out.txt"), use_mtime_cache=False)
+    assert fresh is True
+
+    # Edit dep file in worktree only — no `git add`, no commit. HEAD unchanged.
+    (git_repo / "script.py").write_text("print('hello world')\n")
+
+    fresh, reason = is_output_fresh(Path("out.txt"), use_mtime_cache=False)
+    assert fresh is False
+    assert reason == "git dep changed: script.py"
+
+
+def test_file_git_dep_stale_when_worktree_edited_and_staged(git_repo):
+    """File git_dep staged but not committed is detected as stale.
+
+    This is the exact failure mode in the path/hudcostreets pipeline: the
+    daily updater runs `path-data refresh` (writes new PDF + `git add`),
+    then `dvx run`, then `git commit`. HEAD-based freshness checks see the
+    pre-staged HEAD blob and skip the stage; worktree-based checks see the
+    edited content and re-run.
+    """
+    import subprocess
+
+    from dvx.run.dvc_files import get_git_dep_sha
+    from dvx.run.hash import compute_md5
+
+    os.chdir(git_repo)
+    initial_sha = get_git_dep_sha("script.py")
+
+    output = git_repo / "out.txt"
+    output.write_text("built\n")
+    write_dvc_file(
+        output_path=output,
+        md5=compute_md5(output),
+        size=output.stat().st_size,
+        cmd="build",
+        git_deps={"script.py": initial_sha},
+    )
+
+    # Edit + stage, but DO NOT commit. HEAD still has old blob.
+    (git_repo / "script.py").write_text("print('staged change')\n")
+    subprocess.run(["git", "add", "script.py"], cwd=git_repo, capture_output=True, check=True)
+
+    fresh, reason = is_output_fresh(Path("out.txt"), use_mtime_cache=False)
+    assert fresh is False
+    assert reason == "git dep changed: script.py"
+
+
+def test_file_git_dep_missing_when_worktree_file_deleted(git_repo):
+    """A git_dep whose file was deleted from the worktree is reported missing.
+
+    Today's HEAD-based check considered the dep fresh as long as the file
+    existed at HEAD; with worktree semantics, deletion is correctly surfaced
+    so callers don't silently run a stage whose inputs are gone.
+    """
+    from dvx.run.dvc_files import get_git_dep_sha
+    from dvx.run.hash import compute_md5
+
+    os.chdir(git_repo)
+    sha = get_git_dep_sha("script.py")
+
+    output = git_repo / "out.txt"
+    output.write_text("built\n")
+    write_dvc_file(
+        output_path=output,
+        md5=compute_md5(output),
+        size=output.stat().st_size,
+        cmd="build",
+        git_deps={"script.py": sha},
+    )
+
+    (git_repo / "script.py").unlink()
+
+    fresh, reason = is_output_fresh(Path("out.txt"), use_mtime_cache=False)
+    assert fresh is False
+    assert reason == "git dep missing: script.py"
+
+
+def test_get_git_dep_sha_matches_git_hash_object(git_repo):
+    """`get_git_dep_sha` returns the same SHA-1 git would compute for the worktree file."""
+    import subprocess
+
+    from dvx.run.dvc_files import get_git_dep_sha
+
+    # Edit without staging so the hash diverges from HEAD.
+    (git_repo / "script.py").write_text("print('worktree only')\n")
+
+    expected = subprocess.run(
+        ["git", "hash-object", str(git_repo / "script.py")],
+        cwd=git_repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    assert get_git_dep_sha("script.py", git_repo) == expected
+
+
+def test_get_git_dep_sha_directory_falls_back_to_head(git_repo):
+    """For directories, `get_git_dep_sha` falls back to the HEAD tree SHA."""
+    from dvx.run.dvc_files import get_git_dep_sha, get_git_object_sha
+
+    head_tree = get_git_object_sha("src", "HEAD", git_repo)
+    assert get_git_dep_sha("src", git_repo) == head_tree
+
+
+# =============================================================================
 # get_freshness_details tests for side-effect and fetch
 # =============================================================================
 

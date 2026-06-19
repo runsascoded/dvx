@@ -51,6 +51,7 @@ from dvx.run.dvc_files import (
     get_file_hash_from_dir,
     get_git_blob_sha,
     get_git_head_sha,
+    get_git_dep_sha,
     get_git_object_sha,
     read_dvc_file,
     write_dvc_file,
@@ -134,14 +135,14 @@ class Computation:
                 if not recompute and dep.md5:
                     hashes[path] = dep.md5
                 else:
-                    sha = get_git_object_sha(path, "HEAD")
+                    sha = get_git_dep_sha(path)
                     if sha:
                         hashes[path] = sha
                     elif dep.md5:
                         hashes[path] = dep.md5
             else:
                 path = str(dep)
-                sha = get_git_object_sha(path, "HEAD")
+                sha = get_git_dep_sha(path)
                 if sha:
                     hashes[path] = sha
         return hashes
