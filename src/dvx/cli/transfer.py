@@ -125,6 +125,28 @@ def push(targets, all_branches, all_commits, jobs, dry_run, remote, all_tags, ve
             )
             click.echo(f"{pushed} file(s) pushed.")
 
+            # Backfill any directory inner-blob gaps. DVC's repo.push
+            # short-circuits when a ``.dir`` manifest is already present in
+            # the remote, even if its inner blobs are missing. Walk the
+            # manifests locally and upload any inner-blob (or manifest) gaps
+            # from the local cache. See spec: dir-push-shallow-existence-check.
+            from dvx.cache import push_dir_inner_blobs
+            dvc_targets = list(targets) if targets else None
+            if dvc_targets is None:
+                from dvx.cache import find_dvc_files
+                dvc_targets = find_dvc_files(None)
+            filled, missing_local = push_dir_inner_blobs(
+                dvc_targets, remote=remote, jobs=jobs,
+            )
+            if filled:
+                click.echo(f"Backfilled {filled} dir blob(s) missing from remote.")
+            if missing_local:
+                click.echo(
+                    f"⚠ {len(missing_local)} dir blob(s) missing from remote AND local "
+                    "cache; run `dvx pull` to repopulate, then re-push.",
+                    err=True,
+                )
+
             # Verify after push (parallel batch check)
             if verify and hashes_to_verify:
                 click.echo("\nVerifying remote...")

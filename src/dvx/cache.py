@@ -778,6 +778,119 @@ def get_transfer_status_at_ref(
     }
 
 
+def push_dir_inner_blobs(
+    dvc_paths: list[str],
+    remote: str | None = None,
+    jobs: int | None = None,
+) -> tuple[int, list[str]]:
+    """Backfill the remote with any missing inner blobs (and manifests) for
+    directory outputs in ``dvc_paths``.
+
+    DVC's ``repo.push`` short-circuits when the registered ``outs.md5`` (a
+    ``.dir`` manifest) is already in the remote, even if the inner blobs the
+    manifest references are missing. This walks each manifest locally, checks
+    remote-existence for every inner blob, and uploads the gaps directly via
+    the remote ODB.
+
+    No-op for non-directory outputs and for ``.dvc`` files whose manifest is
+    missing from the local cache (e.g. when called on a fresh clone before
+    pull). For freshly-produced outputs the manifest is in cache via
+    ``cache_blob``.
+
+    Args:
+        dvc_paths: ``.dvc`` files to consider — any non-directory output is
+            silently skipped.
+        remote: Remote name (uses default if ``None``).
+        jobs: Parallel workers for the remote existence check.
+
+    Returns:
+        Tuple ``(uploaded, missing_locally)``:
+          - ``uploaded``: number of blobs (inner + manifest) the gap-fill
+            pass uploaded.
+          - ``missing_locally``: hashes that were missing from the remote
+            AND couldn't be found in the local cache. Caller may want to
+            warn — there's nothing to fill these from.
+    """
+    import json
+    from pathlib import Path
+
+    from dvc.repo import Repo as DVCRepo
+
+    manifest_targets: list[str] = []      # ``.dir``-suffixed hashes
+    inner_targets: list[str] = []         # bare inner-blob hashes
+
+    try:
+        root = Path(DVCRepo.find_root())
+    except Exception:
+        root = Path(".")
+    local_cache_dir = root / ".dvc" / "cache" / "files" / "md5"
+
+    for dvc_path in dvc_paths:
+        try:
+            md5, _size, is_dir = _get_output_info(dvc_path)
+        except Exception:
+            continue
+        if not is_dir:
+            continue
+        manifest_targets.append(md5)
+        bare = md5[:-4]  # strip ".dir"
+        manifest_local = local_cache_dir / bare[:2] / (bare[2:] + ".dir")
+        if not manifest_local.exists():
+            continue
+        try:
+            with open(manifest_local) as f:
+                entries = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+        for e in entries:
+            inner_md5 = e.get("md5")
+            if inner_md5:
+                inner_targets.append(inner_md5)
+
+    if not (manifest_targets or inner_targets):
+        return 0, []
+
+    # Dedup while preserving order (some hashes may appear in multiple manifests).
+    all_targets = list(dict.fromkeys(manifest_targets + inner_targets))
+    remote_status = check_remote_cache_batch(
+        all_targets, remote=remote, jobs=jobs, progress=False,
+    )
+    missing = [h for h in all_targets if not remote_status.get(h, False)]
+    if not missing:
+        return 0, []
+
+    with DVCRepo() as repo:
+        remote_odb = repo.cloud.get_remote_odb(name=remote)
+        local_odb = repo.cache.local
+
+        from_paths: list[str] = []
+        to_paths: list[str] = []
+        missing_locally: list[str] = []
+        for h in missing:
+            local = Path(local_odb.oid_to_path(h))
+            if not local.exists():
+                missing_locally.append(h)
+                continue
+            from_paths.append(str(local))
+            to_paths.append(remote_odb.oid_to_path(h))
+
+        if not from_paths:
+            return 0, missing_locally
+
+        try:
+            remote_odb.fs.put(from_paths, to_paths)
+            return len(from_paths), missing_locally
+        except Exception:
+            count = 0
+            for src, dst in zip(from_paths, to_paths):
+                try:
+                    remote_odb.fs.put(src, dst)
+                    count += 1
+                except Exception:
+                    pass
+            return count, missing_locally
+
+
 def pull_hashes(
     hashes: list[str],
     remote: str | None = None,

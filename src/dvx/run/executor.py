@@ -815,6 +815,13 @@ class ParallelExecutor:
     def _push_cache_blobs(self, dvc_paths: list[str], indent: str = "") -> None:
         """Push cache blobs for the given .dvc files to the configured remote.
 
+        After ``repo.push``, runs a gap-fill pass for any directory outputs:
+        ``.dvc`` files whose ``.dir`` manifest is already in the remote but
+        whose inner blobs are missing. DVC's push short-circuits on the
+        manifest's presence alone, so without this the remote can drift into
+        a "manifest yes, inners no" state silently
+        (see ``specs/done/dir-push-shallow-existence-check.md``).
+
         Non-fatal: logs warnings on failure but never raises. No-op if
         `cache_push` is disabled or `dvc_paths` is empty.
         """
@@ -824,9 +831,17 @@ class ParallelExecutor:
             from dvx import Repo
             with Repo() as repo:
                 pushed = repo.push(targets=dvc_paths)
-            n = len(dvc_paths)
-            stage_word = "blob" if n == 1 else "blobs"
-            self._log(f"{indent}📤 cache pushed ({pushed} {stage_word})")
+
+            from dvx.cache import push_dir_inner_blobs
+            filled, missing_local = push_dir_inner_blobs(dvc_paths)
+            total = pushed + filled
+            stage_word = "blob" if total == 1 else "blobs"
+            self._log(f"{indent}📤 cache pushed ({total} {stage_word})")
+            if missing_local:
+                self._log(
+                    f"{indent}⚠ {len(missing_local)} dir blob(s) missing from "
+                    "remote AND local cache; downstream pulls may fail."
+                )
         except Exception as e:
             self._log(f"{indent}⚠ cache push failed: {e}")
 
