@@ -484,22 +484,32 @@ def _hash_single_file(file_path) -> str:
 
 
 def cache_blob(file_path, md5: str, force: bool = False):
-    """Copy a file into the DVC cache keyed by its MD5.
+    """Copy a file or directory into the DVC cache keyed by its MD5.
 
     Idempotent: returns immediately if the blob is already cached
     (unless force=True).
 
+    For directories, writes the ``.dir`` manifest to
+    ``<cache>/<md5[:2]>/<md5[2:]>.dir`` and recursively caches every
+    inner file at its own ``md5`` — DVC's ``push`` walks the manifest
+    and uploads each inner blob, so without this both manifest and
+    inner blobs would be missing from the remote.
+
     Args:
-        file_path: Path to the file to cache
-        md5: MD5 hash of the file (must be precomputed)
+        file_path: Path to the file or directory to cache
+        md5: MD5 hash of the file or directory manifest (must be
+            precomputed; for directories, the bare manifest hash
+            without the ``.dir`` suffix)
         force: Overwrite existing cache entry
 
     Returns:
-        Path to the cached blob
+        Path to the cached blob (with ``.dir`` suffix for directories)
     """
     from pathlib import Path
 
     from dvc.repo import Repo as DVCRepo
+
+    file_path = Path(file_path)
 
     try:
         root = DVCRepo.find_root()
@@ -508,8 +518,52 @@ def cache_blob(file_path, md5: str, force: bool = False):
     cache_dir = Path(root) / ".dvc" / "cache" / "files" / "md5"
     cache_dir.mkdir(parents=True, exist_ok=True)
 
+    if file_path.is_dir():
+        _cache_directory(file_path, md5, cache_dir, force)
+        return cache_dir / md5[:2] / (md5[2:] + ".dir")
     _cache_file(file_path, md5, cache_dir, force)
     return cache_dir / md5[:2] / md5[2:]
+
+
+def _cache_directory(dir_path, manifest_hash: str, cache_dir, force: bool = False):
+    """Cache a directory: write its ``.dir`` manifest + cache each inner file.
+
+    Mirrors DVC's ``.dir`` manifest format (sorted ``{md5, relpath}`` JSON,
+    serialized with ``separators=(', ', ': ')``).
+    """
+    import hashlib
+    import json
+    import tempfile
+
+    entries = []
+    for subfile in sorted(dir_path.rglob("*")):
+        if subfile.is_file():
+            rel_path = subfile.relative_to(dir_path)
+            rel_path_str = str(rel_path).replace("\\", "/")
+            file_hash = _hash_single_file(subfile)
+            entries.append({"md5": file_hash, "relpath": rel_path_str})
+            _cache_file(subfile, file_hash, cache_dir, force)
+    entries.sort(key=lambda e: e["relpath"])
+
+    expected = hashlib.md5(  # noqa: S324
+        json.dumps(entries, separators=(", ", ": ")).encode()
+    ).hexdigest()
+    if expected != manifest_hash:
+        raise ValueError(
+            f"manifest hash mismatch for {dir_path}: expected {manifest_hash}, "
+            f"recomputed {expected}"
+        )
+
+    manifest_cache_path = cache_dir / manifest_hash[:2] / (manifest_hash[2:] + ".dir")
+    manifest_cache_path.parent.mkdir(parents=True, exist_ok=True)
+    if not force and manifest_cache_path.exists():
+        return
+    with tempfile.NamedTemporaryFile(
+        mode="w", dir=manifest_cache_path.parent, delete=False, suffix=".tmp"
+    ) as tmp:
+        json.dump(entries, tmp, separators=(", ", ": "))
+        tmp_path = tmp.name
+    os.replace(tmp_path, manifest_cache_path)
 
 
 def _cache_file(file_path, file_hash: str, cache_dir, force: bool = False):

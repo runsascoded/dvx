@@ -70,6 +70,11 @@ def _remote_has_blob(remote: Path, md5: str) -> bool:
     return (remote / "files" / "md5" / md5[:2] / md5[2:]).exists()
 
 
+def _remote_has_dir_blob(remote: Path, md5: str) -> bool:
+    """Directory manifests in the remote have the literal ``.dir`` suffix."""
+    return (remote / "files" / "md5" / md5[:2] / (md5[2:] + ".dir")).exists()
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Output parsing
 # ────────────────────────────────────────────────────────────────────────────
@@ -386,6 +391,70 @@ def test_push_each_uploads_all_co_output_blobs_3way(runner, repo_with_remote):
     assert len(run.actions) == 1
     assert run.actions[0].cache_blobs == 3
     assert run.summary == Summary(total=3, executed=3, skipped=0)
+
+
+def test_push_each_uploads_dir_co_output_blobs(runner, repo_with_remote):
+    """``--push each`` must push BOTH co-outputs' .dir manifests AND inner blobs.
+
+    Regression of ``specs/dir-co-output-push-missing.md``: the previous
+    ``co-output-push-half-blob.md`` fix routed both ``.dvc`` paths into
+    ``repo.push(targets=[...])`` but the upstream cache step
+    (``dvx.cache.cache_blob``) used ``shutil.copy2`` and silently failed
+    on directories. Local cache never got the ``.dir`` manifest or any
+    inner-file blobs, so ``repo.push`` had nothing to upload for the
+    directory outputs — manifests and inner blobs never reached the remote.
+
+    Symptom in ``hccs/crashes`` daily CI: ``.dvc`` files committed with
+    new ``<md5>.dir`` hashes, but ``s3://nj-crashes/.dvc/files/md5/`` had
+    no corresponding manifest, so 24h later ``dvx pull`` hit ``NoSuchKey``.
+    """
+    repo, remote = repo_with_remote
+    # Same cmd in both .dvc files triggers co-output dedup. ``sleep``
+    # widens the race window. Each dir contains 2 inner files.
+    cmd = (
+        "sleep 0.1 && "
+        "mkdir -p a && echo aaa > a/x.txt && echo aa2 > a/y.txt && "
+        "mkdir -p b && echo bbb > b/x.txt && echo bb2 > b/y.txt"
+    )
+    _write_stage(repo, "a", cmd)
+    _write_stage(repo, "b", cmd)
+    _commit_stubs(repo, ["a", "b"])
+
+    result = runner.invoke(cli, ["run", "--commit", "--push", "each"])
+    assert result.exit_code == 0, result.output
+
+    # Both manifest blobs must reach remote.
+    md5_a = compute_md5(repo / "a")
+    md5_b = compute_md5(repo / "b")
+    assert _remote_has_dir_blob(remote, md5_a)
+    assert _remote_has_dir_blob(remote, md5_b)
+    # All 4 inner-file blobs must reach remote.
+    import hashlib as _hl
+    inner_contents = ["aaa\n", "aa2\n", "bbb\n", "bb2\n"]
+    for content in inner_contents:
+        inner_md5 = _hl.md5(content.encode()).hexdigest()  # noqa: S324
+        assert _remote_has_blob(remote, inner_md5), f"missing inner blob for {content!r}"
+
+    run = parse_run(result.output)
+    assert run.plan == (1, 2)
+    # Race-tolerant role split: one primary (running + completed), other
+    # is co-output (waiting + co-output).
+    by_name: dict[str, set[str]] = {}
+    for s in run.stages:
+        by_name.setdefault(s.name, set()).add(s.kind)
+    primary_kinds = {"running", "completed"}
+    coop_kinds = {"waiting", "co-output"}
+    assert (
+        (by_name == {"a": primary_kinds, "b": coop_kinds})
+        or (by_name == {"a": coop_kinds, "b": primary_kinds})
+    ), by_name
+    # Exactly one commit covers both .dvc files. The cache_blobs count
+    # is DVC's reported upload count: 2 manifests + 4 inner files = 6.
+    assert len(run.actions) == 1
+    assert run.actions[0].cache_blobs == 6
+    assert run.actions[0].pushed is False  # no remote
+    assert run.actions[0].cache_failed is None
+    assert run.summary == Summary(total=2, executed=2, skipped=0)
 
 
 def test_push_each_partial_output_does_not_hang(runner, repo_with_remote):
