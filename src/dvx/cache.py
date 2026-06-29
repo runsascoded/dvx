@@ -470,7 +470,33 @@ def add_to_cache(
         tmp_path = tmp.name
     os.replace(tmp_path, dvc_path)
 
+    _ensure_gitignored(target_path)
+
     return md5, size, is_dir
+
+
+def _ensure_gitignored(path: "Path") -> None:
+    """Add ``path.name`` to the sibling .gitignore (idempotent).
+
+    Mirrors ``dvc add``'s ``scm_context.ignore`` behavior: ensures the
+    DVC-tracked blob doesn't also accumulate in git. Without this, every
+    ``dvx add`` leaves an untracked file in ``git status`` until the user
+    edits .gitignore by hand. The inverse helper is
+    ``dvx.git_import._ensure_not_gitignored`` (used by git-tracked imports).
+
+    Idempotent: matching entries are detected by stripped equality.
+    Adds a leading newline if the existing file doesn't end with one.
+    """
+    gitignore = path.parent / ".gitignore"
+    entry = f"/{path.name}"
+    if gitignore.exists():
+        content = gitignore.read_text()
+        if any(line.strip() == entry for line in content.splitlines()):
+            return
+        suffix = "" if not content or content.endswith("\n") else "\n"
+        gitignore.write_text(content + suffix + entry + "\n")
+    else:
+        gitignore.write_text(entry + "\n")
 
 
 def _hash_single_file(file_path) -> str:

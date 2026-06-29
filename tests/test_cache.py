@@ -365,3 +365,114 @@ def test_add_to_cache_trailing_slash_directory(tmp_path):
     assert (tmp_path / "data.dvc").exists(), "data.dvc should exist beside directory"
     assert not (tmp_path / "data" / ".dvc").exists(), "data/.dvc should NOT exist"
     assert is_dir
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Gitignore auto-update on add_to_cache
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _dvc_repo(tmp_path):
+    """Initialize the minimal .dvc dir for add_to_cache."""
+    dvc_dir = tmp_path / ".dvc"
+    dvc_dir.mkdir()
+    cache_dir = dvc_dir / "cache" / "files" / "md5"
+    cache_dir.mkdir(parents=True)
+
+
+def test_add_to_cache_updates_gitignore(tmp_path):
+    """`add_to_cache(foo.txt)` writes `/foo.txt` to sibling .gitignore.
+
+    Regression of ``specs/done/add-skips-gitignore-update.md``: DVX's
+    lock-free add path never invoked DVC's ``scm_context.ignore``, so
+    tracked blobs kept showing as untracked in ``git status``.
+    """
+    from dvx.cache import add_to_cache
+
+    _dvc_repo(tmp_path)
+    os.chdir(tmp_path)
+    (tmp_path / "foo.txt").write_text("data\n")
+
+    add_to_cache("foo.txt")
+
+    assert (tmp_path / ".gitignore").read_text() == "/foo.txt\n"
+
+
+def test_add_to_cache_subdir_writes_local_gitignore(tmp_path):
+    """`add_to_cache(data/foo.txt)` writes to data/.gitignore, not repo root.
+
+    Matches DVC's behavior: the entry is local to the data file's directory
+    so deep paths don't pollute root .gitignore.
+    """
+    from dvx.cache import add_to_cache
+
+    _dvc_repo(tmp_path)
+    os.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "foo.txt").write_text("x\n")
+
+    add_to_cache("data/foo.txt")
+
+    assert (tmp_path / "data" / ".gitignore").read_text() == "/foo.txt\n"
+    assert not (tmp_path / ".gitignore").exists()
+
+
+def test_add_to_cache_appends_to_existing_gitignore(tmp_path):
+    """Existing entries in .gitignore are preserved when add_to_cache appends."""
+    from dvx.cache import add_to_cache
+
+    _dvc_repo(tmp_path)
+    os.chdir(tmp_path)
+    (tmp_path / ".gitignore").write_text("/other.txt\n")
+    (tmp_path / "foo.txt").write_text("x\n")
+
+    add_to_cache("foo.txt")
+
+    assert (tmp_path / ".gitignore").read_text() == "/other.txt\n/foo.txt\n"
+
+
+def test_add_to_cache_idempotent_gitignore(tmp_path):
+    """Adding the same file twice (force=True the second time) yields one entry."""
+    from dvx.cache import add_to_cache
+
+    _dvc_repo(tmp_path)
+    os.chdir(tmp_path)
+    (tmp_path / "foo.txt").write_text("x\n")
+
+    add_to_cache("foo.txt")
+    add_to_cache("foo.txt", force=True)
+
+    assert (tmp_path / ".gitignore").read_text() == "/foo.txt\n"
+
+
+def test_add_to_cache_directory_gitignored_as_dir_entry(tmp_path):
+    """`add_to_cache(d/)` writes `/d` to sibling .gitignore (no trailing slash).
+
+    DVC uses ``/<name>`` (no slash for dirs vs files) so the entry is the
+    same shape regardless of output kind.
+    """
+    from dvx.cache import add_to_cache
+
+    _dvc_repo(tmp_path)
+    os.chdir(tmp_path)
+    (tmp_path / "d").mkdir()
+    (tmp_path / "d" / "inner.txt").write_text("hello\n")
+
+    add_to_cache("d/")
+
+    assert (tmp_path / ".gitignore").read_text() == "/d\n"
+
+
+def test_add_to_cache_gitignore_preserves_trailing_newline(tmp_path):
+    """Existing .gitignore without trailing newline gets one added on append."""
+    from dvx.cache import add_to_cache
+
+    _dvc_repo(tmp_path)
+    os.chdir(tmp_path)
+    # Note: no trailing newline.
+    (tmp_path / ".gitignore").write_text("/other.txt")
+    (tmp_path / "foo.txt").write_text("x\n")
+
+    add_to_cache("foo.txt")
+
+    assert (tmp_path / ".gitignore").read_text() == "/other.txt\n/foo.txt\n"
