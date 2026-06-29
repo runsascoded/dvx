@@ -47,6 +47,12 @@ class ExecutionConfig:
     # auto-disabled when --force-upstream patterns are set (we have to walk to
     # find pattern matches).
     prune_fresh: bool = True
+    # Try to materialize "materializable" stages (deps fresh, output missing
+    # locally) from the configured remote before running the cmd. CI runners
+    # on fresh checkouts otherwise rebuild every stage from upstream roots
+    # even when the cache already holds byte-identical outputs.
+    # See specs/done/run-auto-pull.md.
+    pull_deps: bool = True
 
 
 def _matches_patterns(path: str, patterns: list[str]) -> bool:
@@ -258,7 +264,41 @@ class ParallelExecutor:
         if fresh:
             return False, reason
 
+        # Materializable trans-deps: if the output is just missing locally
+        # but the deps would otherwise let this skip, try fetching the .dvc's
+        # recorded hash from the remote cache. On success, re-evaluate and
+        # short-circuit the rerun. See specs/done/run-auto-pull.md.
+        if self.config.pull_deps and reason == "output missing":
+            # Skip placeholder .dvc files (no recorded md5 yet — nothing to
+            # fetch and `repo.pull` would slow the run unnecessarily).
+            from dvx.run.dvc_files import read_dvc_file
+            info = read_dvc_file(Path(path))
+            if info is not None and info.md5:
+                if self._try_materialize_from_remote(path):
+                    fresh2, reason2 = is_output_fresh(Path(path))
+                    if fresh2:
+                        return False, f"fetched ({reason2})"
+
         return True, reason
+
+    def _try_materialize_from_remote(self, path: str) -> bool:
+        """Pull ``path``'s recorded hash from the remote into local cache and
+        materialize the workspace file. Returns True on success.
+
+        Non-fatal: any failure (no remote configured, blob missing remotely,
+        network error) just logs at verbose and returns False so the stage
+        falls through to its normal rerun.
+        """
+        try:
+            from dvx import Repo
+            dvc_path = f"{path}.dvc"
+            with Repo() as repo:
+                repo.pull(targets=[dvc_path])
+        except Exception as e:
+            if self.config.verbose:
+                self._log(f"    ↓ {path}: pull failed ({e})")
+            return False
+        return True
 
     def _execute_level(self, artifacts: list[Artifact]) -> list[ExecutionResult]:
         """Execute all artifacts in a level in parallel.

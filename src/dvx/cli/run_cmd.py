@@ -17,9 +17,10 @@ import click
 @click.option("--no-provenance", is_flag=True, help="Don't include provenance in .dvc files.")
 @click.option("-p", "--push", type=click.Choice(["each", "end"]), default=None, help="Push strategy: 'each' (after each commit) or 'end' (once at finish). Also via $DVX_PUSH.")
 @click.option("-P", "--no-cache-push", is_flag=True, help="With --push, only git-push; don't push cache blobs to the remote.")
+@click.option("-D", "--no-pull-deps", is_flag=True, help="Don't auto-fetch materializable trans-deps from remote (default: try fetch before rerunning).")
 @click.option("-U", "--no-prune-fresh", is_flag=True, help="Walk full upstream chain even past fresh artifacts (default: stop at fresh).")
 @click.option("-v", "--verbose", is_flag=True, help="Show detailed output.")
-def run_cmd(targets, force, force_upstream, cached, jobs, commit, dry_run, no_provenance, push, no_cache_push, no_prune_fresh, verbose):
+def run_cmd(targets, force, force_upstream, cached, jobs, commit, dry_run, no_provenance, push, no_cache_push, no_pull_deps, no_prune_fresh, verbose):
     """Execute artifact computations from .dvc files.
 
     Run computations defined in .dvc files, respecting dependencies and
@@ -63,6 +64,7 @@ def run_cmd(targets, force, force_upstream, cached, jobs, commit, dry_run, no_pr
         push=push or "never",
         cache_push=not no_cache_push,
         prune_fresh=not no_prune_fresh,
+        pull_deps=not no_pull_deps,
     )
 
     try:
