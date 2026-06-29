@@ -852,26 +852,31 @@ def push_dir_inner_blobs(
     local_cache_dir = root / ".dvc" / "cache" / "files" / "md5"
 
     for dvc_path in dvc_paths:
+        # Multi-out aware: iterate every outs[i], not just outs[0]. Each
+        # entry may or may not be a directory; only dir entries get the
+        # gap-fill treatment (file blobs are handled by DVC's repo.push).
         try:
-            md5, _size, is_dir = _get_output_info(dvc_path)
+            dvc_data = _load_dvc_file(dvc_path)
         except Exception:
             continue
-        if not is_dir:
-            continue
-        manifest_targets.append(md5)
-        bare = md5[:-4]  # strip ".dir"
-        manifest_local = local_cache_dir / bare[:2] / (bare[2:] + ".dir")
-        if not manifest_local.exists():
-            continue
-        try:
-            with open(manifest_local) as f:
-                entries = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            continue
-        for e in entries:
-            inner_md5 = e.get("md5")
-            if inner_md5:
-                inner_targets.append(inner_md5)
+        for raw_out in dvc_data.get("outs") or []:
+            md5_raw = raw_out.get("md5", "")
+            if not md5_raw or not md5_raw.endswith(".dir"):
+                continue
+            manifest_targets.append(md5_raw)
+            bare = md5_raw[:-4]
+            manifest_local = local_cache_dir / bare[:2] / (bare[2:] + ".dir")
+            if not manifest_local.exists():
+                continue
+            try:
+                with open(manifest_local) as f:
+                    entries = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                continue
+            for e in entries:
+                inner_md5 = e.get("md5")
+                if inner_md5:
+                    inner_targets.append(inner_md5)
 
     if not (manifest_targets or inner_targets):
         return 0, []

@@ -268,12 +268,14 @@ class ParallelExecutor:
         # but the deps would otherwise let this skip, try fetching the .dvc's
         # recorded hash from the remote cache. On success, re-evaluate and
         # short-circuit the rerun. See specs/done/run-auto-pull.md.
-        if self.config.pull_deps and reason == "output missing":
+        # Reason can be "output missing" (single-out) or
+        # "output missing: <name>" (multi-out).
+        if self.config.pull_deps and reason.startswith("output missing"):
             # Skip placeholder .dvc files (no recorded md5 yet — nothing to
             # fetch and `repo.pull` would slow the run unnecessarily).
             from dvx.run.dvc_files import read_dvc_file
             info = read_dvc_file(Path(path))
-            if info is not None and info.md5:
+            if info is not None and any(o.md5 for o in info.outs):
                 if self._try_materialize_from_remote(path):
                     fresh2, reason2 = is_output_fresh(Path(path))
                     if fresh2:
@@ -556,10 +558,30 @@ class ParallelExecutor:
                 dvc_file=dvc_file,
             )
 
-        # Verify output exists
+        # Verify outputs exist (multi-out aware). For a stage with N outputs
+        # declared in its ``.dvc``, every one must be on disk before we hash +
+        # write back. Falls back to the single-output ``Path(path)`` check
+        # when no ``.dvc`` is present yet (the legacy single-out flow).
+        from dvx.run.dvc_files import OutputInfo, read_dvc_file
+        existing_info = read_dvc_file(Path(path))
         out = Path(path)
-        if not out.exists():
-            self._log(f"  ✗ {path}: command succeeded but output not created")
+        dvc_dir = out.parent
+        declared_outs: list[OutputInfo] = (
+            existing_info.outs if existing_info is not None and existing_info.outs else []
+        )
+        if declared_outs:
+            output_paths = [dvc_dir / o.path for o in declared_outs]
+        else:
+            output_paths = [out]
+        missing_outs = [p for p in output_paths if not p.exists()]
+        if missing_outs:
+            if len(output_paths) > 1:
+                missing_str = ", ".join(str(p.relative_to(dvc_dir)) for p in missing_outs)
+                self._log(
+                    f"  ✗ {path}: command succeeded but output(s) not created: {missing_str}"
+                )
+            else:
+                self._log(f"  ✗ {path}: command succeeded but output not created")
             # Clean up temp files
             for f in (commit_msg_file.name, summary_file.name, push_file.name):
                 try:
@@ -580,29 +602,62 @@ class ParallelExecutor:
             deps_hashes = artifact.computation.get_dep_hashes(recompute=True)
             git_deps_hashes = artifact.computation.get_git_dep_hashes(recompute=True)
 
-        # Write .dvc file for output
+        # Write .dvc file for output (multi-out aware).
         dvc_file = None
         try:
-            md5 = compute_md5(out)
-            size = compute_file_size(out)
+            from dvx.cache import cache_blob
 
-            # Cache the output blob so historical versions can be retrieved
-            try:
-                from dvx.cache import cache_blob
-                cache_blob(out, md5)
-            except Exception as e:
-                self._log(f"  ⚠ {path}: couldn't cache output: {e}")
+            if len(output_paths) > 1:
+                # Multi-output: hash + cache each declared out, write the
+                # .dvc back with all N entries updated.
+                new_outs: list[OutputInfo] = []
+                for declared, real_path in zip(declared_outs, output_paths):
+                    out_md5 = compute_md5(real_path)
+                    out_size = compute_file_size(real_path)
+                    is_dir_o = real_path.is_dir()
+                    try:
+                        cache_blob(real_path, out_md5)
+                    except Exception as e:
+                        self._log(f"  ⚠ {declared.path}: couldn't cache output: {e}")
+                    nfiles_o = None
+                    if is_dir_o:
+                        nfiles_o = sum(1 for f in real_path.rglob("*") if f.is_file())
+                    new_outs.append(
+                        OutputInfo(
+                            path=declared.path,
+                            md5=out_md5,
+                            size=out_size,
+                            is_dir=is_dir_o,
+                            nfiles=nfiles_o,
+                        )
+                    )
 
-            dvc_file = write_dvc_file(
-                output_path=out,
-                md5=md5,
-                size=size,
-                cmd=cmd if self.config.provenance else None,
-                deps=deps_hashes if self.config.provenance else None,
-                git_deps=git_deps_hashes if self.config.provenance else None,
-                fetch_schedule=fetch_schedule,
-                fetch_last_run=fetch_last_run,
-            )
+                dvc_file = write_dvc_file(
+                    output_path=out,
+                    outs=new_outs,
+                    cmd=cmd if self.config.provenance else None,
+                    deps=deps_hashes if self.config.provenance else None,
+                    git_deps=git_deps_hashes if self.config.provenance else None,
+                    fetch_schedule=fetch_schedule,
+                    fetch_last_run=fetch_last_run,
+                )
+            else:
+                md5 = compute_md5(out)
+                size = compute_file_size(out)
+                try:
+                    cache_blob(out, md5)
+                except Exception as e:
+                    self._log(f"  ⚠ {path}: couldn't cache output: {e}")
+                dvc_file = write_dvc_file(
+                    output_path=out,
+                    md5=md5,
+                    size=size,
+                    cmd=cmd if self.config.provenance else None,
+                    deps=deps_hashes if self.config.provenance else None,
+                    git_deps=git_deps_hashes if self.config.provenance else None,
+                    fetch_schedule=fetch_schedule,
+                    fetch_last_run=fetch_last_run,
+                )
             if self.config.verbose:
                 self._log(f"       → {dvc_file}")
         except (FileNotFoundError, ValueError) as e:
