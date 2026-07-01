@@ -162,6 +162,11 @@ class ParallelExecutor:
         self._dvc_done_events: dict[str, threading.Event] = {
             a.path: threading.Event() for a in artifacts if a.computation is not None
         }
+        # Populated at the start of each level with that level's artifact
+        # paths. `_wait_for_co_outputs` filters against this so the primary
+        # only blocks on same-level co-outputs; cross-level co-outputs
+        # haven't been submitted to the pool yet and can never signal.
+        self._scheduled_paths: set[str] = set()
 
     def execute(self) -> list[ExecutionResult]:
         """Execute all artifacts, respecting dependencies.
@@ -311,6 +316,12 @@ class ParallelExecutor:
         Returns:
             List of ExecutionResult, one per artifact
         """
+        # Track which artifacts are in-flight this level so `_wait_for_co_outputs`
+        # can filter out cross-level co-outputs (their `_dvc_done_events` won't
+        # be armed until a later level submits them — waiting would deadlock).
+        for a in artifacts:
+            self._scheduled_paths.add(a.path)
+
         if len(artifacts) == 1:
             # Single artifact - run directly without thread pool overhead
             return [self._execute_artifact(artifacts[0])]
@@ -686,16 +697,26 @@ class ParallelExecutor:
             ev.set()
 
     def _wait_for_co_outputs(self, cmd: str | None, my_path: str) -> list[str]:
-        """Block until every co-output of ``cmd`` (other than ``my_path``) has
-        finished writing its .dvc. Returns the list of co-output paths.
+        """Block until every same-level co-output of ``cmd`` (other than
+        ``my_path``) has finished writing its .dvc. Returns those paths.
 
         Called from the primary stage's thread before commit + cache push so
         that ``git add -u`` captures every co-output's md5 update and the
         push manifest includes every co-output's blob.
+
+        Cross-level co-outputs are filtered out via ``_scheduled_paths``:
+        their ``_execute_artifact`` won't be invoked until a later level
+        submits them, so their ``_dvc_done_events`` can never be set —
+        waiting would deadlock the pool (as it did on hccs/path when
+        ``data/all.{pqt,xlsx}`` landed a level below their ``www/public/``
+        siblings despite sharing ``path-data months``).
         """
         if not cmd:
             return []
-        co_paths = [p for p in self._cmd_artifact_paths.get(cmd, []) if p != my_path]
+        co_paths = [
+            p for p in self._cmd_artifact_paths.get(cmd, [])
+            if p != my_path and p in self._scheduled_paths
+        ]
         for co_path in co_paths:
             ev = self._dvc_done_events.get(co_path)
             if ev is not None:

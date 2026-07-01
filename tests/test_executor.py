@@ -178,6 +178,59 @@ echo "output1" > {output1_path}
     assert "not created" in failures[0].reason or "not produced" in failures[0].reason
 
 
+def test_cross_level_co_output_does_not_deadlock(tmp_workdir):
+    """Co-outputs of one cmd that end up in different levels must not deadlock.
+
+    When artifact B declares artifact A as a dep AND they share the same cmd,
+    ``_group_into_levels`` places A in Level 1 and B in Level 2 despite
+    them being co-outputs. Before the fix, Level 1's primary called
+    ``_wait_for_co_outputs`` and blocked on B's ``_dvc_done_event`` — which
+    could never fire because B's ``_execute_artifact`` doesn't run until
+    Level 2 is submitted. Deadlock: primary parked on B's event, main
+    thread parked in ``as_completed`` waiting for the primary. Repro
+    matched hccs/path's ``path-data months`` outputs (see 2026-06-19+
+    daily-update runs that hung at 6h GHA timeout).
+    """
+    script = tmp_workdir / "multi.sh"
+    script.write_text(
+        "#!/bin/bash\n"
+        "echo l1 > a.txt\n"
+        "echo l2 > b.txt\n"
+    )
+    script.chmod(0o755)
+    cmd = f"bash {script}"
+
+    # a.txt: no deps → Level 1. b.txt: dep on a.txt → Level 2. Same cmd.
+    a = Artifact(path="a.txt", computation=Computation(cmd=cmd, deps=[]))
+    b = Artifact(
+        path="b.txt",
+        computation=Computation(cmd=cmd, deps=[a]),
+    )
+
+    # Run in a thread so a deadlock surfaces as a timeout, not a hung suite.
+    import threading
+    executor = ParallelExecutor([a, b], ExecutionConfig(max_workers=2), StringIO())
+    results: list = []
+    errors: list = []
+
+    def _run():
+        try:
+            results.extend(executor.execute())
+        except Exception as e:  # pragma: no cover - surfaced via assertion
+            errors.append(e)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=15)
+    assert not t.is_alive(), (
+        "executor deadlocked — primary waited on a cross-level co-output "
+        "whose _dvc_done_event was never set"
+    )
+    assert not errors, f"executor raised: {errors[0]!r}"
+    assert len(results) == 2
+    assert all(r.success for r in results), [r.reason for r in results]
+
+
 def test_multi_output_command_failure(tmp_workdir):
     """Test handling when the shared command fails."""
     cmd = "exit 1"
