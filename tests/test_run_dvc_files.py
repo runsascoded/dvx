@@ -578,6 +578,92 @@ def test_is_fetch_due_hourly():
     assert is_fetch_due("hourly", last, now=now_late) is True
 
 
+def test_is_fetch_due_cron_missing_croniter_raises(monkeypatch):
+    """Cron-expression schedules fail loudly if croniter is missing.
+
+    Regression guard: the pre-fix ``except Exception: return True`` silently
+    treated every dispatch as due, causing hourly cron-scheduled stages to
+    fire on every invocation (observed in nj-crashes, ``schedule: "10 15 * * *"``
+    firing on every dispatch). Must raise a ``RuntimeError`` with a clear
+    install-hint instead. See ``specs/done/fetch-schedule-croniter-required.md``.
+    """
+    import sys
+
+    from dvx.run.dvc_files import is_fetch_due
+
+    # Force the `from croniter import croniter` inside `is_fetch_due` to raise
+    # ImportError — mimicking a runtime without the `dvx[cron]` extra.
+    monkeypatch.setitem(sys.modules, "croniter", None)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        is_fetch_due("0 15 * * *", "2026-04-07T12:00:00+00:00")
+
+    msg = str(excinfo.value)
+    # Assert both the offending expression and the install-hint are named.
+    assert msg == (
+        "Cron-expression schedule '0 15 * * *' requires croniter. "
+        "Install `dvx[cron]` or add croniter to your project deps."
+    )
+
+
+def test_is_fetch_due_cron_invalid_expression_raises():
+    """Invalid cron expressions surface a ``ValueError`` (not silent True).
+
+    Pre-fix, a malformed schedule fell through the same swallow-all-exceptions
+    block that hid the missing-croniter case. Must name the bad expression
+    in the error so the operator can find it.
+    """
+    from dvx.run.dvc_files import is_fetch_due
+
+    with pytest.raises(ValueError) as excinfo:
+        is_fetch_due("not a cron expression", "2026-04-07T12:00:00+00:00")
+
+    assert str(excinfo.value) == (
+        "Invalid cron expression in schedule: 'not a cron expression'"
+    )
+
+
+def test_is_fetch_due_cron_valid_expression():
+    """Valid cron expressions gate correctly across their next_fire boundary.
+
+    Uses the exact ``"10 15 * * *"`` expression from the nj-crashes downstream
+    (15:10 UTC daily): with ``last_run`` at 12:00, the fetch is not due at
+    15:05 (before next_fire) and is due at 15:15 (after).
+    """
+    from datetime import datetime, timezone
+
+    from dvx.run.dvc_files import is_fetch_due
+
+    last = "2026-04-07T12:00:00+00:00"
+
+    now_before = datetime(2026, 4, 7, 15, 5, 0, tzinfo=timezone.utc)
+    assert is_fetch_due("10 15 * * *", last, now=now_before) is False
+
+    now_after = datetime(2026, 4, 7, 15, 15, 0, tzinfo=timezone.utc)
+    assert is_fetch_due("10 15 * * *", last, now=now_after) is True
+
+
+def test_is_fetch_due_cron_multi_fire_window():
+    """A cron with multiple fires per day gates on the *next* fire only.
+
+    Sanity check for expressions like ``*/10 15-16 * * *`` (every 10 min
+    between 15:00-16:59). ``last_run`` at 15:15 → next fire 15:20 → not
+    due at 15:18, due at 15:25.
+    """
+    from datetime import datetime, timezone
+
+    from dvx.run.dvc_files import is_fetch_due
+
+    last = "2026-04-07T15:15:00+00:00"
+    expr = "*/10 15-16 * * *"
+
+    now_before = datetime(2026, 4, 7, 15, 18, 0, tzinfo=timezone.utc)
+    assert is_fetch_due(expr, last, now=now_before) is False
+
+    now_after = datetime(2026, 4, 7, 15, 25, 0, tzinfo=timezone.utc)
+    assert is_fetch_due(expr, last, now=now_after) is True
+
+
 def test_read_fetch_schedule(tmp_path):
     """Test reading fetch schedule from .dvc file."""
     dvc_file = tmp_path / "data.xml.dvc"

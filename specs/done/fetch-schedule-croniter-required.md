@@ -91,3 +91,36 @@ Add to `tests/test_dvc_files.py`:
 - Adding a `freshness_check` hook (for "poll the source before deciding
   to run"). Worth a separate spec.
 - Expanding `schedule` to support executable/script values.
+
+## Resolution
+
+The **code fix** from proposal §1 had already landed in
+`src/dvx/run/dvc_files.py::is_fetch_due` before this spec was formally
+closed (preset intervals short-circuit; cron expressions raise
+`RuntimeError` on missing croniter, `ValueError` on invalid syntax).
+
+This session added the **test guards** the original test plan called
+for — the code was correct but nothing prevented a future refactor
+from re-introducing the swallow-all-exceptions pattern that caused the
+silent-fire regression in `nj-crashes`:
+
+- `test_is_fetch_due_cron_missing_croniter_raises`: monkeypatches
+  `sys.modules["croniter"] = None` to simulate an env without the
+  `dvx[cron]` extra; asserts the exact `RuntimeError` message
+  (both the offending expression and the install hint).
+- `test_is_fetch_due_cron_invalid_expression_raises`: asserts the
+  `ValueError` message names the bad expression.
+- `test_is_fetch_due_cron_valid_expression`: uses the exact
+  `"10 15 * * *"` expression from the nj-crashes downstream — verifies
+  gating before/after the next_fire boundary.
+- `test_is_fetch_due_cron_multi_fire_window`: `*/10 15-16 * * *`
+  sanity — a multi-fire-per-day expression correctly gates on the
+  *next* fire only.
+
+`croniter>=1.0` was added to the `[dev]` extra so CI (`uv sync
+--extra dev`) actually exercises the valid-cron branch rather than
+silently skipping it. Runtime users install via `dvx[cron]` as before.
+
+Docs section (proposal §2) deferred: the fetch/schedule surface has
+one downstream user today; docs paint can wait until it's more widely
+adopted. Not blocking anything.

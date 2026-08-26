@@ -60,6 +60,10 @@ dev = [
     "pytest-cov",
     "ruff",
     "mypy",
+    # For exercising `is_fetch_due`'s cron-expression path in tests. Runtime
+    # users install via the `cron` extra; keeping it in `dev` so CI verifies
+    # the valid-cron branch instead of silently skipping it.
+    "croniter>=1.0",
 ]
 
 [project.scripts]
