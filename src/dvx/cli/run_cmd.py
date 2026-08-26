@@ -37,6 +37,7 @@ def run_cmd(targets, force, force_upstream, cached, jobs, commit, dry_run, no_pr
         dvx run --force            # Force re-run all
         dvx run --commit           # Auto-commit after each stage
     """
+    from dvx.run.artifact import Artifact
     from dvx.run.executor import ExecutionConfig, run
 
     # Find targets
@@ -50,6 +51,22 @@ def run_cmd(targets, force, force_upstream, cached, jobs, commit, dry_run, no_pr
             raise click.ClickException(
                 "No .dvc files found.\n"
                 "Specify targets or run from a directory with .dvc files."
+            )
+    else:
+        # Explicit targets: each must resolve to a valid .dvc file (either a
+        # direct .dvc, or a path inside a tracked directory). Otherwise the
+        # target gets silently dropped from the plan and the run reports
+        # ``Total: 0`` + exit 0 — the exact CI-green-but-empty failure mode
+        # from specs/run-missing-target-should-error.md.
+        missing = []
+        for t in target_paths:
+            output_path = Path(t[:-4]) if str(t).endswith(".dvc") else Path(t)
+            if Artifact.from_dvc(output_path) is None:
+                missing.append(str(t))
+        if missing:
+            label = "target" if len(missing) == 1 else "targets"
+            raise click.ClickException(
+                f"{label} not found: {', '.join(missing)}"
             )
 
     config = ExecutionConfig(

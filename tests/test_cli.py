@@ -305,6 +305,99 @@ def test_run_no_dvc_files(runner, tmp_path):
     ]
 
 
+def test_run_explicit_missing_target_errors(runner, tmp_path):
+    """`dvx run missing.dvc` must exit non-zero, not silently succeed.
+
+    Regression: an explicit target that doesn't resolve to a .dvc file
+    (typo, un-pushed file, stale branch) was dropped from the plan and the
+    run reported ``Total: 0`` + exit 0. That masked real failures in CI —
+    a dispatched build that raced its own commit yielded a green run that
+    did nothing. Must match ``dvx status``'s error path.
+    """
+    os.chdir(tmp_path)
+
+    result = runner.invoke(cli, ["run", "missing.dvc"])
+    assert result.exit_code != 0
+    assert result.output.rstrip().split("\n") == [
+        "Error: target not found: missing.dvc",
+    ]
+
+
+def test_run_multiple_explicit_missing_targets_errors(runner, tmp_path):
+    """Multiple missing explicit targets are all reported in one error."""
+    os.chdir(tmp_path)
+
+    result = runner.invoke(cli, ["run", "a.dvc", "b.dvc"])
+    assert result.exit_code != 0
+    assert result.output.rstrip().split("\n") == [
+        "Error: targets not found: a.dvc, b.dvc",
+    ]
+
+
+def test_run_explicit_missing_target_with_force_errors(runner, tmp_path):
+    """``--force`` on a missing target still errors (no free pass)."""
+    os.chdir(tmp_path)
+
+    result = runner.invoke(cli, ["run", "--force", "missing.dvc"])
+    assert result.exit_code != 0
+    assert result.output.rstrip().split("\n") == [
+        "Error: target not found: missing.dvc",
+    ]
+
+
+def test_run_partial_missing_targets_errors(runner, tmp_path):
+    """A mix of resolvable + missing targets errors on the missing ones.
+
+    Prevents ``dvx run existing.dvc typo.dvc`` from silently succeeding on
+    just the existing one — the typo would otherwise be an invisible
+    partial no-op.
+    """
+    os.chdir(tmp_path)
+
+    # existing.dvc resolves; missing.dvc does not.
+    (tmp_path / ".dvc").mkdir()
+    output = tmp_path / "existing.txt"
+    output.write_text("hi\n")
+    from dvx.run.hash import compute_md5
+    md5 = compute_md5(output)
+    dvc_content = {
+        "outs": [{"md5": md5, "size": output.stat().st_size, "path": "existing.txt"}],
+        "meta": {"computation": {"cmd": "echo hi > existing.txt"}},
+    }
+    with open(tmp_path / "existing.txt.dvc", "w") as f:
+        yaml.dump(dvc_content, f)
+
+    result = runner.invoke(cli, ["run", "existing.txt.dvc", "missing.dvc"])
+    assert result.exit_code != 0
+    assert result.output.rstrip().split("\n") == [
+        "Error: target not found: missing.dvc",
+    ]
+
+
+def test_run_no_targets_with_dvc_files_no_error(runner, tmp_path):
+    """No-target ``dvx run`` (auto-discovery) with an existing .dvc works.
+
+    Guards against the missing-target check leaking into the auto-discovery
+    path — glob-discovered targets are guaranteed to exist.
+    """
+    os.chdir(tmp_path)
+
+    (tmp_path / ".dvc").mkdir()
+    output = tmp_path / "existing.txt"
+    output.write_text("hi\n")
+    from dvx.run.hash import compute_md5
+    md5 = compute_md5(output)
+    dvc_content = {
+        "outs": [{"md5": md5, "size": output.stat().st_size, "path": "existing.txt"}],
+        "meta": {"computation": {"cmd": "echo hi > existing.txt"}},
+    }
+    with open(tmp_path / "existing.txt.dvc", "w") as f:
+        yaml.dump(dvc_content, f)
+
+    result = runner.invoke(cli, ["run", "--dry-run"])
+    assert result.exit_code == 0
+
+
 def test_run_dry_run(runner, tmp_path):
     """Test run command with --dry-run."""
     os.chdir(tmp_path)
