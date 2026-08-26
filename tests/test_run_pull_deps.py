@@ -8,6 +8,7 @@ the executor tries ``repo.pull(targets=[<dvc>])`` first and skips if the
 remote has the bit-identical output.
 """
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -71,10 +72,20 @@ def _summary_line(output: str, key: str) -> int:
     raise AssertionError(f"no {key!r} line in:\n{output}")
 
 
+_DURATION_RE = re.compile(r"\(\d+\.\d+s\)")
+
+
 def _stage_status_lines(output: str) -> list[str]:
-    """Stage status lines from `dvx run` output (lines starting with two-space + glyph)."""
+    """Stage status lines from `dvx run` output (lines starting with two-space + glyph).
+
+    Durations (``(0.1s)``) are normalized to ``(<duration>s)`` so tests can
+    assert on shape rather than the actual wall-clock (which flakes across
+    macOS / Linux CI, and even across consecutive runs on the same host).
+    Per the CLAUDE.md testing rules: normalize variable parts, then compare.
+    """
     return [
-        line for line in output.split("\n")
+        _DURATION_RE.sub("(<duration>s)", line)
+        for line in output.split("\n")
         if any(line.startswith(f"  {g}") for g in ("⟳", "✓", "✗", "◐", "○"))
     ]
 
@@ -122,7 +133,7 @@ def test_no_pull_deps_reruns_when_output_missing(runner, repo_with_remote):
 
     assert _stage_status_lines(result.output) == [
         "  ⟳ out.txt: running...",
-        "  ✓ out.txt: completed (0.0s)",
+        "  ✓ out.txt: completed (<duration>s)",
     ]
     assert _summary_line(result.output, "Executed") == 1
     assert _summary_line(result.output, "Skipped") == 0
@@ -149,7 +160,7 @@ def test_pull_deps_falls_through_when_remote_missing_blob(runner, repo_with_remo
 
     assert _stage_status_lines(result.output) == [
         "  ⟳ out.txt: running...",
-        "  ✓ out.txt: completed (0.0s)",
+        "  ✓ out.txt: completed (<duration>s)",
     ]
     assert _summary_line(result.output, "Executed") == 1
     assert (repo / "out.txt").read_text() == "v1\n"
@@ -170,6 +181,6 @@ def test_pull_deps_does_not_interfere_with_forced_rerun(runner, repo_with_remote
     assert result.exit_code == 0, result.output
     assert _stage_status_lines(result.output) == [
         "  ⟳ out.txt: running...",
-        "  ✓ out.txt: completed (0.0s)",
+        "  ✓ out.txt: completed (<duration>s)",
     ]
     assert _summary_line(result.output, "Executed") == 1
