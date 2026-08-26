@@ -31,6 +31,7 @@ import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -564,6 +565,161 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
     )
 
 
+def _norm_dep_key(k: str) -> str:
+    """Normalize a dep key to a spelling-invariant form for match purposes.
+
+    Both ``/data/foo`` (repo-root shorthand) and ``data/foo`` refer to the
+    same file when the ``.dvc`` lives at the repo root, and both spellings
+    appear in the wild — hand-edited files often use the ``/``-prefixed
+    form for clarity. When merging a rewrite into an existing file we want
+    to match either spelling and preserve the existing one.
+    """
+    return k.lstrip("/")
+
+
+def _yaml_rt() -> Any:
+    """Return a ruamel.yaml round-trip YAML() instance configured for .dvc files.
+
+    Round-trip mode preserves comments, key order, blank lines, and scalar
+    quoting — everything a canonical ``yaml.dump`` would discard. Used by
+    :func:`write_dvc_file` to preserve fidelity when rewriting an existing
+    ``.dvc`` file (see ``specs/done/dvc-rewrite-fidelity.md``).
+    """
+    from ruamel.yaml import YAML
+    y = YAML(typ="rt")
+    y.preserve_quotes = True
+    # `.dvc` files are hand-editable — keep the default 2-space indent and
+    # disable the `-` list-item indent so nested lists render like `yaml.dump`
+    # would have (avoids reformatting churn on the first rewrite).
+    y.indent(mapping=2, sequence=2, offset=0)
+    # Keep long lines from being auto-wrapped — cmd strings and comments
+    # in real .dvc files routinely exceed 80 chars.
+    y.width = 10_000
+    return y
+
+
+def _merge_preserving_comments(existing: Any, new_data: dict) -> None:
+    """Update ``existing`` (a ruamel round-tripped tree) in place with values
+    from ``new_data`` (the canonical dict :func:`write_dvc_file` would emit
+    on a fresh write). Preserves comments, key order, and path spelling.
+
+    Merge rules — matched to what DVX manages vs what a user may add:
+
+    - ``outs`` (list): matched by ``path`` entry. Existing entries with a
+      matching path get their scalar fields (md5/size/hash/nfiles/path)
+      updated in place. New entries are appended. Entries whose path is
+      absent from ``new_data["outs"]`` are removed.
+    - ``meta.computation`` (mapping): DVX-managed keys (``cmd``, ``deps``,
+      ``git_deps``, ``side_effect``, ``fetch``) are updated / removed to
+      match ``new_data``. Other keys under ``meta.computation`` (custom
+      user fields) are left untouched.
+    - ``meta.computation.deps`` / ``git_deps`` (mapping): value updated
+      in place for existing keys (preserving order). New keys appended.
+      Obsolete keys removed.
+    - Other top-level ``meta`` keys (``meta.owner``, ``meta.tags``, etc.)
+      are left untouched — treat them as user-owned.
+    """
+    # ── outs list ────────────────────────────────────────────────────────
+    new_outs = new_data.get("outs")
+    if new_outs is not None:
+        existing_outs = existing.get("outs")
+        if not isinstance(existing_outs, list):
+            existing["outs"] = new_outs
+        else:
+            # Index existing entries by path for O(1) lookup / matching.
+            path_to_idx = {
+                e.get("path"): i for i, e in enumerate(existing_outs)
+                if isinstance(e, dict) and "path" in e
+            }
+            new_paths = {n.get("path") for n in new_outs}
+            merged: list[Any] = []
+            for new_entry in new_outs:
+                path = new_entry.get("path")
+                if path in path_to_idx:
+                    existing_entry = existing_outs[path_to_idx[path]]
+                    # Update scalar fields in place; preserves the entry's
+                    # key order and any comments attached to those keys.
+                    for k, v in new_entry.items():
+                        existing_entry[k] = v
+                    # Drop fields no longer in new_entry (e.g. nfiles when
+                    # the output stops being a directory).
+                    stale = [k for k in existing_entry if k not in new_entry]
+                    for k in stale:
+                        del existing_entry[k]
+                    merged.append(existing_entry)
+                else:
+                    # New path — append.
+                    merged.append(new_entry)
+            # Remove existing entries that dropped out entirely.
+            existing["outs"][:] = merged
+    elif "outs" in existing:
+        del existing["outs"]
+
+    # ── meta.computation ─────────────────────────────────────────────────
+    new_meta = new_data.get("meta")
+    new_comp = (new_meta or {}).get("computation") if new_meta else None
+
+    if new_comp is not None:
+        if "meta" not in existing or not isinstance(existing.get("meta"), dict):
+            existing["meta"] = new_meta
+        else:
+            meta = existing["meta"]
+            if "computation" not in meta or not isinstance(meta.get("computation"), dict):
+                meta["computation"] = new_comp
+            else:
+                comp = meta["computation"]
+                # DVX-managed keys under `computation` — sync with new_comp.
+                managed = ("cmd", "side_effect")
+                for k in managed:
+                    if k in new_comp:
+                        comp[k] = new_comp[k]
+                    elif k in comp:
+                        del comp[k]
+
+                # deps / git_deps — in-place merge of the mapping. Preserves
+                # key order, comments interleaved between deps, and *path
+                # spelling* (see `_norm_dep_key`): existing entries whose
+                # normalized form matches a new entry keep their original
+                # key, just with the value updated.
+                for deps_key in ("deps", "git_deps"):
+                    new_deps = new_comp.get(deps_key)
+                    if new_deps is not None:
+                        existing_deps = comp.get(deps_key)
+                        if not isinstance(existing_deps, dict):
+                            comp[deps_key] = new_deps
+                        else:
+                            existing_by_norm = {
+                                _norm_dep_key(k): k for k in existing_deps
+                            }
+                            new_by_norm = {_norm_dep_key(k): k for k in new_deps}
+                            # Update matched entries under existing spelling.
+                            for norm, existing_key in existing_by_norm.items():
+                                if norm in new_by_norm:
+                                    existing_deps[existing_key] = new_deps[new_by_norm[norm]]
+                            # Remove obsolete entries.
+                            for norm, existing_key in list(existing_by_norm.items()):
+                                if norm not in new_by_norm:
+                                    del existing_deps[existing_key]
+                            # Append genuinely new entries (new-side spelling).
+                            for norm, new_key in new_by_norm.items():
+                                if norm not in existing_by_norm:
+                                    existing_deps[new_key] = new_deps[new_key]
+                    elif deps_key in comp:
+                        del comp[deps_key]
+
+                # fetch — a small nested mapping; replace wholesale (the
+                # only fields today are ``schedule`` and ``last_run``).
+                if "fetch" in new_comp:
+                    comp["fetch"] = new_comp["fetch"]
+                elif "fetch" in comp:
+                    del comp["fetch"]
+    elif new_meta is None and "meta" in existing:
+        # A side-effect-only rewrite with no `meta` in new_data — happens
+        # when the caller emits neither cmd nor deps. Leave existing meta
+        # alone (defensive: don't nuke user-owned meta fields).
+        pass
+
+
 def write_dvc_file(
     output_path: Path,
     md5: str | None = None,
@@ -694,8 +850,31 @@ def write_dvc_file(
             computation["fetch"] = fetch
         data["meta"] = {"computation": computation}
 
+    # Rewrite fidelity: when the target already exists, load it via
+    # ruamel round-trip mode and merge the canonical ``data`` into it in
+    # place. Preserves comments, key order, blank lines, and path spelling
+    # (see specs/done/dvc-rewrite-fidelity.md).
+    if dvc_path.exists():
+        yaml_rt = _yaml_rt()
+        try:
+            with open(dvc_path) as f:
+                existing = yaml_rt.load(f)
+        except Exception:
+            # Malformed existing file — fall back to a fresh rewrite rather
+            # than crash. A bad existing .dvc is user-facing evidence they
+            # should re-look; silently preserving it would hide the state.
+            existing = None
+        if existing is not None:
+            _merge_preserving_comments(existing, data)
+            with open(dvc_path, "w") as f:
+                yaml_rt.dump(existing, f)
+            return dvc_path
+
+    # No prior file — emit fresh. Use ruamel here too so the initial write
+    # matches the round-trip format (idempotent under a subsequent rewrite).
+    yaml_rt = _yaml_rt()
     with open(dvc_path, "w") as f:
-        yaml.dump(data, f, sort_keys=False, default_flow_style=False)
+        yaml_rt.dump(data, f)
 
     return dvc_path
 
