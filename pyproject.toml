@@ -43,6 +43,8 @@ webhdfs = ["dvc-webhdfs"]
 oss = ["dvc-oss"]
 # Cron schedule support
 cron = ["croniter>=1.0"]
+# AWS Batch packaging + submit (dvx batch push/bootstrap/submit)
+batch = ["boto3"]
 # All remotes
 all = [
     "dvc-s3",
