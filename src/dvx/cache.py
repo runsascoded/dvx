@@ -1192,3 +1192,184 @@ def get_transfer_status(
         "total_missing_size": total_missing_size,
         "total_cached_size": total_cached_size,
     }
+
+
+# =============================================================================
+# Lock-free materialization (remote → cache → workspace)
+# =============================================================================
+#
+# `repo.pull` takes DVC's repo-wide rwlock, so N parallel workers each opening
+# `Repo()` + `pull` race for it — under `dvx run -j 16`, losers get "Unable to
+# acquire lock", get misclassified as "not materializable", and fall through
+# to re-running cmds against inputs that don't exist on a fresh clone (see
+# specs/done/parallel-pull-lock-contention.md).
+#
+# DVX's answer (matching its lock-free `add_to_cache`): materialize directly —
+# remote blob → local cache → workspace — with content-addressed tmp+rename
+# writes. No `Repo()` operation, no rwlock; concurrent materializations of the
+# same blob converge on identical bytes, so the last rename wins harmlessly.
+# Safe across threads AND processes.
+
+import threading
+
+_remote_odb_cache: dict = {}
+_remote_odb_lock = threading.Lock()
+
+
+class MaterializeError(Exception):
+    """A transport-level materialization failure (network, S3 5xx, auth).
+
+    Distinct from "blob absent from remote" — absence is a legitimate
+    rebuild trigger; a transport error is not evidence the stage needs
+    re-running (see specs/done/parallel-pull-lock-contention.md, secondary).
+    """
+
+
+def _get_remote_odb(remote: str | None = None):
+    """Build (once per process) and return the remote ODB handle.
+
+    `DVCRepo()` instantiation doesn't take the repo rwlock — only `@locked`
+    operations (pull/push/checkout) do — so this is contention-free. The
+    handle is cached per (root, remote): fsspec filesystems are thread-safe
+    for get/exists, and reusing one avoids paying repo-open + fs construction
+    per materialized stage.
+    """
+    from dvc.repo import Repo as DVCRepo
+
+    root = DVCRepo.find_root()
+    key = (root, remote)
+    with _remote_odb_lock:
+        if key not in _remote_odb_cache:
+            with DVCRepo() as repo:
+                _remote_odb_cache[key] = repo.cloud.get_remote_odb(name=remote)
+        return _remote_odb_cache[key]
+
+
+def _local_cache_path(md5: str):
+    """Local cache path for a hash (``.dir`` suffix preserved)."""
+    from pathlib import Path
+
+    from dvc.repo import Repo as DVCRepo
+
+    root = DVCRepo.find_root()
+    is_dir = md5.endswith(".dir")
+    h = md5[:-4] if is_dir else md5
+    p = Path(root) / ".dvc" / "cache" / "files" / "md5" / h[:2] / h[2:]
+    return p.with_name(p.name + ".dir") if is_dir else p
+
+
+def _fetch_blob(md5: str, remote: str | None = None) -> bool:
+    """Ensure ``md5`` is in the local cache, fetching from the remote if
+    needed. Returns False if the blob is absent from the remote.
+
+    Atomic and idempotent: downloads to a tmp sibling then ``os.replace``s
+    into place, so concurrent fetches of the same blob (threads or separate
+    processes) can't corrupt each other.
+
+    Raises MaterializeError on transport-level failure.
+    """
+    import uuid
+
+    dest = _local_cache_path(md5)
+    if dest.exists():
+        return True
+
+    odb = _get_remote_odb(remote)
+    src = odb.oid_to_path(md5)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(f"{dest.name}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        odb.fs.get(src, str(tmp))
+    except FileNotFoundError:
+        return False
+    except Exception as e:
+        # Ambiguous failure — distinguish "absent" (legit rebuild) from
+        # transport error (must not silently trigger a rebuild).
+        try:
+            if not odb.exists(md5):
+                return False
+        except Exception:
+            pass
+        raise MaterializeError(f"fetch failed for {md5}: {e}") from e
+    try:
+        os.replace(tmp, dest)
+    except FileNotFoundError:
+        # Concurrent materializer renamed an identical blob into place and
+        # something cleaned our tmp — fine as long as dest now exists.
+        if not dest.exists():
+            raise
+    return True
+
+
+def _checkout_file(md5: str, workspace_path) -> None:
+    """Copy a cached blob into the workspace (atomic tmp+rename)."""
+    import shutil
+    import uuid
+
+    src = _local_cache_path(md5)
+    workspace_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = workspace_path.with_name(f".{workspace_path.name}.{uuid.uuid4().hex[:8]}.tmp")
+    shutil.copyfile(src, tmp)
+    os.replace(tmp, workspace_path)
+
+
+def materialize_targets(
+    dvc_paths: list[str],
+    remote: str | None = None,
+) -> tuple[bool, list[str]]:
+    """Materialize the outputs of ``dvc_paths`` from the remote cache,
+    lock-free: fetch blobs into the local cache, then check out workspace
+    files. Directory outputs fetch the ``.dir`` manifest plus every inner
+    blob, then build the tree.
+
+    Returns ``(ok, missing)``: ``ok`` is True when every recorded output was
+    materialized; ``missing`` lists hashes absent from the remote (a
+    legitimate rebuild trigger for the caller).
+
+    Raises MaterializeError on transport-level failure — the caller must NOT
+    treat that as a rebuild trigger.
+    """
+    from pathlib import Path
+
+    from dvx.run.dvc_files import read_dir_manifest, read_dvc_file
+
+    missing: list[str] = []
+    for dvc_path in dvc_paths:
+        p = Path(dvc_path)
+        output_base = Path(str(p)[:-4]) if str(p).endswith(".dvc") else p
+        info = read_dvc_file(output_base)
+        if info is None:
+            missing.append(str(dvc_path))
+            continue
+        dvc_dir = p.parent
+        for out in info.outs:
+            if not out.md5:
+                missing.append(f"{out.path} (no recorded hash)")
+                continue
+            out_path = dvc_dir / out.path
+            if out.is_dir:
+                manifest_hash = f"{out.md5}.dir"
+                if not _fetch_blob(manifest_hash, remote):
+                    missing.append(manifest_hash)
+                    continue
+                cache_md5_dir = _local_cache_path(manifest_hash).parent.parent
+                manifest = read_dir_manifest(out.md5, cache_dir=cache_md5_dir)
+                dir_missing = False
+                for relpath, file_md5 in manifest.items():
+                    if not _fetch_blob(file_md5, remote):
+                        missing.append(file_md5)
+                        dir_missing = True
+                        continue
+                    file_path = out_path / relpath
+                    if not file_path.exists():
+                        _checkout_file(file_md5, file_path)
+                if dir_missing:
+                    continue
+            else:
+                if not _fetch_blob(out.md5, remote):
+                    missing.append(out.md5)
+                    continue
+                if not out_path.exists():
+                    _checkout_file(out.md5, out_path)
+
+    return (not missing, missing)

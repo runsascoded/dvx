@@ -266,6 +266,111 @@ def test_fresh_clone_dep_inside_tracked_dir_materializes(runner, repo_with_remot
     assert (repo / "data" / "input.txt").read_text() == "hi\n"
 
 
+def test_fresh_clone_parallel_wide_level_zero_cmds(runner, repo_with_remote):
+    """Fresh-clone invariant under parallelism: a wide level of stages whose
+    recorded closure exists in the remote executes zero cmds at `-j 8`.
+
+    Regression (specs/done/parallel-pull-lock-contention.md): each parallel
+    worker used to open its own `Repo()` + `repo.pull`, racing for DVC's
+    repo-wide rwlock — on a 28-stage level at `-j 16`, 10 won and fetched,
+    18 got "Unable to acquire lock", were misclassified as not
+    materializable, and re-ran against absent inputs. Materialization is
+    now lock-free (direct remote → cache → workspace, atomic CA writes), so
+    no worker can lose a lock race.
+    """
+    repo, _remote = repo_with_remote
+
+    n = 8
+    # Shared upstream: tracked dir with one input per sibling stage.
+    mk = " && ".join(f"echo 'in{i}' > data/in{i}.txt" for i in range(n))
+    with open(repo / "data.dvc", "w") as f:
+        yaml.dump({
+            "outs": [{"path": "data"}],
+            "meta": {"computation": {"cmd": f"mkdir -p data && {mk}"}},
+        }, f)
+
+    # Wide level: n sibling stages, each deps on its file inside the dir.
+    for i in range(n):
+        with open(repo / f"out{i}.txt.dvc", "w") as f:
+            yaml.dump({
+                "outs": [{"path": f"out{i}.txt"}],
+                "meta": {"computation": {
+                    "cmd": f"cat data/in{i}.txt > out{i}.txt",
+                    "deps": {f"data/in{i}.txt": ""},
+                }},
+            }, f)
+
+    dvc_stubs = ["data.dvc"] + [f"out{i}.txt.dvc" for i in range(n)]
+    subprocess.run(["git", "add", *dvc_stubs], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "stubs"], cwd=repo, check=True, capture_output=True)
+
+    # Build + push everything.
+    result = runner.invoke(cli, ["run", "--no-commit", "--push", "each", "-j", str(n)])
+    assert result.exit_code == 0, result.output
+    assert _summary_line(result.output, "Executed") == n + 1
+
+    # Fresh-clone simulation.
+    import shutil
+    for i in range(n):
+        (repo / f"out{i}.txt").unlink()
+    shutil.rmtree(repo / "data")
+    shutil.rmtree(repo / ".dvc" / "cache")
+
+    # Parallel run over just the wide level (dir stage not in the plan).
+    targets = [f"out{i}.txt.dvc" for i in range(n)]
+    result = runner.invoke(cli, ["run", "-j", str(n), *targets])
+    assert result.exit_code == 0, result.output
+
+    assert sorted(_stage_status_lines(result.output)) == sorted(
+        f"  ○ out{i}.txt: fetched (up-to-date)" for i in range(n)
+    )
+    assert _summary_line(result.output, "Executed") == 0
+    assert _summary_line(result.output, "Skipped") == n
+    for i in range(n):
+        assert (repo / f"out{i}.txt").read_text() == f"in{i}\n"
+
+
+def test_transport_error_fails_stage_instead_of_rerun(runner, repo_with_remote, monkeypatch):
+    """A transport-level materialization failure fails the stage with a clear
+    reason — it does NOT silently fall through to re-running the cmd.
+
+    (specs/done/parallel-pull-lock-contention.md, secondary: a transient
+    S3 5xx used to downgrade to "re-run the cmd", producing confusing
+    downstream crashes for stages with undeclared intermediate inputs.)
+    """
+    repo, _remote = repo_with_remote
+    _write_stage(repo, "out.txt", "echo 'v1' > out.txt")
+    subprocess.run(["git", "add", "out.txt.dvc"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "stub"], cwd=repo, check=True, capture_output=True)
+
+    result = runner.invoke(cli, ["run", "--no-commit", "--push", "each"])
+    assert result.exit_code == 0, result.output
+
+    _wipe_local(repo, "out.txt")
+
+    # Simulate a transport failure: every blob fetch raises MaterializeError.
+    import dvx.cache as cache_mod
+
+    def _boom(md5, remote=None):
+        raise cache_mod.MaterializeError(f"fetch failed for {md5}: simulated 503")
+
+    monkeypatch.setattr(cache_mod, "_fetch_blob", _boom)
+
+    result = runner.invoke(cli, ["run"])
+    assert result.exit_code != 0
+
+    lines = _stage_status_lines(result.output)
+    assert len(lines) == 1
+    assert re.fullmatch(
+        r"  ✗ out\.txt: materialization failed \(fetch failed for [0-9a-f]{32}: simulated 503\)",
+        lines[0],
+    )
+    # The cmd did NOT run: no workspace output was produced.
+    assert not (repo / "out.txt").exists()
+    assert _summary_line(result.output, "Executed") == 0
+    assert _summary_line(result.output, "Failed") == 1
+
+
 def test_pull_deps_does_not_interfere_with_forced_rerun(runner, repo_with_remote):
     """`--force` bypasses the pull pre-pass — forced stages always re-execute."""
     repo, _remote = repo_with_remote

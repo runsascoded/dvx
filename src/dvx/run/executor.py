@@ -198,7 +198,11 @@ class ParallelExecutor:
             results = []
             for level in levels:
                 for artifact in level:
-                    should_run, reason = self._should_run(artifact)
+                    from dvx.cache import MaterializeError
+                    try:
+                        should_run, reason = self._should_run(artifact)
+                    except MaterializeError as e:
+                        should_run, reason = True, f"materialization failed: {e}"
                     status = "would run" if should_run else f"skip ({reason})"
                     self._log(f"  {artifact.path}: {status}")
                     results.append(
@@ -356,22 +360,32 @@ class ParallelExecutor:
         return targets
 
     def _try_materialize_from_remote(self, targets: list[str], label: str) -> bool:
-        """Pull ``targets``' recorded hashes from the remote into local cache
-        and materialize the workspace files. Returns True on success.
+        """Materialize ``targets``' recorded hashes from the remote — lock-free
+        (no ``repo.pull``, no repo rwlock; see
+        specs/done/parallel-pull-lock-contention.md). Returns True when every
+        recorded output landed.
 
-        Non-fatal: any failure (no remote configured, blob missing remotely,
-        network error) just logs at verbose and returns False so the stage
-        falls through to its normal rerun.
+        Blobs *absent from the remote* return False so the stage falls
+        through to its normal rerun (a legitimate rebuild trigger).
+        Transport-level failures raise MaterializeError — the caller turns
+        that into a stage failure rather than a blind rerun against inputs
+        that may not exist.
         """
+        from dvx.cache import MaterializeError, materialize_targets
+
         try:
-            from dvx import Repo
-            with Repo() as repo:
-                repo.pull(targets=targets)
+            ok, missing = materialize_targets(targets)
+        except MaterializeError:
+            raise
         except Exception as e:
+            # Repo-less contexts (no .dvc dir, no remote configured) land
+            # here — not materializable, fall through to rerun.
             if self.config.verbose:
-                self._log(f"    ↓ {label}: pull failed ({e})")
+                self._log(f"    ↓ {label}: materialize failed ({e})")
             return False
-        return True
+        if not ok and self.config.verbose:
+            self._log(f"    ↓ {label}: not in remote ({', '.join(missing[:3])})")
+        return ok
 
     def _execute_level(self, artifacts: list[Artifact]) -> list[ExecutionResult]:
         """Execute all artifacts in a level in parallel.
@@ -434,8 +448,20 @@ class ParallelExecutor:
         path = artifact.path
         cmd = artifact.computation.cmd if artifact.computation else None
 
-        # Check if should run
-        should_run, reason = self._should_run(artifact)
+        # Check if should run. A transport-level materialization failure is a
+        # stage *failure*, not a rebuild trigger — re-running the cmd against
+        # possibly-unmaterialized inputs would produce confusing downstream
+        # crashes instead of a clear "couldn't materialize X".
+        from dvx.cache import MaterializeError
+        try:
+            should_run, reason = self._should_run(artifact)
+        except MaterializeError as e:
+            self._log(f"  ✗ {path}: materialization failed ({e})")
+            return ExecutionResult(
+                path=path,
+                success=False,
+                reason=f"materialization failed: {e}",
+            )
         if not should_run:
             self._log(f"  ○ {path}: {reason}")
             return ExecutionResult(
