@@ -374,6 +374,47 @@ def test_run_partial_missing_targets_errors(runner, tmp_path):
     ]
 
 
+def test_run_commit_tri_state_flag():
+    """`--commit` is a paired tri-state flag: bare `--commit` = always (BC
+    with `daily.yml`-style `dvx run --commit --push each`), `--no-commit` =
+    never (batch containers), absent = auto (per-stage config).
+
+    Regression guard for the `dvx batch` CLI mismatch: `dvx run --commit
+    never target.dvc` used to send `never` into the targets list (boolean
+    flag), producing `Error: target not found: never` in the container.
+    """
+    from dvx.run.executor import ExecutionConfig
+    from dvx.cli.run_cmd import run_cmd
+
+    # Bare flag → True (mapped to "always"); targets unaffected.
+    ctx = run_cmd.make_context("run", ["--commit", "--push", "each", "x.dvc"])
+    assert ctx.params["commit"] is True
+    assert ctx.params["push"] == "each"
+    assert ctx.params["targets"] == ("x.dvc",)
+
+    # A target directly after bare --commit stays a target (no value
+    # swallowing — this is why tri-state beats an optional-value flag).
+    ctx = run_cmd.make_context("run", ["--commit", "x.dvc"])
+    assert ctx.params["commit"] is True
+    assert ctx.params["targets"] == ("x.dvc",)
+
+    # --no-commit → False (mapped to "never").
+    ctx = run_cmd.make_context("run", ["--no-commit", "x.dvc"])
+    assert ctx.params["commit"] is False
+    assert ctx.params["targets"] == ("x.dvc",)
+
+    # Absent → None (mapped to "auto").
+    ctx = run_cmd.make_context("run", ["x.dvc"])
+    assert ctx.params["commit"] is None
+
+    # --push never parses (batch containers spell out every mode).
+    ctx = run_cmd.make_context("run", ["--push", "never", "x.dvc"])
+    assert ctx.params["push"] == "never"
+
+    # ExecutionConfig default matches the CLI's absent-flag mapping.
+    assert ExecutionConfig().commit == "auto"
+
+
 def test_run_no_targets_with_dvc_files_no_error(runner, tmp_path):
     """No-target ``dvx run`` (auto-discovery) with an existing .dvc works.
 

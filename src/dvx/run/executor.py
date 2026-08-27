@@ -269,28 +269,95 @@ class ParallelExecutor:
         if fresh:
             return False, reason
 
-        # Materializable trans-deps: if the output is just missing locally
-        # but the deps would otherwise let this skip, try fetching the .dvc's
-        # recorded hash from the remote cache. On success, re-evaluate and
-        # short-circuit the rerun. See specs/done/run-auto-pull.md.
-        # Reason can be "output missing" (single-out) or
-        # "output missing: <name>" (multi-out).
-        if self.config.pull_deps and reason.startswith("output missing"):
-            # Skip placeholder .dvc files (no recorded md5 yet — nothing to
-            # fetch and `repo.pull` would slow the run unnecessarily).
-            from dvx.run.dvc_files import read_dvc_file
-            info = read_dvc_file(Path(path))
-            if info is not None and any(o.md5 for o in info.outs):
-                if self._try_materialize_from_remote(path):
-                    fresh2, reason2 = is_output_fresh(Path(path))
-                    if fresh2:
-                        return False, f"fetched ({reason2})"
+        # Materialization pre-pass: try fetching recorded state from the
+        # remote cache before falling back to a rerun. Two triggers, looped
+        # because resolving one can surface the other (e.g. pulling the
+        # stage's own output re-classifies it as "dep missing" when the dep
+        # lives inside a tracked dir that's not in the plan):
+        #
+        # - "output missing[: <name>]" — pull the stage's own .dvc targets
+        #   (see specs/done/run-auto-pull.md).
+        # - "dep missing: <path>" — pull the absent dep file(s) by recorded
+        #   hash: via the dep's own .dvc, or its parent tracked-dir .dvc for
+        #   files inside tracked directories
+        #   (see specs/done/batch-run-command-cli-mismatch.md §3).
+        #
+        # Invariant this preserves: on a fresh clone whose recorded closure
+        # exists in the remote, `dvx run <target>` executes zero cmds.
+        if self.config.pull_deps:
+            # Bounded: each iteration must make progress (a successful pull
+            # that changes the freshness reason) or we bail to the rerun.
+            for _ in range(4):
+                if reason.startswith("output missing"):
+                    # Skip placeholder .dvc files (no recorded md5 yet —
+                    # nothing to fetch and `repo.pull` would slow the run
+                    # unnecessarily).
+                    from dvx.run.dvc_files import read_dvc_file
+                    info = read_dvc_file(Path(path))
+                    if info is None or not any(o.md5 for o in info.outs):
+                        break
+                    if not self._try_materialize_from_remote([f"{path}.dvc"], label=path):
+                        break
+                elif reason.startswith("dep missing"):
+                    targets = self._missing_dep_pull_targets(path)
+                    if not targets:
+                        break
+                    if not self._try_materialize_from_remote(targets, label=path):
+                        break
+                else:
+                    break
+                fresh2, reason2 = is_output_fresh(Path(path))
+                if fresh2:
+                    return False, f"fetched ({reason2})"
+                if reason2 == reason:
+                    # Pull "succeeded" but nothing changed — avoid spinning.
+                    break
+                # Keep the most recent (most accurate) classification for
+                # the next iteration / the rerun log line.
+                reason = reason2
 
         return True, reason
 
-    def _try_materialize_from_remote(self, path: str) -> bool:
-        """Pull ``path``'s recorded hash from the remote into local cache and
-        materialize the workspace file. Returns True on success.
+    def _missing_dep_pull_targets(self, path: str) -> list[str]:
+        """Pull targets for a stage's absent dep files.
+
+        For each recorded dep whose file is missing from the workspace:
+        - dep has its own ``.dvc`` → that ``.dvc`` file;
+        - dep is inside a DVC-tracked directory → the parent dir's ``.dvc``
+          (materializes the whole dir — coarse but correct);
+        - otherwise (raw file, never cached) → skip; nothing to pull.
+        """
+        from dvx.run.dvc_files import find_parent_dvc_dir, read_dvc_file
+
+        info = read_dvc_file(Path(path))
+        if info is None:
+            return []
+        targets = []
+        for dep_path in info.deps:
+            dep = Path(dep_path)
+            if dep.exists():
+                continue
+            dep_dvc = Path(f"{dep_path}.dvc")
+            if dep_dvc.exists():
+                targets.append(str(dep_dvc))
+                continue
+            found = find_parent_dvc_dir(dep)
+            if found is not None:
+                parent_dir, _rel = found
+                # find_parent_dvc_dir resolves to an absolute path; pull
+                # targets want workspace-relative when possible.
+                try:
+                    parent_dir = parent_dir.relative_to(Path.cwd())
+                except ValueError:
+                    pass
+                parent_dvc = f"{parent_dir}.dvc"
+                if parent_dvc not in targets:
+                    targets.append(parent_dvc)
+        return targets
+
+    def _try_materialize_from_remote(self, targets: list[str], label: str) -> bool:
+        """Pull ``targets``' recorded hashes from the remote into local cache
+        and materialize the workspace files. Returns True on success.
 
         Non-fatal: any failure (no remote configured, blob missing remotely,
         network error) just logs at verbose and returns False so the stage
@@ -298,12 +365,11 @@ class ParallelExecutor:
         """
         try:
             from dvx import Repo
-            dvc_path = f"{path}.dvc"
             with Repo() as repo:
-                repo.pull(targets=[dvc_path])
+                repo.pull(targets=targets)
         except Exception as e:
             if self.config.verbose:
-                self._log(f"    ↓ {path}: pull failed ({e})")
+                self._log(f"    ↓ {label}: pull failed ({e})")
             return False
         return True
 
@@ -856,6 +922,28 @@ class ParallelExecutor:
                     stage_name = Path(path).stem
                     commit_msg = f"Run {stage_name}"
 
+            # Push strategy: CLI/env > global config. Resolved independent of
+            # commit strategy — the per-stage *cache* push must run even with
+            # `--commit never` (the `dvx batch` container default), or a Spot
+            # reclaim loses everything since job start instead of one stage.
+            # See specs/done/batch-run-command-cli-mismatch.md.
+            # Check if stage requested push via $DVX_PUSH_FILE
+            push_file = env_extras.get("push_file", "")
+            stage_wants_push = (
+                os.path.exists(push_file) and os.path.getsize(push_file) > 0
+            ) if push_file else False
+            # Per-stage config only selects *when* to push within a
+            # run that already has push enabled — it doesn't enable
+            # push by itself. stage.push() ($DVX_PUSH_FILE) is the
+            # exception: it's an explicit per-invocation request.
+            push_strategy = os.environ.get("DVX_PUSH", self.config.push)
+            if push_strategy != "never":
+                # Push enabled globally — check per-stage override
+                stage_push = dvx_config.should_push(path)
+                if stage_push is not None and stage_push != "never":
+                    push_strategy = stage_push
+            should_push = push_strategy == "each" or stage_wants_push
+
             if commit_msg:
                 # Stage tracked changes and commit
                 result = subprocess.run(
@@ -869,23 +957,9 @@ class ParallelExecutor:
                     )
                     if result.returncode == 0:
                         self._log(f"    📝 committed: {commit_msg.splitlines()[0]}")
-                        # Check if stage requested push via $DVX_PUSH_FILE
-                        push_file = env_extras.get("push_file", "")
-                        stage_wants_push = (
-                            os.path.exists(push_file) and os.path.getsize(push_file) > 0
-                        ) if push_file else False
-                        # Push strategy: CLI/env > global config
-                        # Per-stage config only selects *when* to push within a
-                        # run that already has push enabled — it doesn't enable
-                        # push by itself. stage.push() ($DVX_PUSH_FILE) is the
-                        # exception: it's an explicit per-invocation request.
-                        push_strategy = os.environ.get("DVX_PUSH", self.config.push)
-                        if push_strategy != "never":
-                            # Push enabled globally — check per-stage override
-                            stage_push = dvx_config.should_push(path)
-                            if stage_push is not None and stage_push != "never":
-                                push_strategy = stage_push
-                        should_push = push_strategy == "each" or stage_wants_push
+                        # Git push stays commit-gated (a push without a new
+                        # commit is a no-op at best, a stale-branch push at
+                        # worst); the cache-blob push below is not.
                         if should_push:
                             push_result = subprocess.run(
                                 ["git", "push"],
@@ -895,14 +969,16 @@ class ParallelExecutor:
                                 self._log("    📤 pushed")
                             else:
                                 self._log(f"    ⚠ push failed: {push_result.stderr.strip()}")
-                            dvc_paths = [f"{path}.dvc"]
-                            if co_paths:
-                                dvc_paths.extend(f"{p}.dvc" for p in co_paths)
-                            self._push_cache_blobs(dvc_paths, indent="    ")
                     elif "nothing to commit" in result.stdout:
                         pass  # No changes to commit
                     else:
                         self._log(f"    ⚠ commit failed: {result.stderr.strip()}")
+
+            if should_push:
+                dvc_paths = [f"{path}.dvc"]
+                if co_paths:
+                    dvc_paths.extend(f"{p}.dvc" for p in co_paths)
+                self._push_cache_blobs(dvc_paths, indent="    ")
         finally:
             # Clean up temp files
             for f in (commit_msg_path, summary_path, env_extras.get("push_file", "")):

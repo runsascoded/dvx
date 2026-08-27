@@ -91,3 +91,13 @@ pyrmts-engine).
 (cheaper, runtime-verifiable on Apple Silicon). The `push` subcommand
 defaults `--platform linux/arm64` accordingly; pair with `bootstrap
 --arch X86_64` if you'd rather deploy amd64 images.
+
+## First-smoke findings (nj-crashes container, 2026-08-26)
+
+Ran the derived image (`nj-crashes/batch/Dockerfile`, arm64, shallow clone + `uv sync`) locally in Docker against the S3 remote, targeting the cells subtree with no `--force`. Expected all-`fetched`; got a mix that surfaced:
+
+1. **Materialization races on fresh clones.** With every output missing (fresh clone), per-year stages split inconsistently: some `fetched (up-to-date)`, siblings *re-ran* and failed on missing inputs — despite all blobs being present in the remote. Cause: auto-pull triggers only on reason `output missing`, but a stage whose deps are ALSO unmaterialized reports `dep missing`/`dep changed` first and falls through to re-run; whether a given stage sees its deps materialized depends on parallel scheduling order within/across levels. Fix directions: materialize (or at least attempt pull for) a stage's declared deps before classifying it, or re-evaluate freshness after upstream materialization completes; on a fresh clone the invariant should be "anything whose recorded closure exists in the remote never re-runs". **→ Fixed** alongside the CLI mismatch; see `specs/done/batch-run-command-cli-mismatch.md`.
+2. **`--force` + auto-pull interact**: forced runs skip materialization entirely (correct for from-scratch), which means forced stages need their *dep* closure produced by forced upstreams — fine — but a scoped force (`-f <target> --cached <patterns>`) is the shape consumers will want for "rebuild this subtree against pulled inputs". Worth documenting/blessing that pattern in `dvx batch submit`. **→ Open** (docs/UX; not blocking).
+3. **Incremental stages aren't from-scratch runnable** (app-side bug class, but the executor could help surface it): nj-crashes' `crash-log` cmd reads its own prior output (`-i` append mode) — an undeclared self-dep that only manifests on a fresh machine. A lint ("cmd read a path that is this stage's own out, but it wasn't materialized") would turn these into findings instead of confusing failures. **→ Open** (would need cmd-level file tracing; separate spec if wanted).
+
+Environment notes that transfer to `dvx batch`: SSO default profiles can't refresh headless (containers need static keys — same as Fargate will); `git clone --depth 1` + `git_deps` hashing works; image ~2.2 GB with a full `uv sync` of a heavy app.

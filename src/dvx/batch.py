@@ -155,12 +155,23 @@ def run_command(
 ) -> list[str]:
     """Container command for the base image (whose entrypoint is ``dvx``).
 
-    The default is ``dvx run --commit never --push each -v`` — i.e. no git
+    The default is ``dvx run --no-commit --push each -v`` — i.e. no git
     writes (the container has no push access to the git repo), every completed
-    stage flushed to the remote before the next starts (that's what makes
-    a Spot reclaim survivable), and verbose progress on stderr for CloudWatch.
+    stage's cache blobs flushed to the remote before the next starts (that's
+    what makes a Spot reclaim survivable), and verbose progress on stderr
+    for CloudWatch.
+
+    ``commit`` maps to the CLI's tri-state flag: ``"never"`` → ``--no-commit``,
+    ``"always"`` → ``--commit``, ``"auto"`` → flag omitted.
     """
-    cmd = ["run", "--commit", commit, "--push", push]
+    cmd = ["run"]
+    if commit == "never":
+        cmd.append("--no-commit")
+    elif commit == "always":
+        cmd.append("--commit")
+    elif commit != "auto":
+        raise ValueError(f"invalid commit mode: {commit!r} (expected never|auto|always)")
+    cmd += ["--push", push]
     if force:
         cmd.append("--force")
     if jobs is not None:

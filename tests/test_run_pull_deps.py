@@ -166,6 +166,106 @@ def test_pull_deps_falls_through_when_remote_missing_blob(runner, repo_with_remo
     assert (repo / "out.txt").read_text() == "v1\n"
 
 
+def test_no_commit_still_pushes_cache_blobs(runner, repo_with_remote):
+    """`--no-commit --push each` flushes each stage's cache blobs to the
+    remote even though nothing is git-committed.
+
+    Regression (specs/done/batch-run-command-cli-mismatch.md §2): the whole
+    per-stage push block — including `_push_cache_blobs` — lived under
+    `if commit_msg:`, so the `dvx batch` container default (no git writes)
+    silently skipped every per-stage cache push, and a Spot reclaim lost
+    everything since job start instead of one stage.
+    """
+    from dvx.run.hash import compute_md5
+
+    repo, remote = repo_with_remote
+    _write_stage(repo, "out.txt", "echo 'v1' > out.txt")
+
+    head_before = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+    result = runner.invoke(cli, ["run", "--no-commit", "--push", "each"])
+    assert result.exit_code == 0, result.output
+    assert _summary_line(result.output, "Executed") == 1
+
+    # No git commit happened.
+    head_after = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert head_after == head_before
+
+    # But the stage's blob IS in the remote.
+    md5 = compute_md5(repo / "out.txt")
+    blob = remote / "files" / "md5" / md5[:2] / md5[2:]
+    assert blob.exists()
+    assert blob.read_text() == "v1\n"
+
+
+def test_fresh_clone_dep_inside_tracked_dir_materializes(runner, repo_with_remote):
+    """Fresh-clone invariant: a stage whose recorded closure exists in the
+    remote executes zero cmds — including when its dep lives inside a
+    DVC-tracked *directory* whose stage isn't in the plan.
+
+    Regression (specs/done/batch-run-command-cli-mismatch.md §3, nj-crashes
+    Fargate run `dvx-cells-smoke`): auto-pull fired only on `output missing`;
+    after pulling the stage's own output, freshness re-classified as
+    `dep missing` (the dep file lives in an unmaterialized tracked dir),
+    which fell through to a rerun against inputs that don't exist —
+    `FileNotFoundError` on a fresh machine, nondeterministically across
+    scheduling orders.
+    """
+    repo, _remote = repo_with_remote
+
+    # Upstream: a tracked *directory* stage containing the dep file.
+    with open(repo / "data.dvc", "w") as f:
+        yaml.dump({
+            "outs": [{"path": "data"}],
+            "meta": {"computation": {
+                "cmd": "mkdir -p data && echo 'hi' > data/input.txt",
+            }},
+        }, f)
+
+    # Downstream: deps on the file INSIDE the tracked dir (not on `data/`
+    # itself) — the nj-crashes shape. The dir stage is thus absent from
+    # `dvx run out.txt.dvc`'s plan (nothing deps on `data` as recorded).
+    with open(repo / "out.txt.dvc", "w") as f:
+        yaml.dump({
+            "outs": [{"path": "out.txt"}],
+            "meta": {"computation": {
+                "cmd": "cat data/input.txt > out.txt",
+                "deps": {"data/input.txt": ""},
+            }},
+        }, f)
+
+    subprocess.run(["git", "add", "data.dvc", "out.txt.dvc"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "stubs"], cwd=repo, check=True, capture_output=True)
+
+    # Build + push everything.
+    result = runner.invoke(cli, ["run", "--commit", "--push", "each"])
+    assert result.exit_code == 0, result.output
+    assert _summary_line(result.output, "Executed") == 2
+
+    # Simulate a fresh clone: workspace outputs + local cache gone; .dvc
+    # files (with recorded md5s) remain.
+    import shutil
+    (repo / "out.txt").unlink()
+    shutil.rmtree(repo / "data")
+    shutil.rmtree(repo / ".dvc" / "cache")
+
+    # Target ONLY the downstream stage — the dir stage is not in the plan.
+    result = runner.invoke(cli, ["run", "out.txt.dvc"])
+    assert result.exit_code == 0, result.output
+
+    # Zero cmds executed; the stage (and its dep closure) was materialized
+    # from the remote.
+    assert _stage_status_lines(result.output) == ["  ○ out.txt: fetched (up-to-date)"]
+    assert _summary_line(result.output, "Executed") == 0
+    assert _summary_line(result.output, "Skipped") == 1
+    assert (repo / "out.txt").read_text() == "hi\n"
+    assert (repo / "data" / "input.txt").read_text() == "hi\n"
+
+
 def test_pull_deps_does_not_interfere_with_forced_rerun(runner, repo_with_remote):
     """`--force` bypasses the pull pre-pass — forced stages always re-execute."""
     repo, _remote = repo_with_remote

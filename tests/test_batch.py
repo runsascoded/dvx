@@ -198,35 +198,82 @@ def test_compute_environment_spec_on_demand():
 # ── run command builder ─────────────────────────────────────────────────────
 
 def test_run_command_defaults():
-    """Default container command: ``dvx run --commit never --push each -v``
-    — no git writes from the container, every stage flushed to remote for
-    Spot-reclaim resilience, verbose progress on stderr for CloudWatch."""
-    assert run_command() == ["run", "--commit", "never", "--push", "each", "-v"]
+    """Default container command: ``dvx run --no-commit --push each -v``
+    — no git writes from the container, every stage's cache blobs flushed
+    to remote for Spot-reclaim resilience, verbose progress on stderr for
+    CloudWatch."""
+    assert run_command() == ["run", "--no-commit", "--push", "each", "-v"]
 
 
 def test_run_command_targets():
     assert run_command(("a.dvc", "b.dvc")) == [
-        "run", "--commit", "never", "--push", "each", "-v", "a.dvc", "b.dvc",
+        "run", "--no-commit", "--push", "each", "-v", "a.dvc", "b.dvc",
     ]
 
 
 def test_run_command_force_and_jobs():
     assert run_command(("target",), force=True, jobs=8) == [
-        "run", "--commit", "never", "--push", "each", "--force", "-j", "8", "-v", "target",
+        "run", "--no-commit", "--push", "each", "--force", "-j", "8", "-v", "target",
     ]
 
 
 def test_run_command_no_verbose():
-    assert run_command(verbose=False) == ["run", "--commit", "never", "--push", "each"]
+    assert run_command(verbose=False) == ["run", "--no-commit", "--push", "each"]
 
 
 def test_run_command_commit_and_push_overrides():
-    """``--commit`` / ``--push`` overrides propagate; the batch defaults
+    """``commit`` / ``push`` overrides propagate; the batch defaults
     (``never``/``each``) can be swapped for e.g. a container that DOES
-    have git push access."""
+    have git push access. ``auto`` omits the flag (the CLI default)."""
     assert run_command(commit="auto", push="end") == [
-        "run", "--commit", "auto", "--push", "end", "-v",
+        "run", "--push", "end", "-v",
     ]
+    assert run_command(commit="always") == [
+        "run", "--commit", "--push", "each", "-v",
+    ]
+
+
+def test_run_command_invalid_commit_mode_raises():
+    import pytest
+    with pytest.raises(ValueError) as excinfo:
+        run_command(commit="sometimes")
+    assert str(excinfo.value) == (
+        "invalid commit mode: 'sometimes' (expected never|auto|always)"
+    )
+
+
+# ── run_command ↔ `dvx run` CLI round-trip ──────────────────────────────────
+
+def test_run_command_parses_with_real_run_cli():
+    """The `run_command` output must parse cleanly through `dvx run`'s click
+    parser — with the commit mode bound to the flag, not leaking into targets.
+
+    Regression: `run_command` used to emit `["run", "--commit", "never", ...]`
+    against a boolean `--commit` flag, so `never` fell into the targets list
+    and the container failed with `Error: target not found: never`
+    (nj-crashes jobs aacad5c7/9c42c237, 2026-08-26). Every commit mode's
+    emitted argv is round-tripped here.
+    """
+    from dvx.cli.run_cmd import run_cmd
+
+    for mode, expected_flag in (("never", False), ("always", True), ("auto", None)):
+        args = run_command(("a.dvc", "b.dvc"), jobs=8, commit=mode)[1:]  # strip "run"
+        ctx = run_cmd.make_context("run", args)
+        assert ctx.params["commit"] is expected_flag
+        assert ctx.params["push"] == "each"
+        assert ctx.params["jobs"] == 8
+        assert ctx.params["verbose"] is True
+        assert ctx.params["targets"] == ("a.dvc", "b.dvc")
+
+
+def test_run_command_force_parses_with_real_run_cli():
+    from dvx.cli.run_cmd import run_cmd
+
+    args = run_command(("t.dvc",), force=True)[1:]
+    ctx = run_cmd.make_context("run", args)
+    assert ctx.params["commit"] is False
+    assert ctx.params["force"] is True
+    assert ctx.params["targets"] == ("t.dvc",)
 
 
 # ── submit overrides ────────────────────────────────────────────────────────
