@@ -785,3 +785,104 @@ def test_stale_co_output_does_not_deadlock_on_skipped_sibling(runner, repo_with_
     assert run.summary == Summary(total=2, executed=1, skipped=1)
     # The stale sibling's blob still reaches the remote.
     assert _remote_has_blob(remote, compute_md5(repo / "b.txt"))
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# --remote: route cache reads + writes at a named remote
+# (specs/done/run-remote-flag.md)
+# ────────────────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def repo_with_two_remotes(repo_with_remote, tmp_path):
+    """``repo_with_remote`` plus a non-default ``scratch`` remote.
+
+    Models a reproc audit: the default remote is what prod serves from and
+    must stay untouched; the scratch one collects the regenerated blobs so
+    the two can be diffed (``dvx cache comm``).
+    """
+    repo, default_remote = repo_with_remote
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    subprocess.run(
+        ["dvc", "remote", "add", "scratch", str(scratch)],
+        cwd=repo, check=True, capture_output=True,
+    )
+    return repo, default_remote, scratch
+
+
+def _wipe_local(repo: Path, name: str) -> None:
+    """Delete a workspace output and the whole local cache.
+
+    Leaves the ``.dvc`` file (and its recorded md5) in place, so the stage is
+    "materializable": deps fresh, output absent, hash known.
+    """
+    import shutil
+
+    (repo / name).unlink()
+    shutil.rmtree(repo / ".dvc" / "cache")
+
+
+def test_run_remote_pushes_to_named_remote_only(runner, repo_with_two_remotes):
+    """``--remote scratch`` writes to ``scratch``; the default remote is untouched."""
+    repo, default_remote, scratch = repo_with_two_remotes
+    _write_stage(repo, "out.txt", "echo hello > out.txt")
+
+    result = runner.invoke(cli, ["run", "--commit", "--push", "each", "--remote", "scratch"])
+    assert result.exit_code == 0, result.output
+
+    md5 = compute_md5(repo / "out.txt")
+    assert _remote_has_blob(scratch, md5)
+    assert not _remote_has_blob(default_remote, md5)
+    assert sorted(p.name for p in default_remote.rglob("*") if p.is_file()) == []
+
+    run = parse_run(result.output)
+    assert run.stages == [
+        Stage("out.txt", "running"),
+        Stage("out.txt", "completed"),
+    ]
+    assert run.actions == [StageActions(
+        committed="Run out",
+        pushed=False,
+        cache_objects=1,
+        cache_size="6 B",
+        cache_blobs=1,
+        cache_present=0,
+    )]
+    assert run.summary == Summary(total=1, executed=1, skipped=0)
+
+
+def test_run_remote_materializes_from_named_remote(runner, repo_with_two_remotes):
+    """``--remote`` routes reads too: a stage whose output lives only in the
+    named remote materializes from it and skips.
+
+    The control half is the point — the same wiped state without ``--remote``
+    finds nothing in the (empty) default remote and falls through to a rerun.
+    A single ``--remote`` covering both halves is what lets a reproc read and
+    write one isolated location.
+    """
+    repo, default_remote, scratch = repo_with_two_remotes
+    _write_stage(repo, "out.txt", "echo hello > out.txt")
+    result = runner.invoke(cli, ["run", "--commit", "--push", "each", "--remote", "scratch"])
+    assert result.exit_code == 0, result.output
+    md5 = compute_md5(repo / "out.txt")
+
+    # Materializes from `scratch` — no rerun.
+    _wipe_local(repo, "out.txt")
+    result = runner.invoke(cli, ["run", "--push", "never", "--remote", "scratch"])
+    assert result.exit_code == 0, result.output
+    assert (repo / "out.txt").read_text() == "hello\n"
+    run = parse_run(result.output)
+    assert run.stages == [Stage("out.txt", "skipped")]
+    assert run.summary == Summary(total=1, executed=0, skipped=1)
+
+    # Control: default remote is empty, so the same state reruns the cmd.
+    _wipe_local(repo, "out.txt")
+    result = runner.invoke(cli, ["run", "--push", "never"])
+    assert result.exit_code == 0, result.output
+    run = parse_run(result.output)
+    assert run.stages == [
+        Stage("out.txt", "running"),
+        Stage("out.txt", "completed"),
+    ]
+    assert run.summary == Summary(total=1, executed=1, skipped=0)
+    assert not _remote_has_blob(default_remote, md5)

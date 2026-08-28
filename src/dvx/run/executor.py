@@ -44,6 +44,12 @@ class ExecutionConfig:
     commit: str = "auto"  # Commit strategy: "auto", "always", "never"
     push: str = "never"  # Push strategy: "never", "each", "end"
     cache_push: bool = True  # When push != "never", also push cache blobs to remote
+    # Named DVC remote for both halves of the run's cache traffic: dep
+    # materialization (read) and post-stage push (write). None → the repo's
+    # default remote. A reproc that regenerates everything must be able to
+    # write somewhere other than the remote prod serves from; see
+    # specs/done/run-remote-flag.md.
+    remote: str | None = None
     # Stop traversing upstream once a fresh artifact is reached. Default True;
     # auto-disabled when --force-upstream patterns are set (we have to walk to
     # find pattern matches).
@@ -382,7 +388,7 @@ class ParallelExecutor:
         from dvx.cache import MaterializeError, materialize_targets
 
         try:
-            ok, missing = materialize_targets(targets)
+            ok, missing = materialize_targets(targets, remote=self.config.remote)
         except MaterializeError:
             raise
         except Exception as e:
@@ -1128,7 +1134,9 @@ class ParallelExecutor:
 
         def _work():
             try:
-                outcome.append(push_targets(keys, on_blob=_settled))
+                outcome.append(
+                    push_targets(keys, remote=self.config.remote, on_blob=_settled)
+                )
             except Exception as e:
                 outcome.append(e)
 

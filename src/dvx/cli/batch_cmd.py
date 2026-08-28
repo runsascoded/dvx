@@ -99,6 +99,7 @@ def bootstrap(
 @click.option("-n", "--job-name", help="Batch job name (default: `dvx-<slug>` derived from targets or the repo).")
 @click.option("-O", "--on-demand", is_flag=True, help="Submit to the on-demand queue (needs `bootstrap -o`); no Spot reclaims.")
 @click.option("-p", "--push", default="each", show_default=True, help="`dvx run --push` mode (`each`, `end`, or `never`).")
+@click.option("-r", "--remote", help="`dvx run --remote` (named DVC remote for cache reads and pushes; default: the repo's default remote).")
 @click.option("-V", "--vcpus", type=int, help="Override job vCPUs.")
 @click.option("-w", "--watch", is_flag=True, help="Tail the job's log stream; exit with its status.")
 @click.argument("targets", nargs=-1)
@@ -111,6 +112,7 @@ def batch_submit(
     job_name: str | None,
     on_demand: bool,
     push: str,
+    remote: str | None,
     vcpus: int | None,
     watch: bool,
     targets: tuple[str, ...],
@@ -133,6 +135,7 @@ def batch_submit(
             jobs=jobs,
             commit=commit,
             push=push,
+            remote=remote,
             verbose=True,
         ),
         job_name=name,

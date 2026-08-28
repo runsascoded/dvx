@@ -287,7 +287,8 @@ def test_run_help(runner):
     # against unintended additions / removals to the CLI surface.
     assert set(help.options) == {
         "--force", "--force-upstream", "--cached", "--jobs", "--commit",
-        "--dry-run", "--no-provenance", "--push", "--push-timeout", "--no-cache-push",
+        "--dry-run", "--no-provenance", "--push", "--remote", "--push-timeout",
+        "--no-cache-push",
         "--no-pull-deps", "--no-prune-fresh", "--verbose", "--help",
     }
 

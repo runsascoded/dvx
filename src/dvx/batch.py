@@ -151,6 +151,7 @@ def run_command(
     jobs: int | None = None,
     commit: str = "never",
     push: str = "each",
+    remote: str | None = None,
     verbose: bool = True,
 ) -> list[str]:
     """Container command for the base image (whose entrypoint is ``dvx``).
@@ -163,6 +164,10 @@ def run_command(
 
     ``commit`` maps to the CLI's tri-state flag: ``"never"`` → ``--no-commit``,
     ``"always"`` → ``--commit``, ``"auto"`` → flag omitted.
+
+    ``remote`` names the DVC remote the run reads deps from and pushes
+    outputs to — a reproc audit points it at a scratch remote so it can't
+    write into the one prod serves from.
     """
     cmd = ["run"]
     if commit == "never":
@@ -172,6 +177,8 @@ def run_command(
     elif commit != "auto":
         raise ValueError(f"invalid commit mode: {commit!r} (expected never|auto|always)")
     cmd += ["--push", push]
+    if remote is not None:
+        cmd += ["--remote", remote]
     if force:
         cmd.append("--force")
     if jobs is not None:

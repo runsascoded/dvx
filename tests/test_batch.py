@@ -233,6 +233,16 @@ def test_run_command_commit_and_push_overrides():
     ]
 
 
+def test_run_command_remote():
+    """``--remote`` routes the container's cache reads AND pushes at a named
+    remote — how a reproc audit writes to scratch instead of the remote prod
+    serves from (``specs/done/run-remote-flag.md``). Omitted by default."""
+    assert run_command(("t.dvc",), remote="reproc") == [
+        "run", "--no-commit", "--push", "each", "--remote", "reproc", "-v", "t.dvc",
+    ]
+    assert run_command() == ["run", "--no-commit", "--push", "each", "-v"]
+
+
 def test_run_command_invalid_commit_mode_raises():
     import pytest
     with pytest.raises(ValueError) as excinfo:
@@ -274,6 +284,42 @@ def test_run_command_force_parses_with_real_run_cli():
     assert ctx.params["commit"] is False
     assert ctx.params["force"] is True
     assert ctx.params["targets"] == ("t.dvc",)
+
+
+def test_run_command_remote_parses_with_real_run_cli():
+    """``--remote <name>`` round-trips through `dvx run`'s parser — the
+    `--commit never` lesson: an emitted flag the CLI doesn't take turns its
+    value into a bogus target and fails the job in the container."""
+    from dvx.cli.run_cmd import run_cmd
+
+    args = run_command(("t.dvc",), remote="reproc")[1:]
+    ctx = run_cmd.make_context("run", args)
+    assert ctx.params["remote"] == "reproc"
+    assert ctx.params["targets"] == ("t.dvc",)
+
+    ctx = run_cmd.make_context("run", run_command(("t.dvc",))[1:])
+    assert ctx.params["remote"] is None
+
+
+def test_batch_submit_passes_remote_through(monkeypatch):
+    """`dvx batch submit --remote` reaches the container's `dvx run`."""
+    from click.testing import CliRunner
+
+    from dvx.cli.batch_cmd import batch
+    import dvx.batch as batch_mod
+
+    captured = {}
+
+    def fake_submit(*, command, job_name, queue, vcpus, memory_mib, environment, watch):
+        captured["command"] = command
+        return 0
+
+    monkeypatch.setattr(batch_mod, "submit", fake_submit)
+    result = CliRunner().invoke(batch, ["submit", "--remote", "reproc", "-f", "t.dvc"])
+    assert result.exit_code == 0, result.output
+    assert captured["command"] == [
+        "run", "--no-commit", "--push", "each", "--remote", "reproc", "--force", "-v", "t.dvc",
+    ]
 
 
 # ── submit overrides ────────────────────────────────────────────────────────
@@ -360,7 +406,7 @@ def test_batch_submit_help():
     opts = _parse_options(result.output)
     assert opts == {
         "--commit", "--env", "--force", "--jobs", "--memory", "--job-name",
-        "--on-demand", "--push", "--vcpus", "--watch",
+        "--on-demand", "--push", "--remote", "--vcpus", "--watch",
         "--help",
     }
 

@@ -16,12 +16,13 @@ import click
 @click.option("-n", "--dry-run", is_flag=True, help="Show execution plan without running.")
 @click.option("--no-provenance", is_flag=True, help="Don't include provenance in .dvc files.")
 @click.option("-p", "--push", type=click.Choice(["each", "end", "never"]), default=None, help="Push strategy: 'each' (after each stage), 'end' (once at finish), or 'never'. Also via $DVX_PUSH.")
+@click.option("-r", "--remote", metavar="<name>", help="Named DVC remote for cache reads (dep materialization) and writes (--push). Default: the repo's default remote.")
 @click.option("-t", "--push-timeout", type=float, default=600.0, show_default=True, metavar="<seconds>", help="Abandon a cache push (with a warning) after this long with no object uploaded.")
 @click.option("-P", "--no-cache-push", is_flag=True, help="With --push, only git-push; don't push cache blobs to the remote.")
 @click.option("-D", "--no-pull-deps", is_flag=True, help="Don't auto-fetch materializable trans-deps from remote (default: try fetch before rerunning).")
 @click.option("-U", "--no-prune-fresh", is_flag=True, help="Walk full upstream chain even past fresh artifacts (default: stop at fresh).")
 @click.option("-v", "--verbose", is_flag=True, help="Show detailed output.")
-def run_cmd(targets, force, force_upstream, cached, jobs, commit, dry_run, no_provenance, push, push_timeout, no_cache_push, no_pull_deps, no_prune_fresh, verbose):
+def run_cmd(targets, force, force_upstream, cached, jobs, commit, dry_run, no_provenance, push, remote, push_timeout, no_cache_push, no_pull_deps, no_prune_fresh, verbose):
     """Execute artifact computations from .dvc files.
 
     Run computations defined in .dvc files, respecting dependencies and
@@ -81,6 +82,7 @@ def run_cmd(targets, force, force_upstream, cached, jobs, commit, dry_run, no_pr
         # Tri-state flag: --commit → always, --no-commit → never, absent → auto.
         commit={True: "always", False: "never", None: "auto"}[commit],
         push=push or "never",
+        remote=remote,
         cache_push=not no_cache_push,
         push_timeout=push_timeout,
         prune_fresh=not no_prune_fresh,

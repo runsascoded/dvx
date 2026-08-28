@@ -219,6 +219,9 @@ dvx run --commit
 dvx run --push each     # git-push + cache-push after each per-stage commit
 dvx run --push end      # batch commits, single git-push + cache-push at finish
 dvx run --push each -P  # -P/--no-cache-push: git-push only, skip blob upload
+
+# Route cache reads (dep materialization) and writes (--push) at a named remote
+dvx run --remote scratch --push each -f
 ```
 
 With `--push each|end`, DVX does both `git push` and the equivalent of
@@ -226,6 +229,13 @@ With `--push each|end`, DVX does both `git push` and the equivalent of
 remote). This prevents downstream runs / fresh clones from hitting
 "cache files do not exist neither locally nor on remote". Use
 `-P`/`--no-cache-push` to opt out.
+
+`-r`/`--remote <name>` points *both* halves of a run's cache traffic — dep
+materialization (read) and `--push` (write) — at a named DVC remote instead
+of the default. That's what makes a full-DAG `--force` reproc safe to run:
+its regenerated blobs land in a scratch remote, the one production pulls
+from stays untouched, and `dvx cache comm remote:prod remote:scratch` then
+reports exactly which stages' outputs changed.
 
 When a single cmd produces multiple outputs (see [`docs/MULTI_OUTPUT.md`]),
 all co-outputs land in one commit and one batched cache push — the
