@@ -208,7 +208,7 @@ def test_cache_help(runner):
     help = parse_click_help(result.output)
     assert help.usage == "cli cache [OPTIONS] COMMAND [ARGS]..."
     assert help.description.startswith("Manage DVC cache and inspect cached files.")
-    assert set(help.commands) == {"dir", "md5", "path"}
+    assert set(help.commands) == {"comm", "dir", "md5", "path"}
 
 
 def test_cache_md5(runner, tmp_path):

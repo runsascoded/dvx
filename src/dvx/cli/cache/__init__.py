@@ -2,7 +2,7 @@
 
 import click
 
-from . import dir, md5, path
+from . import comm, dir, md5, path
 
 
 @click.group()
@@ -11,6 +11,7 @@ def cache():
 
 
 # Register subcommands
+cache.add_command(comm.cmd)
 cache.add_command(dir.cmd)
 cache.add_command(md5.cmd)
 cache.add_command(path.cmd)

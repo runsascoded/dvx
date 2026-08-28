@@ -77,9 +77,10 @@ def get_artifact_versions(
                 if current_date.tzinfo is None:
                     current_date = current_date.replace(tzinfo=timezone.utc)
 
-            # Diff line adding an md5 hash
+            # Diff line adding an md5 hash (``.dir`` suffix preserved —
+            # a dir manifest is a distinct cache object from a same-hash file)
             elif line.startswith("+") and "md5:" in line and current_sha:
-                md5_match = re.search(r"md5:\s*([0-9a-f]{32})", line)
+                md5_match = re.search(r"md5:\s*([0-9a-f]{32}(?:\.dir)?)", line)
                 if md5_match:
                     md5 = md5_match.group(1)
                     # Keep the earliest commit that introduced this hash
@@ -139,7 +140,7 @@ def get_referenced_hashes(
                     text=True,
                     check=True,
                 )
-                for match in re.finditer(r"md5:\s*([0-9a-f]{32})", content.stdout):
+                for match in re.finditer(r"md5:\s*([0-9a-f]{32}(?:\.dir)?)", content.stdout):
                     hashes.add(match.group(1))
             except subprocess.CalledProcessError:
                 continue
@@ -165,8 +166,11 @@ def get_local_branches(repo_path: Path | None = None) -> list[str]:
 def list_cache_blobs(repo_path: Path | None = None) -> list[tuple[str, int, Path]]:
     """List all blobs in the local DVC cache.
 
+    Keys preserve the ``.dir`` suffix for directory manifests — a manifest
+    and a file blob with the same hash are distinct cache objects.
+
     Returns:
-        List of (md5, size_bytes, path) for each cached blob
+        List of (key, size_bytes, path) for each cached blob
     """
     if repo_path is None:
         repo_path = Path.cwd()
@@ -181,9 +185,9 @@ def list_cache_blobs(repo_path: Path | None = None) -> list[tuple[str, int, Path
             continue
         for blob_file in prefix_dir.iterdir():
             if blob_file.is_file():
-                md5 = prefix_dir.name + blob_file.stem
+                key = prefix_dir.name + blob_file.name  # .dir suffix preserved
                 size = blob_file.stat().st_size
-                blobs.append((md5, size, blob_file))
+                blobs.append((key, size, blob_file))
     return blobs
 
 
@@ -286,6 +290,25 @@ def compute_gc_plan(
                 if should_keep:
                     keep_hashes.add(v.md5)
 
+    # Expand kept `.dir` manifests into their inner blob keys — without this,
+    # the inner file blobs of a kept/referenced directory look unreferenced
+    # and get deleted (observed pre-fix: `dvx gc --keep 1` deleted the inner
+    # blob of a HEAD-referenced dir). Only KEPT manifests need expanding:
+    # a deleted dir version's inners become unreferenced, which is correct.
+    dir_keys = {h for h in keep_hashes if h.endswith(".dir")}
+    if dir_keys:
+        from dvx.comm import expand_dirs
+
+        expanded = expand_dirs({k: None for k in dir_keys}, repo_path)
+        if expanded.unexpandable:
+            raise ValueError(
+                "Cannot expand kept directory manifest(s) — inner blobs are "
+                "unknown and deletion would risk data loss: "
+                + ", ".join(expanded.unexpandable)
+                + ". Fetch the manifests (e.g. `dvx pull`) and retry."
+            )
+        keep_hashes.update(expanded.objects)
+
     # Find deletable blobs
     all_blobs = list_cache_blobs(repo_path)
     deletable = [(md5, size, path) for md5, size, path in all_blobs if md5 not in keep_hashes]
@@ -293,6 +316,44 @@ def compute_gc_plan(
     delete_hashes = {md5 for md5, _, _ in deletable}
 
     return keep_hashes, delete_hashes, deletable
+
+
+def partition_by_remote(
+    deletable: list[tuple[str, int, Path]],
+    remotes: list[str | None],
+    fresh: bool = False,
+) -> tuple[list[tuple[str, int, Path]], list[tuple[str, int, Path]]]:
+    """Split deletable blobs into (in_remote, not_in_remote) by membership
+    in ANY of ``remotes`` (each listed once via `dvx.comm.remote_objects`,
+    which caches listings under ``.dvc/tmp/comm/``).
+
+    Backs ``dvx gc --safe``: only ``in_remote`` may be deleted; the rest are
+    unpushed and unrecoverable — report and skip.
+    """
+    from dvx.comm import remote_objects
+
+    remote_keys: set[str] = set()
+    for r in remotes:
+        remote_keys.update(remote_objects(r, fresh=fresh))
+
+    in_remote = [b for b in deletable if b[0] in remote_keys]
+    not_in_remote = [b for b in deletable if b[0] not in remote_keys]
+    return in_remote, not_in_remote
+
+
+def cache_link_types(repo_path: Path | None = None) -> list[str]:
+    """The repo's ``cache.type`` config (for the ``--safe`` symlink warning:
+    symlink-linked workspaces dangle when the cache object is deleted)."""
+    try:
+        from dvc.repo import Repo as DVCRepo
+
+        with DVCRepo() as repo:
+            types = repo.config.get("cache", {}).get("type") or []
+            if isinstance(types, str):
+                types = [t.strip() for t in types.split(",")]
+            return list(types)
+    except Exception:
+        return []
 
 
 def format_size(size: int) -> str:

@@ -146,6 +146,57 @@ cli.add_command(diff)
 # =============================================================================
 
 
+def _gc_delete(deletable, force, dry, skipped=None):
+    """Shared print/confirm/delete tail for dvx-native gc paths.
+
+    ``skipped`` (from ``--safe``) is reported but never deleted.
+    """
+    from dvx.gc import format_size
+
+    if skipped:
+        skipped_size = sum(s for _, s, _ in skipped)
+        click.echo(
+            f"⚠ Skipping {len(skipped)} blob(s) ({format_size(skipped_size)}) "
+            "not present in any checked remote — push first or gc without --safe:"
+        )
+        for md5, size, _path in sorted(skipped, key=lambda x: x[1], reverse=True)[:10]:
+            click.echo(f"  {md5[:12]}...  {format_size(size)}")
+        if len(skipped) > 10:
+            click.echo(f"  ... and {len(skipped) - 10} more")
+
+    if not deletable:
+        click.echo("Nothing to delete.")
+        return
+
+    total_size = sum(s for _, s, _ in deletable)
+    click.echo(f"Would delete {len(deletable)} blob(s) ({format_size(total_size)}):")
+    for md5, size, _path in sorted(deletable, key=lambda x: x[1], reverse=True):
+        click.echo(f"  {md5[:12]}...  {format_size(size)}")
+
+    if dry:
+        return
+
+    if not force:
+        click.confirm(f"\nDelete {len(deletable)} cached blob(s)?", abort=True)
+
+    deleted = 0
+    freed = 0
+    for md5, size, path in deletable:
+        try:
+            path.unlink()
+            deleted += 1
+            freed += size
+            # Remove empty parent dir
+            try:
+                path.parent.rmdir()
+            except OSError:
+                pass
+        except OSError as e:
+            click.echo(f"  ⚠ {md5[:12]}...: {e}", err=True)
+
+    click.echo(f"\nDeleted {deleted} blob(s), freed {format_size(freed)}.")
+
+
 @cli.command()
 @click.argument("targets", nargs=-1)
 @click.option("-a", "--all-branches", is_flag=True, help="Keep cache for all branches.")
@@ -156,31 +207,56 @@ cli.add_command(diff)
 @click.option("-k", "--keep", type=int, help="Keep the N most recent versions per artifact.")
 @click.option("-n", "--dry", is_flag=True, help="Dry run - show what would be removed.")
 @click.option("-o", "--older-than", help="Delete versions older than duration (e.g. 30d, 1w, 24h).")
-@click.option("-r", "--remote", help="Remote storage to gc.")
-@click.option("-s", "--safe", is_flag=True, help="Only delete files that exist in remote (verify before deleting).")
+@click.option("-r", "--remote", help="Remote to gc / (with --safe) require membership in.")
+@click.option("-s", "--safe", is_flag=True, help="Only delete blobs present in a remote (skip + report the rest).")
+@click.option("--any-remote", is_flag=True, help="With --safe: membership in ANY configured remote suffices.")
 @click.option("-T", "--all-tags", is_flag=True, help="Keep cache for all tags.")
 @click.option("-w", "--workspace", is_flag=True, help="Keep only cache for current workspace.")
-def gc(targets, all_branches, all_commits, cloud, force, jobs, keep, dry, older_than, remote, safe, all_tags, workspace):
+def gc(targets, all_branches, all_commits, cloud, force, jobs, keep, dry, older_than, remote, safe, any_remote, all_tags, workspace):
     """Garbage collect unused cache files.
 
     With --keep N or --older-than, uses version-aware retention: walks git
     history to find all versions per artifact, keeps those matching the
     policy, deletes the rest from local cache.
 
-    Without --keep/--older-than, delegates to DVC's gc (requires -w, -a,
-    -T, or -A).
+    With --safe, only blobs present in a remote (recoverable) are deleted;
+    unpushed blobs are reported and skipped. Composes with all retention
+    policies.
+
+    Without --keep/--older-than/--safe, delegates to DVC's gc (requires -w,
+    -a, -T, or -A).
 
     Examples:
-        dvx gc -w                     # keep only HEAD-referenced blobs
+        dvx gc -w                     # keep only workspace-referenced blobs
+        dvx gc -w --safe              # …deleting only what the remote can restore
         dvx gc --keep 5               # keep 5 most recent versions per artifact
         dvx gc --older-than 30d       # delete versions older than 30 days
         dvx gc --keep 3 -a            # keep 3 newest, considering all branches
         dvx gc --dry --keep 5         # show what would be deleted
         dvx gc data.parquet.dvc       # GC specific artifact
     """
+    safe_remotes = None
+    if safe:
+        from dvx.gc import cache_link_types
+
+        if "symlink" in cache_link_types():
+            click.echo(
+                "⚠ cache.type includes 'symlink': workspace links will dangle "
+                "when cache objects are deleted.",
+                err=True,
+            )
+        if any_remote:
+            from dvx.cli.cache.comm import _known_remotes
+            names = _known_remotes()["names"]
+            if not names:
+                raise click.ClickException("--any-remote: no remotes configured")
+            safe_remotes = list(names)
+        else:
+            safe_remotes = [remote]
+
     # Version-aware GC (--keep or --older-than)
     if keep is not None or older_than is not None:
-        from dvx.gc import compute_gc_plan, format_size
+        from dvx.gc import compute_gc_plan, partition_by_remote
 
         try:
             _keep_hashes, _delete_hashes, deletable = compute_gc_plan(
@@ -192,37 +268,14 @@ def gc(targets, all_branches, all_commits, cloud, force, jobs, keep, dry, older_
         except ValueError as e:
             raise click.ClickException(str(e)) from e
 
-        if not deletable:
-            click.echo("Nothing to delete.")
-            return
-
-        total_size = sum(s for _, s, _ in deletable)
-        click.echo(f"Would delete {len(deletable)} blob(s) ({format_size(total_size)}):")
-        for md5, size, path in sorted(deletable, key=lambda x: x[1], reverse=True):
-            click.echo(f"  {md5[:12]}...  {format_size(size)}")
-
-        if dry:
-            return
-
-        if not force:
-            click.confirm(f"\nDelete {len(deletable)} cached blob(s)?", abort=True)
-
-        deleted = 0
-        freed = 0
-        for md5, size, path in deletable:
+        skipped = None
+        if safe:
             try:
-                path.unlink()
-                deleted += 1
-                freed += size
-                # Remove empty parent dir
-                try:
-                    path.parent.rmdir()
-                except OSError:
-                    pass
-            except OSError as e:
-                click.echo(f"  ⚠ {md5[:12]}...: {e}", err=True)
+                deletable, skipped = partition_by_remote(deletable, safe_remotes, fresh=True)
+            except Exception as e:
+                raise click.ClickException(f"--safe: remote check failed: {e}") from e
 
-        click.echo(f"\nDeleted {deleted} blob(s), freed {format_size(freed)}.")
+        _gc_delete(deletable, force, dry, skipped=skipped)
         return
 
     if not any([workspace, all_branches, all_tags, all_commits]):
@@ -232,81 +285,53 @@ def gc(targets, all_branches, all_commits, cloud, force, jobs, keep, dry, older_
         )
 
     if safe:
-        # Safe GC: verify files exist in remote before allowing deletion
-        from pathlib import Path
+        # Native safe GC: keep = referenced objects (with `.dir` manifests
+        # expanded), deletable = local − keep, then delete only blobs a
+        # remote can restore. Per-object skipping needs the dvx-native
+        # deletion path — DVC's gc is all-or-nothing.
+        if all_tags:
+            raise click.ClickException("--all-tags is not supported with --safe yet.")
 
-        from dvx.cache import check_remote_cache
+        from dvx.comm import local_objects, ref_objects
+        from dvx.gc import partition_by_remote
 
-        click.echo("Safe GC: checking remote before deleting...")
-
-        # First do a dry run to see what would be deleted
+        refspec = (
+            "--all-commits" if all_commits
+            else "--all-branches" if all_branches
+            else "workspace"
+        )
         try:
-            with Repo() as repo:
-                result = repo.gc(
-                    workspace=workspace,
-                    all_branches=all_branches,
-                    all_tags=all_tags,
-                    all_commits=all_commits,
-                    cloud=False,  # Don't gc cloud in dry run
-                    remote=remote,
-                    force=True,  # Skip confirmation for dry run
-                    jobs=jobs,
-                    dry=True,  # Dry run
-                )
+            rs = ref_objects(refspec, remotes=safe_remotes)
         except Exception as e:
             raise click.ClickException(str(e)) from e
+        if rs.unexpandable:
+            raise click.ClickException(
+                "Cannot expand referenced directory manifest(s) — inner blobs "
+                "are unknown and deletion would risk data loss: "
+                + ", ".join(rs.unexpandable)
+                + ". Fetch the manifests (e.g. `dvx pull`) and retry."
+            )
 
-        # Get list of files that would be deleted
-        # DVC gc result doesn't give us the hashes directly, so we need
-        # to find local cache files and check which are "unused"
+        from pathlib import Path as _Path
+
+        from dvc.repo import Repo as DVCRepo
+        root = _Path(DVCRepo.find_root())
+        cache_md5 = root / ".dvc" / "cache" / "files" / "md5"
+        deletable = []
+        for key, size in local_objects().items():
+            if key in rs.objects:
+                continue
+            h = key[:-4] if key.endswith(".dir") else key
+            p = cache_md5 / h[:2] / (h[2:] + (".dir" if key.endswith(".dir") else ""))
+            deletable.append((key, size, p))
+
         try:
-            from dvc.repo import Repo as DVCRepo
-
-            root = DVCRepo.find_root()
-            cache_dir = Path(root) / ".dvc" / "cache" / "files" / "md5"
-
-            if not cache_dir.exists():
-                click.echo("No cache files found.")
-                return
-
-            # Get all cache file hashes
-            cache_files = []
-            for prefix_dir in cache_dir.iterdir():
-                if prefix_dir.is_dir() and len(prefix_dir.name) == 2:
-                    for cache_file in prefix_dir.iterdir():
-                        if cache_file.is_file():
-                            md5 = prefix_dir.name + cache_file.name
-                            cache_files.append((cache_file, md5))
-
-            # Check which are in remote
-            not_in_remote = []
-            in_remote = []
-            for cache_file, md5 in cache_files:
-                if check_remote_cache(md5, remote):
-                    in_remote.append((cache_file, md5))
-                else:
-                    not_in_remote.append((cache_file, md5))
-
-            if not_in_remote:
-                click.echo(f"\nWARNING: {len(not_in_remote)} file(s) not in remote:")
-                for cache_file, md5 in not_in_remote[:10]:
-                    click.echo(f"  {md5[:8]}...")
-                if len(not_in_remote) > 10:
-                    click.echo(f"  ... and {len(not_in_remote) - 10} more")
-                click.echo("\nRun 'dvx push' first to backup these files, or use gc without --safe.")
-                if not dry:
-                    raise click.ClickException("Aborting: some files not in remote")
-            else:
-                click.echo(f"All {len(in_remote)} cache file(s) verified in remote.")
-
-        except click.ClickException:
-            raise
+            deletable, skipped = partition_by_remote(deletable, safe_remotes, fresh=True)
         except Exception as e:
-            raise click.ClickException(f"Failed to verify remote: {e}") from e
+            raise click.ClickException(f"--safe: remote check failed: {e}") from e
 
-        if dry:
-            click.echo("\nDry run complete (no files deleted).")
-            return
+        _gc_delete(deletable, force, dry, skipped=skipped)
+        return
 
     try:
         with Repo() as repo:
