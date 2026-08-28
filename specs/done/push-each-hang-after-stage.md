@@ -103,3 +103,33 @@ The narrowed analysis is right that a lock wait would have surfaced as
 cause — but this fix doesn't depend on knowing which unbounded call hung. The
 transport is now bounded and instrumented per object, so if run 8 stalls again,
 the log names how many objects were in flight and the run still completes.
+
+### Static check of the "friendly lock waits forever" hypothesis — ruled out
+
+Answering the follow-up question directly (dvc 3.66.1, `dvc/repo/__init__.py`):
+
+```python
+self.lock = make_lock(
+    ..., hardlink_lock=self.config["core"].get("hardlink_lock", False),
+    friendly=True, wait=self._wait_for_lock,
+)
+```
+
+`friendly=True` only controls the tqdm "Waiting to acquire lock…" banner (invisible
+on a non-tty, which is why nothing would have reached CloudWatch). The indefinite
+wait is gated on `wait`, i.e. `Repo(_wait_for_lock=…)`, which **defaults to False**
+— and `dvx.Repo` never passes it. With `wait=False`, `Lock.lock()` uses
+`max_retries = 6` over `DEFAULT_TIMEOUT = 3`s and then raises `LockError`, which
+`_push_cache_blobs`'s catch-all would have logged as `⚠ cache push failed` within
+~3 seconds.
+
+So a lock wait cannot produce a silent 45-minute block on this DVC version. What
+remains is an unbounded call in the transport (an S3 PUT/connection with no
+timeout) or in `Repo()` construction itself — the old push path opened a *fresh*
+`Repo()` at that moment (state DB, `site_cache_dir` makedirs, scm layer) in a
+`--depth 1`, credential-less clone.
+
+Both are now covered without needing to know which: the push reuses the remote-ODB
+handle materialization had *already* exercised successfully earlier in the same run
+(no fresh `Repo()` open at push time at all), and the stall timeout bounds whatever
+the transport does.
