@@ -57,6 +57,10 @@ class ExecutionConfig:
     # Seconds without a single cache object settling before the post-stage
     # push is abandoned (with a warning) instead of blocking the run.
     push_timeout: float = 600.0
+    # Seconds a primary stage waits for a same-level co-output to write its
+    # .dvc before proceeding without it. Only reachable if a co-output's
+    # thread is wedged — `_execute_artifact` signals on every exit.
+    co_output_timeout: float = 1800.0
 
 
 def _matches_patterns(path: str, patterns: list[str]) -> bool:
@@ -436,6 +440,27 @@ class ParallelExecutor:
         return results
 
     def _execute_artifact(self, artifact: Artifact) -> ExecutionResult:
+        """Execute a single artifact computation, always signalling dvc-done.
+
+        Every exit path must signal — not just the ones that write a .dvc.
+        A same-level co-output that returns early (skipped as fresh, or failed
+        materialization, or a failed cmd) is in ``_scheduled_paths``, so the
+        primary's `_wait_for_co_outputs` waits on its event; without a signal
+        the pool deadlocks. That stranded two nj-crashes Fargate jobs
+        indefinitely when a targeted daily run left one co-output's stamps
+        fresh and its sibling's stale
+        (``specs/done/co-output-wait-deadlock-on-skip.md``).
+
+        Mirrors `_handle_co_output`'s try/finally, which fixed the same class
+        of hang for failed co-outputs. ``Event.set()`` is idempotent, so the
+        paths that already signal mid-body are unaffected.
+        """
+        try:
+            return self._execute_artifact_inner(artifact)
+        finally:
+            self._signal_dvc_done(artifact.path)
+
+    def _execute_artifact_inner(self, artifact: Artifact) -> ExecutionResult:
         """Execute a single artifact computation.
 
         Handles command deduplication: if multiple artifacts share the same cmd,
@@ -827,10 +852,18 @@ class ParallelExecutor:
             p for p in self._cmd_artifact_paths.get(cmd, [])
             if p != my_path and p in self._scheduled_paths
         ]
+        timeout = self.config.co_output_timeout
         for co_path in co_paths:
             ev = self._dvc_done_events.get(co_path)
-            if ev is not None:
-                ev.wait()
+            if ev is not None and not ev.wait(timeout=timeout):
+                # Belt-and-braces: `_execute_artifact` signals on every exit,
+                # so this can only fire if a co-output's thread is wedged.
+                # Proceeding with a possibly-incomplete `git add -u` beats
+                # hanging the whole run (same principle as the push timeout).
+                self._log(
+                    f"    ⚠ co-output {co_path} never signalled "
+                    f"({timeout:g}s) — proceeding without it"
+                )
         return co_paths
 
     def _handle_co_output(self, artifact: Artifact, cmd: str) -> ExecutionResult:
@@ -1119,8 +1152,14 @@ class ParallelExecutor:
             self._log(f"{indent}⚠ cache push failed: push produced no result")
             return
 
-        blob_word = "blob" if result.uploaded == 1 else "blobs"
-        self._log(f"{indent}📤 cache pushed ({result.uploaded} {blob_word})")
+        # Both halves, always: "pushed (0 blobs)" after "pushing 3 objects"
+        # reads like a failure when it's the healthy byte-identical-rebuild
+        # case (nj-crashes run 9). The pre-push line counts candidates; this
+        # one splits them into uploaded vs. already-remote.
+        self._log(
+            f"{indent}📤 cache pushed ({result.uploaded} new, "
+            f"{result.already_present} already in remote)"
+        )
         if result.missing_locally:
             self._log(
                 f"{indent}⚠ {len(result.missing_locally)} blob(s) missing from "

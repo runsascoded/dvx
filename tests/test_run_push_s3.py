@@ -99,7 +99,8 @@ class StageActions:
     pushed: bool | None = None           # True=git push OK, False=failed, None=not attempted
     cache_objects: int | None = None     # objects announced by the pre-push line
     cache_size: str | None = None        # size announced by the pre-push line
-    cache_blobs: int | None = None       # int → success; None → no cache push line
+    cache_blobs: int | None = None       # objects uploaded ("N new")
+    cache_present: int | None = None     # objects already in the remote
     cache_failed: str | None = None      # error msg → cache push failed; None → success
     cache_stalled: str | None = None     # stall-timeout text; None → no stall
 
@@ -119,7 +120,8 @@ class ParsedRun:
     actions: list[StageActions] = field(default_factory=list)  # one entry per "📝 committed" block
     end_pushed: bool | None = None              # --push end: True/False, or None if not used
     end_cache_objects: int | None = None        # --push end: pre-push object count
-    end_cache_blobs: int | None = None          # --push end: blob count
+    end_cache_blobs: int | None = None          # --push end: uploaded count
+    end_cache_present: int | None = None        # --push end: already-in-remote count
     failed_stages: list[str] = field(default_factory=list)
     summary: Summary | None = None
 
@@ -140,13 +142,13 @@ _COMMITTED_RE = re.compile(r"^    📝 committed: (.+)$")
 _PUSHED_RE = re.compile(r"^    📤 pushed$")
 _PUSH_FAILED_RE = re.compile(r"^    ⚠ push failed: .+$")
 _CACHE_PUSHING_RE = re.compile(r"^    📤 pushing (\d+) objects? \((.+)\)\.\.\.$")
-_CACHE_PUSHED_RE = re.compile(r"^    📤 cache pushed \((\d+) blobs?\)$")
+_CACHE_PUSHED_RE = re.compile(r"^    📤 cache pushed \((\d+) new, (\d+) already in remote\)$")
 _CACHE_FAILED_RE = re.compile(r"^    ⚠ cache push failed: (.+)$")
 _CACHE_STALLED_RE = re.compile(r"^    ⚠ cache push stalled \((.+)\) — continuing; re-run `dvx push` to flush$")
 _END_PUSHED_RE = re.compile(r"^📤 pushed all commits$")
 _END_PUSH_FAILED_RE = re.compile(r"^⚠ push failed: .+$")
 _END_CACHE_PUSHING_RE = re.compile(r"^📤 pushing (\d+) objects? \((.+)\)\.\.\.$")
-_END_CACHE_PUSHED_RE = re.compile(r"^📤 cache pushed \((\d+) blobs?\)$")
+_END_CACHE_PUSHED_RE = re.compile(r"^📤 cache pushed \((\d+) new, (\d+) already in remote\)$")
 _FAILED_RE = re.compile(r"^Failed: (.+)$")
 _SUMMARY_TOTAL_RE = re.compile(r"^  Total: (\d+)$")
 _SUMMARY_EXECUTED_RE = re.compile(r"^  Executed: (\d+)$")
@@ -204,6 +206,7 @@ def parse_run(output: str) -> ParsedRun:
         if (m := _CACHE_PUSHED_RE.match(line)):
             assert current_action is not None, f"cache pushed without preceding committed: {line!r}"
             current_action.cache_blobs = int(m.group(1))
+            current_action.cache_present = int(m.group(2))
             continue
         if (m := _CACHE_FAILED_RE.match(line)):
             assert current_action is not None, f"cache push failed without preceding committed: {line!r}"
@@ -220,6 +223,7 @@ def parse_run(output: str) -> ParsedRun:
             continue
         if (m := _END_CACHE_PUSHED_RE.match(line)):
             run.end_cache_blobs = int(m.group(1))
+            run.end_cache_present = int(m.group(2))
             continue
         if (m := _FAILED_RE.match(line)):
             run.failed_stages = [s.strip() for s in m.group(1).split(",")]
@@ -275,6 +279,7 @@ def test_push_each_uploads_blob_to_remote(runner, repo_with_remote):
         cache_objects=1,
         cache_size="6 B",   # "hello\n"
         cache_blobs=1,
+        cache_present=0,
     )]
     assert run.summary == Summary(total=1, executed=1, skipped=0)
 
@@ -663,6 +668,7 @@ def test_push_each_does_not_take_the_repo_lock(runner, repo_with_remote, monkeyp
         cache_objects=1,
         cache_size="9 B",  # "lockfree\n"
         cache_blobs=1,
+        cache_present=0,
     )]
     assert run.summary == Summary(total=1, executed=1, skipped=0)
 
@@ -719,3 +725,63 @@ def test_push_stall_times_out_instead_of_hanging(runner, repo_with_remote, monke
     # point: the run continues and the operator knows to re-push.
     assert not _remote_has_blob(remote, compute_md5(repo / "out.txt"))
     assert run.summary == Summary(total=1, executed=1, skipped=0)
+
+
+def test_stale_co_output_does_not_deadlock_on_skipped_sibling(runner, repo_with_remote):
+    """One co-output stale, its same-level sibling fresh — must not deadlock.
+
+    Regression of ``specs/done/co-output-wait-deadlock-on-skip.md`` (found on
+    nj-crashes Fargate runs 7 & 8, both killed after silent hangs).
+
+    ``_wait_for_co_outputs`` blocks on every *same-level* co-output's
+    dvc-done event. A sibling that takes ``_execute_artifact``'s
+    ``if not should_run`` early return is scheduled (so it passes the
+    cross-level filter) but never signals — the primary waits forever.
+
+    The divergent state is a CI artifact: a targeted run re-stamps one
+    co-output's ``.dvc`` and leaves its sibling's dep stamps behind, so one
+    is fresh while the other is stale.
+    """
+    import threading as _threading
+
+    repo, remote = repo_with_remote
+    cmd = "echo aaa > a.txt && echo bbb > b.txt"
+
+    # a.txt: fresh — output present with its recorded md5 → skipped.
+    (repo / "a.txt").write_text("aaa\n")
+    with open(repo / "a.txt.dvc", "w") as f:
+        yaml.dump({
+            "outs": [{
+                "md5": compute_md5(repo / "a.txt"),
+                "size": (repo / "a.txt").stat().st_size,
+                "path": "a.txt",
+            }],
+            "meta": {"computation": {"cmd": cmd}},
+        }, f)
+    # b.txt: stale — no output, no recorded hash → executes.
+    _write_stage(repo, "b.txt", cmd)
+    _commit_stubs(repo, ["a.txt", "b.txt"])
+
+    holder: list = []
+
+    def _go():
+        holder.append(runner.invoke(cli, ["run", "--commit", "--push", "each"]))
+
+    t = _threading.Thread(target=_go, daemon=True)
+    t.start()
+    t.join(timeout=60)
+    assert not t.is_alive(), (
+        "executor deadlocked waiting on a skipped co-output's dvc-done event"
+    )
+    result = holder[0]
+    assert result.exit_code == 0, result.output
+
+    run = parse_run(result.output)
+    assert _sorted_stages(run.stages) == [
+        Stage("a.txt", "skipped"),
+        Stage("b.txt", "completed"),
+        Stage("b.txt", "running"),
+    ]
+    assert run.summary == Summary(total=2, executed=1, skipped=1)
+    # The stale sibling's blob still reaches the remote.
+    assert _remote_has_blob(remote, compute_md5(repo / "b.txt"))
