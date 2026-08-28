@@ -2,6 +2,7 @@
 
 import os
 import re
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -1373,3 +1374,153 @@ def materialize_targets(
                     _checkout_file(out.md5, out_path)
 
     return (not missing, missing)
+
+
+# ─── lock-free push ─────────────────────────────────────────────────────────
+#
+# Mirror of the materialization path above, for the other direction.
+# `repo.push` is `@locked`, unbounded, and logs nothing until it returns —
+# a post-stage push that hung silently for 45 min on Fargate (run 7) was
+# indistinguishable from a lock wait, a boto retry storm, and a deadlock
+# (see specs/done/push-each-hang-after-stage.md). Talking to the remote ODB
+# directly gives per-blob progress (so a stall is attributable) and keeps
+# the push out of the repo-wide rwlock, matching `materialize_targets`.
+
+
+@dataclass
+class PushResult:
+    """Outcome of a `push_targets` call."""
+
+    uploaded: int = 0
+    already_present: int = 0
+    missing_locally: list[str] = field(default_factory=list)
+    failed: list[tuple[str, str]] = field(default_factory=list)
+
+
+def collect_push_objects(dvc_paths: list[str]) -> tuple[list[str], int]:
+    """Cache keys for every output of ``dvc_paths``, plus their local bytes.
+
+    Directory outputs contribute their ``.dir`` manifest key AND every inner
+    blob the manifest names — the gap DVC's ``repo.push`` short-circuits past
+    when the manifest alone is already in the remote
+    (``specs/done/dir-push-shallow-existence-check.md``).
+
+    Purely local: reads ``.dvc`` files and the cache, no network. That's what
+    makes it safe to log *before* the push starts.
+    """
+    from pathlib import Path
+
+    from dvx.run.dvc_files import read_dir_manifest, read_dvc_file
+
+    keys: list[str] = []
+    for dvc_path in dvc_paths:
+        p = Path(dvc_path)
+        output_base = Path(str(p)[:-4]) if str(p).endswith(".dvc") else p
+        info = read_dvc_file(output_base)
+        if info is None:
+            continue
+        for out in info.outs:
+            if not out.md5:
+                continue
+            if out.is_dir:
+                manifest_key = f"{out.md5}.dir"
+                keys.append(manifest_key)
+                cache_md5_dir = _local_cache_path(manifest_key).parent.parent
+                manifest = read_dir_manifest(out.md5, cache_dir=cache_md5_dir)
+                keys.extend(manifest.values())
+            else:
+                keys.append(out.md5)
+
+    keys = list(dict.fromkeys(keys))
+    total_bytes = 0
+    for key in keys:
+        try:
+            total_bytes += _local_cache_path(key).stat().st_size
+        except OSError:
+            pass
+    return keys, total_bytes
+
+
+def _push_blob(key: str, remote: str | None = None) -> str:
+    """Upload one cache object if the remote lacks it.
+
+    Returns ``"uploaded"``, ``"present"`` (already in remote), or
+    ``"missing"`` (not in the local cache — nothing to upload from).
+    """
+    odb = _get_remote_odb(remote)
+    src = _local_cache_path(key)
+    if odb.exists(key):
+        return "present"
+    if not src.exists():
+        return "missing"
+    odb.fs.put_file(str(src), odb.oid_to_path(key))
+    return "uploaded"
+
+
+def push_targets(
+    keys: list[str],
+    remote: str | None = None,
+    jobs: int | None = None,
+    on_blob=None,
+) -> PushResult:
+    """Upload cache objects to the remote, lock-free.
+
+    No ``Repo()`` operation and so no repo-wide rwlock: the remote ODB handle
+    comes from `_get_remote_odb` (``DVCRepo()`` construction alone doesn't
+    lock), and each object is an independent existence-check + upload.
+
+    ``on_blob(key, outcome)`` fires as each object settles — the caller uses
+    it as a liveness signal for its stall timeout.
+
+    Workers are daemon threads, deliberately: a caller that gives up on a
+    stalled upload must be able to finish the run AND exit. A
+    `ThreadPoolExecutor` would be joined at interpreter exit, turning an
+    abandoned push back into the hang it was abandoned to avoid.
+    """
+    import queue
+
+    result = PushResult()
+    if not keys:
+        return result
+
+    pending: queue.Queue = queue.Queue()
+    for key in keys:
+        pending.put(key)
+    lock = threading.Lock()
+
+    def _worker():
+        while True:
+            try:
+                key = pending.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                outcome = _push_blob(key, remote)
+            except Exception as e:
+                with lock:
+                    result.failed.append((key, str(e)))
+                outcome = "failed"
+            else:
+                with lock:
+                    if outcome == "uploaded":
+                        result.uploaded += 1
+                    elif outcome == "present":
+                        result.already_present += 1
+                    else:
+                        result.missing_locally.append(key)
+            if on_blob is not None:
+                on_blob(key, outcome)
+
+    n = jobs or min(8, len(keys))
+    workers = [
+        threading.Thread(target=_worker, name=f"dvx-push-{i}", daemon=True)
+        for i in range(n)
+    ]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
+    if result.failed:
+        key, err = result.failed[0]
+        raise RuntimeError(f"{len(result.failed)} object(s) failed to upload; first: {key}: {err}")
+    return result

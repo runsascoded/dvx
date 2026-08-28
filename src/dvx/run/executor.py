@@ -7,6 +7,7 @@ Uses the provenance information in .dvc files (computation blocks).
 import subprocess
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,6 +54,9 @@ class ExecutionConfig:
     # even when the cache already holds byte-identical outputs.
     # See specs/done/run-auto-pull.md.
     pull_deps: bool = True
+    # Seconds without a single cache object settling before the post-stage
+    # push is abandoned (with a warning) instead of blocking the run.
+    push_timeout: float = 600.0
 
 
 def _matches_patterns(path: str, patterns: list[str]) -> bool:
@@ -1047,35 +1051,81 @@ class ParallelExecutor:
     def _push_cache_blobs(self, dvc_paths: list[str], indent: str = "") -> None:
         """Push cache blobs for the given .dvc files to the configured remote.
 
-        After ``repo.push``, runs a gap-fill pass for any directory outputs:
-        ``.dvc`` files whose ``.dir`` manifest is already in the remote but
-        whose inner blobs are missing. DVC's push short-circuits on the
-        manifest's presence alone, so without this the remote can drift into
-        a "manifest yes, inners no" state silently
-        (see ``specs/done/dir-push-shallow-existence-check.md``).
+        Lock-free (`dvx.cache.push_targets`): the remote ODB is driven
+        directly, so no repo-wide rwlock is taken and every object — file
+        blobs, ``.dir`` manifests, AND the inner blobs a manifest names —
+        is checked and uploaded individually. That last part subsumes the
+        old ``repo.push`` + gap-fill pair, whose existence check
+        short-circuited on a present manifest
+        (``specs/done/dir-push-shallow-existence-check.md``).
+
+        Bounded: the upload runs in a daemon thread and is abandoned if no
+        object settles within ``push_timeout`` seconds. A silent indefinite
+        hang here stalled a whole Fargate job for 45 minutes
+        (``specs/done/push-each-hang-after-stage.md``); push is non-fatal by
+        contract, so a stall must degrade to a warning, not a deadlock.
 
         Non-fatal: logs warnings on failure but never raises. No-op if
         `cache_push` is disabled or `dvc_paths` is empty.
         """
         if not self.config.cache_push or not dvc_paths:
             return
-        try:
-            from dvx import Repo
-            with Repo() as repo:
-                pushed = repo.push(targets=dvc_paths)
 
-            from dvx.cache import push_dir_inner_blobs
-            filled, missing_local = push_dir_inner_blobs(dvc_paths)
-            total = pushed + filled
-            stage_word = "blob" if total == 1 else "blobs"
-            self._log(f"{indent}📤 cache pushed ({total} {stage_word})")
-            if missing_local:
-                self._log(
-                    f"{indent}⚠ {len(missing_local)} dir blob(s) missing from "
-                    "remote AND local cache; downstream pulls may fail."
-                )
+        from dvx.cache import collect_push_objects, push_targets
+        from dvx.gc import format_size
+
+        try:
+            keys, local_bytes = collect_push_objects(dvc_paths)
         except Exception as e:
             self._log(f"{indent}⚠ cache push failed: {e}")
+            return
+
+        # Logged BEFORE any network call, so a stall is attributable to the
+        # push from the log alone (and says how much is in flight).
+        obj_word = "object" if len(keys) == 1 else "objects"
+        self._log(f"{indent}📤 pushing {len(keys)} {obj_word} ({format_size(local_bytes)})...")
+
+        # Liveness: last time an object settled. A stall timeout (rather than
+        # a total one) bounds hangs without capping legitimately long uploads.
+        last_progress = [time.monotonic()]
+        outcome: list = []
+
+        def _settled(_key, _outcome):
+            last_progress[0] = time.monotonic()
+
+        def _work():
+            try:
+                outcome.append(push_targets(keys, on_blob=_settled))
+            except Exception as e:
+                outcome.append(e)
+
+        worker = threading.Thread(target=_work, name="dvx-cache-push", daemon=True)
+        worker.start()
+        timeout = self.config.push_timeout
+        while worker.is_alive():
+            worker.join(timeout=1.0)
+            if worker.is_alive() and time.monotonic() - last_progress[0] > timeout:
+                self._log(
+                    f"{indent}⚠ cache push stalled ({timeout:g}s without progress) — "
+                    "continuing; re-run `dvx push` to flush"
+                )
+                return
+
+        result = outcome[0] if outcome else None
+        if isinstance(result, Exception):
+            self._log(f"{indent}⚠ cache push failed: {result}")
+            return
+        if result is None:
+            self._log(f"{indent}⚠ cache push failed: push produced no result")
+            return
+
+        blob_word = "blob" if result.uploaded == 1 else "blobs"
+        self._log(f"{indent}📤 cache pushed ({result.uploaded} {blob_word})")
+        if result.missing_locally:
+            self._log(
+                f"{indent}⚠ {len(result.missing_locally)} blob(s) missing from "
+                "remote AND local cache; downstream pulls may fail."
+            )
 
 
 def run(

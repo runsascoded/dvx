@@ -97,8 +97,11 @@ class StageActions:
     """Commit + push messages emitted under a stage (``--push each``)."""
     committed: str | None = None        # commit subject (after "📝 committed: ")
     pushed: bool | None = None           # True=git push OK, False=failed, None=not attempted
+    cache_objects: int | None = None     # objects announced by the pre-push line
+    cache_size: str | None = None        # size announced by the pre-push line
     cache_blobs: int | None = None       # int → success; None → no cache push line
     cache_failed: str | None = None      # error msg → cache push failed; None → success
+    cache_stalled: str | None = None     # stall-timeout text; None → no stall
 
 
 @dataclass(frozen=True)
@@ -115,6 +118,7 @@ class ParsedRun:
     stages: list[Stage] = field(default_factory=list)
     actions: list[StageActions] = field(default_factory=list)  # one entry per "📝 committed" block
     end_pushed: bool | None = None              # --push end: True/False, or None if not used
+    end_cache_objects: int | None = None        # --push end: pre-push object count
     end_cache_blobs: int | None = None          # --push end: blob count
     failed_stages: list[str] = field(default_factory=list)
     summary: Summary | None = None
@@ -135,10 +139,13 @@ _PLAN_RE = re.compile(r"^Execution plan: (\d+) levels, (\d+) computations$")
 _COMMITTED_RE = re.compile(r"^    📝 committed: (.+)$")
 _PUSHED_RE = re.compile(r"^    📤 pushed$")
 _PUSH_FAILED_RE = re.compile(r"^    ⚠ push failed: .+$")
+_CACHE_PUSHING_RE = re.compile(r"^    📤 pushing (\d+) objects? \((.+)\)\.\.\.$")
 _CACHE_PUSHED_RE = re.compile(r"^    📤 cache pushed \((\d+) blobs?\)$")
 _CACHE_FAILED_RE = re.compile(r"^    ⚠ cache push failed: (.+)$")
+_CACHE_STALLED_RE = re.compile(r"^    ⚠ cache push stalled \((.+)\) — continuing; re-run `dvx push` to flush$")
 _END_PUSHED_RE = re.compile(r"^📤 pushed all commits$")
 _END_PUSH_FAILED_RE = re.compile(r"^⚠ push failed: .+$")
+_END_CACHE_PUSHING_RE = re.compile(r"^📤 pushing (\d+) objects? \((.+)\)\.\.\.$")
 _END_CACHE_PUSHED_RE = re.compile(r"^📤 cache pushed \((\d+) blobs?\)$")
 _FAILED_RE = re.compile(r"^Failed: (.+)$")
 _SUMMARY_TOTAL_RE = re.compile(r"^  Total: (\d+)$")
@@ -185,6 +192,15 @@ def parse_run(output: str) -> ParsedRun:
             assert current_action is not None, f"push failed without preceding committed: {line!r}"
             current_action.pushed = False
             continue
+        if (m := _CACHE_PUSHING_RE.match(line)):
+            assert current_action is not None, f"cache pushing without preceding committed: {line!r}"
+            current_action.cache_objects = int(m.group(1))
+            current_action.cache_size = m.group(2)
+            continue
+        if (m := _CACHE_STALLED_RE.match(line)):
+            assert current_action is not None, f"cache push stalled without preceding committed: {line!r}"
+            current_action.cache_stalled = m.group(1)
+            continue
         if (m := _CACHE_PUSHED_RE.match(line)):
             assert current_action is not None, f"cache pushed without preceding committed: {line!r}"
             current_action.cache_blobs = int(m.group(1))
@@ -198,6 +214,9 @@ def parse_run(output: str) -> ParsedRun:
             continue
         if _END_PUSH_FAILED_RE.match(line):
             run.end_pushed = False
+            continue
+        if (m := _END_CACHE_PUSHING_RE.match(line)):
+            run.end_cache_objects = int(m.group(1))
             continue
         if (m := _END_CACHE_PUSHED_RE.match(line)):
             run.end_cache_blobs = int(m.group(1))
@@ -250,7 +269,13 @@ def test_push_each_uploads_blob_to_remote(runner, repo_with_remote):
         Stage("out.txt", "completed"),
     ]
     # One commit, git push fails (no remote configured), cache push pushes 1 blob.
-    assert run.actions == [StageActions(committed="Run out", pushed=False, cache_blobs=1)]
+    assert run.actions == [StageActions(
+        committed="Run out",
+        pushed=False,
+        cache_objects=1,
+        cache_size="6 B",   # "hello\n"
+        cache_blobs=1,
+    )]
     assert run.summary == Summary(total=1, executed=1, skipped=0)
 
 
@@ -292,6 +317,7 @@ def test_push_end_batches_cache_pushes(runner, repo_with_remote):
         assert a.cache_failed is None
     # End-of-run: git push attempted (fails, no remote) + cache push of both blobs.
     assert run.end_pushed is False
+    assert run.end_cache_objects == 2
     assert run.end_cache_blobs == 2
     assert run.summary == Summary(total=2, executed=2, skipped=0)
 
@@ -345,6 +371,7 @@ def test_push_each_uploads_all_co_output_blobs(runner, repo_with_remote):
     # Exactly one commit covers both .dvc files; cache push manifest
     # includes both blobs (the bug under test).
     assert len(run.actions) == 1
+    assert run.actions[0].cache_objects == 2
     assert run.actions[0].cache_blobs == 2
     assert run.actions[0].pushed is False  # no remote
     assert run.actions[0].cache_failed is None
@@ -389,6 +416,7 @@ def test_push_each_uploads_all_co_output_blobs_3way(runner, repo_with_remote):
     }
     # One commit, manifest has all 3 blobs.
     assert len(run.actions) == 1
+    assert run.actions[0].cache_objects == 3
     assert run.actions[0].cache_blobs == 3
     assert run.summary == Summary(total=3, executed=3, skipped=0)
 
@@ -451,6 +479,9 @@ def test_push_each_uploads_dir_co_output_blobs(runner, repo_with_remote):
     # Exactly one commit covers both .dvc files. The cache_blobs count
     # is DVC's reported upload count: 2 manifests + 4 inner files = 6.
     assert len(run.actions) == 1
+    # Every object is enumerated up front — manifests AND inner blobs — so
+    # the pre-push line matches what actually uploads.
+    assert run.actions[0].cache_objects == 6
     assert run.actions[0].cache_blobs == 6
     assert run.actions[0].pushed is False  # no remote
     assert run.actions[0].cache_failed is None
@@ -561,33 +592,130 @@ def test_cache_push_failure_is_non_fatal(runner, repo_with_remote, monkeypatch):
     repo, _remote = repo_with_remote
     _write_stage(repo, "resilient.txt", "echo survive > resilient.txt")
 
-    from dvx import repo as repo_module
-    original_push = repo_module.Repo.push
+    from dvx import cache as cache_mod
 
-    def boom(self, *args, **kwargs):
+    def boom(*args, **kwargs):
         raise RuntimeError("simulated remote outage")
 
-    monkeypatch.setattr(repo_module.Repo, "push", boom)
+    monkeypatch.setattr(cache_mod, "push_targets", boom)
 
-    try:
-        result = runner.invoke(cli, ["run", "--commit", "--push", "each"])
-        assert result.exit_code == 0, result.output
-        run = parse_run(result.output)
-        assert run.stages == [
-            Stage("resilient.txt", "running"),
-            Stage("resilient.txt", "completed"),
-        ]
-        assert run.actions == [StageActions(
-            committed="Run resilient",
-            pushed=False,
-            cache_blobs=None,
-            cache_failed="simulated remote outage",
-        )]
-        # .dvc commit happened despite cache push failure.
-        commits = subprocess.run(
-            ["git", "log", "--pretty=%s"], cwd=repo, capture_output=True, text=True,
-        ).stdout.rstrip().split("\n")
-        assert commits == ["Run resilient", "stubs", "init"] or commits == ["Run resilient", "init"]
-        assert run.summary == Summary(total=1, executed=1, skipped=0)
-    finally:
-        monkeypatch.setattr(repo_module.Repo, "push", original_push)
+    result = runner.invoke(cli, ["run", "--commit", "--push", "each"])
+    assert result.exit_code == 0, result.output
+    run = parse_run(result.output)
+    assert run.stages == [
+        Stage("resilient.txt", "running"),
+        Stage("resilient.txt", "completed"),
+    ]
+    # The pre-push line still fires (it's computed locally, before any
+    # network call) — that's what makes a later hang attributable.
+    assert run.actions == [StageActions(
+        committed="Run resilient",
+        pushed=False,
+        cache_objects=1,
+        cache_size="8 B",  # "survive\n"
+        cache_blobs=None,
+        cache_failed="simulated remote outage",
+    )]
+    # .dvc commit happened despite cache push failure.
+    commits = subprocess.run(
+        ["git", "log", "--pretty=%s"], cwd=repo, capture_output=True, text=True,
+    ).stdout.rstrip().split("\n")
+    assert commits == ["Run resilient", "stubs", "init"] or commits == ["Run resilient", "init"]
+    assert run.summary == Summary(total=1, executed=1, skipped=0)
+
+
+def test_push_each_does_not_take_the_repo_lock(runner, repo_with_remote, monkeypatch):
+    """The post-stage cache push must not go through ``@locked`` ``repo.push``.
+
+    Regression of ``specs/done/push-each-hang-after-stage.md``: the push
+    path ran ``Repo().push(targets=…)``, a repo-wide-rwlock operation with
+    no timeout and no logging until it returned — on Fargate it went silent
+    for 45 minutes and the job had to be killed. Pushes now use the same
+    lock-free remote-ODB primitives as materialization
+    (``specs/done/parallel-pull-lock-contention.md``).
+
+    Encoded structurally: make every ``Repo.push`` raise. Blobs must still
+    reach the remote, because that call is no longer on the path.
+    """
+    repo, remote = repo_with_remote
+    _write_stage(repo, "out.txt", "echo lockfree > out.txt")
+
+    from dvc.repo import Repo as DVCRepo
+
+    from dvx import repo as repo_module
+
+    def boom(self, *args, **kwargs):
+        raise AssertionError("locked repo.push must not be on the cache-push path")
+
+    monkeypatch.setattr(repo_module.Repo, "push", boom)
+    monkeypatch.setattr(DVCRepo, "push", boom)
+
+    result = runner.invoke(cli, ["run", "--commit", "--push", "each"])
+    assert result.exit_code == 0, result.output
+
+    md5 = compute_md5(repo / "out.txt")
+    assert _remote_has_blob(remote, md5)
+
+    run = parse_run(result.output)
+    assert run.actions == [StageActions(
+        committed="Run out",
+        pushed=False,
+        cache_objects=1,
+        cache_size="9 B",  # "lockfree\n"
+        cache_blobs=1,
+    )]
+    assert run.summary == Summary(total=1, executed=1, skipped=0)
+
+
+def test_push_stall_times_out_instead_of_hanging(runner, repo_with_remote, monkeypatch):
+    """A push that makes no progress is abandoned, not waited on forever.
+
+    Regression of ``specs/done/push-each-hang-after-stage.md``: an upload
+    that never returns (no timeout anywhere in the transport) stalled a
+    Fargate job for 45 min with zero log output. Push is non-fatal by
+    contract, so a stall must degrade to a warning and let the run finish.
+    """
+    repo, remote = repo_with_remote
+    _write_stage(repo, "out.txt", "echo stalled > out.txt")
+
+    from dvx import cache as cache_mod
+
+    def never_returns(key, remote=None):
+        import time as _time
+        _time.sleep(300)
+        return "uploaded"
+
+    monkeypatch.setattr(cache_mod, "_push_blob", never_returns)
+
+    import threading as _threading
+    holder: list = []
+
+    def _go():
+        holder.append(runner.invoke(
+            cli, ["run", "--commit", "--push", "each", "--push-timeout", "1"],
+        ))
+
+    t = _threading.Thread(target=_go, daemon=True)
+    t.start()
+    t.join(timeout=60)
+    assert not t.is_alive(), "run hung on a stalled cache push"
+    result = holder[0]
+    assert result.exit_code == 0, result.output
+
+    run = parse_run(result.output)
+    assert run.stages == [
+        Stage("out.txt", "running"),
+        Stage("out.txt", "completed"),
+    ]
+    assert run.actions == [StageActions(
+        committed="Run out",
+        pushed=False,
+        cache_objects=1,
+        cache_size="8 B",  # "stalled\n"
+        cache_blobs=None,
+        cache_stalled="1s without progress",
+    )]
+    # The stalled blob never reached the remote — the warning is the whole
+    # point: the run continues and the operator knows to re-push.
+    assert not _remote_has_blob(remote, compute_md5(repo / "out.txt"))
+    assert run.summary == Summary(total=1, executed=1, skipped=0)
