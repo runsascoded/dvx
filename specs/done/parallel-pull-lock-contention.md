@@ -71,3 +71,43 @@ level-batching option wouldn't have covered.
 - `test_transport_error_fails_stage_instead_of_rerun` — simulated 503
   on every fetch ⇒ stage fails `✗ … materialization failed (…)`,
   exit 1, cmd not executed.
+
+## Verified fixed at `72d62b28e` — one residual gap (nj-crashes Fargate run 5)
+
+Lock contention: gone. 34/35 stages `fetched (up-to-date)` / skipped, zero `Unable to acquire lock`, zero spurious re-runs. The remaining failure is a different, final gap:
+
+**A genuinely-stale stage runs without its declared dep files materialized.** `njsp/data/njsp_njdot_residuals.parquet` is legitimately stale (recorded dep `crashes.parquet: 3f6e4628…` vs the upstream `.dvc`'s current `1bd4f002…`) → re-run is correct. But its input `njsp/data/crashes.parquet` is the output of an upstream stage that's *pruned as fresh* — nothing materializes it — and the cmd dies `FileNotFoundError: njsp/data/crashes.parquet`. The dep-materialization pre-pass covers *classification*; this needs the execution-time counterpart: before running a stale stage, pull each declared dep whose file is absent, at the md5 its own `.dvc` (the upstream out stamp) records. Invariant: a stage never executes with a declared dep absent when that dep's blob exists in the remote.
+
+**Secondary observation — co-output stamp divergence.** `njsp_njdot_match.parquet` and `njsp_njdot_residuals.parquet` are co-outputs of one cmd (`njsp match_njdot`), yet match's dep stamps are current (daily CI re-runs re-stamp it) while residuals' lag by days — so one sibling reads fresh and the other stale off the same execution. If co-outputs' `.dvc`s aren't all re-stamped when the shared cmd runs, staleness classification splits within a cmd group. Worth checking whether the daily's targeted runs (`$DVX njsp/data/njsp_njdot_match.parquet.dvc`) update sibling co-output `.dvc`s.
+
+### Run-5 resolution
+
+**Primary fixed**: `_execute_artifact` now runs an execution-time dep
+materialization for any stage about to execute (stale OR forced, when
+`pull_deps` is on): every declared dep whose file is absent from the
+workspace is pulled at the md5 *its own* `.dvc` records — the upstream
+out stamp, not the stale downstream stamp — via the same
+`_missing_dep_pull_targets` + lock-free `materialize_targets` path the
+classification pre-pass uses. Deps absent from the remote fall through
+(the cmd then fails on its own terms); transport errors fail the stage
+as before. This also blesses the `-f <target> --cached <patterns>`
+"rebuild this subtree against pulled inputs" pattern from the
+first-smoke findings — `--cached`-skipped upstreams get their outputs
+pulled for the stale downstream.
+
+Test: `test_stale_stage_materializes_absent_deps_before_running` —
+downstream with a corrupted (stale) dep stamp, fresh clone, upstream
+in-plan but `--cached`-skipped ⇒ dep materialized at the upstream's
+recorded md5, cmd succeeds. Red pre-fix (`FileNotFoundError` → exit 1).
+
+**Secondary confirmed, deferred to its own spec**: targeted runs do
+NOT re-stamp out-of-plan co-output `.dvc`s. Mechanism:
+`_cmd_artifact_paths` (the cmd → co-output map) is built only from
+artifacts in the plan, so `$DVX match.parquet.dvc` runs the shared cmd
+and re-stamps match's `.dvc` while residuals' — never loaded — lags.
+A fix needs out-of-plan co-output *discovery* (a recursive `.dvc` scan
+building the cmd map repo-wide, then post-run stamping of unplanned
+siblings) — separable scope with its own tradeoffs (scan cost, whether
+unplanned siblings' outputs should also be verified/cached). Interim
+workaround for nj-crashes' daily: target the whole cmd group
+(`$DVX match.parquet.dvc residuals.parquet.dvc`) so both are in-plan.

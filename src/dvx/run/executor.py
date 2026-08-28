@@ -455,6 +455,20 @@ class ParallelExecutor:
         from dvx.cache import MaterializeError
         try:
             should_run, reason = self._should_run(artifact)
+            if should_run and cmd and self.config.pull_deps:
+                # Execution-time dep materialization: a genuinely-stale (or
+                # forced) stage may have declared dep files absent from the
+                # workspace — the upstream can be out of the plan (pruned,
+                # `--cached` pattern, targeted run) so nothing else pulls
+                # them. Pull each absent dep at the md5 its own .dvc records
+                # (the upstream out stamp). Invariant: a stage never executes
+                # with a declared dep absent when that dep's blob exists in
+                # the remote. Deps absent from the remote fall through — the
+                # cmd then fails on its own terms.
+                # See specs/done/parallel-pull-lock-contention.md (run 5).
+                dep_targets = self._missing_dep_pull_targets(path)
+                if dep_targets:
+                    self._try_materialize_from_remote(dep_targets, label=path)
         except MaterializeError as e:
             self._log(f"  ✗ {path}: materialization failed ({e})")
             return ExecutionResult(

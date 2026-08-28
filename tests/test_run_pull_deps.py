@@ -371,6 +371,74 @@ def test_transport_error_fails_stage_instead_of_rerun(runner, repo_with_remote, 
     assert _summary_line(result.output, "Failed") == 1
 
 
+def test_stale_stage_materializes_absent_deps_before_running(runner, repo_with_remote):
+    """A genuinely-stale stage pulls its absent dep files (at the deps' own
+    recorded md5s) before executing — even when the upstream stage is in the
+    plan but skipped (``--cached`` pattern) so nothing else materializes it.
+
+    Regression (specs/done/parallel-pull-lock-contention.md, run 5):
+    `njsp_njdot_residuals.parquet` was correctly stale (`dep changed`) but its
+    input `crashes.parquet` was never materialized — the classification-time
+    pre-pass only fires on `dep missing`/`output missing` reasons, and
+    `dep changed` is decided .dvc-vs-.dvc without touching disk. The cmd then
+    died `FileNotFoundError`. Invariant: a stage never executes with a
+    declared dep absent when that dep's blob exists in the remote.
+    """
+    repo, _remote = repo_with_remote
+
+    with open(repo / "input.txt.dvc", "w") as f:
+        yaml.dump({
+            "outs": [{"path": "input.txt"}],
+            "meta": {"computation": {"cmd": "echo 'in-v1' > input.txt"}},
+        }, f)
+    with open(repo / "out.txt.dvc", "w") as f:
+        yaml.dump({
+            "outs": [{"path": "out.txt"}],
+            "meta": {"computation": {
+                "cmd": "cat input.txt > out.txt",
+                "deps": {"input.txt": ""},
+            }},
+        }, f)
+    subprocess.run(["git", "add", "input.txt.dvc", "out.txt.dvc"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "stubs"], cwd=repo, check=True, capture_output=True)
+
+    # Build + push everything.
+    result = runner.invoke(cli, ["run", "--no-commit", "--push", "each"])
+    assert result.exit_code == 0, result.output
+    assert _summary_line(result.output, "Executed") == 2
+
+    # Make the downstream stale: corrupt its recorded dep stamp (simulating
+    # an upstream that moved on while this stage's .dvc lagged — the run-5
+    # co-output-divergence shape).
+    out_dvc = repo / "out.txt.dvc"
+    data = yaml.safe_load(out_dvc.read_text())
+    data["meta"]["computation"]["deps"]["input.txt"] = "0" * 32
+    with open(out_dvc, "w") as f:
+        yaml.dump(data, f)
+
+    # Fresh-clone simulation.
+    import shutil
+    (repo / "input.txt").unlink()
+    (repo / "out.txt").unlink()
+    shutil.rmtree(repo / ".dvc" / "cache")
+
+    # `--cached input.txt` keeps the upstream in-plan but skipped — nothing
+    # else materializes the dep; only the execution-time pull can.
+    result = runner.invoke(cli, ["run", "out.txt.dvc", "--cached", "input.txt"])
+    assert result.exit_code == 0, result.output
+
+    lines = _stage_status_lines(result.output)
+    assert lines == [
+        "  ○ input.txt: cached by pattern",
+        "  ⟳ out.txt: running...",
+        "  ✓ out.txt: completed (<duration>s)",
+    ]
+    assert _summary_line(result.output, "Executed") == 1
+    # The dep was materialized at ITS OWN .dvc's md5 before the cmd ran.
+    assert (repo / "input.txt").read_text() == "in-v1\n"
+    assert (repo / "out.txt").read_text() == "in-v1\n"
+
+
 def test_pull_deps_does_not_interfere_with_forced_rerun(runner, repo_with_remote):
     """`--force` bypasses the pull pre-pass — forced stages always re-execute."""
     repo, _remote = repo_with_remote
