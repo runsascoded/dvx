@@ -199,6 +199,8 @@ class ParallelExecutor:
             self._log("No computations to execute")
             return []
 
+        self._warn_unresolvable_deps()
+
         total_stages = sum(len(level) for level in levels)
         self._log(f"Execution plan: {len(levels)} levels, {total_stages} computations")
 
@@ -265,6 +267,40 @@ class ParallelExecutor:
                 self._push_cache_blobs([f"{r.path}.dvc" for r in executed])
 
         return results
+
+    def _warn_unresolvable_deps(self) -> None:
+        """Warn about declared deps that name neither a tracked artifact nor a
+        file on disk.
+
+        A dep path is resolved relative to its ``.dvc``'s directory unless it
+        starts with ``/`` or already carries that directory as a prefix
+        (``_resolve_dep_paths``). A cross-directory dep written bare therefore
+        resolves *somewhere* — just not where the author meant
+        (``njdot/data/x.parquet`` in ``www/public/njdot/y.db.dvc`` becomes
+        ``www/public/njdot/njdot/data/x.parquet``). Nothing produces that path,
+        so the edge is dropped and the stage runs in Level 1 against a file
+        that doesn't exist yet.
+
+        Which is indistinguishable, at every layer, from having declared no dep
+        at all — and invisible on a machine where the file happens to be lying
+        around. Six of nj-crashes' fourteen Level-1 reproc failures were this
+        (``specs/done/co-output-dep-edge-loss.md``).
+
+        Deliberately narrow: a dep with a ``.dvc`` is fine even when its file is
+        absent (that's a pruned-fresh leaf, or something a prior level builds).
+        Only "no ``.dvc`` AND no file" is unambiguously broken.
+        """
+        for artifact in self.artifacts:
+            if artifact.computation is None:
+                continue
+            for dep in artifact.computation.deps:
+                dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
+                if Path(dep_path).exists() or Path(f"{dep_path}.dvc").exists():
+                    continue
+                self._log(
+                    f"⚠ {artifact.path}: dep {dep_path!r} matches no .dvc file and "
+                    "no path on disk — no ordering edge"
+                )
 
     def _should_run(self, artifact: Artifact) -> tuple[bool, str]:
         """Check if artifact should be executed.
@@ -1196,6 +1232,14 @@ def run(
 
     # Build artifact graph from .dvc files
     artifacts: dict[str, Artifact] = {}
+    # Paths registered as bare leaves by pruning (below) rather than loaded
+    # from their own .dvc. They're provisional: a placeholder means "nothing
+    # in the plan so far needs this as a real node". If something later does
+    # — it's an explicit target, or a dep of a stage we didn't prune — the
+    # placeholder is upgraded rather than treated as an answer. Without that,
+    # whichever consumer got popped first silently deleted its own dep from
+    # the plan (specs/done/co-output-dep-edge-loss.md).
+    placeholders: set[str] = set()
     pending = list(targets)
 
     # Pruning: skip walking past artifacts that are fresh per their own .dvc.
@@ -1215,7 +1259,7 @@ def run(
 
         output_str = str(output_path)
 
-        if output_str in artifacts:
+        if output_str in artifacts and output_str not in placeholders:
             continue
 
         # Load artifact from .dvc file
@@ -1225,6 +1269,7 @@ def run(
             artifact = Artifact(path=output_str)
 
         artifacts[output_str] = artifact
+        placeholders.discard(output_str)
 
         # If this artifact is fresh per its own .dvc, stop traversing upstream:
         # any further-upstream state is irrelevant to anything downstream that's
@@ -1240,17 +1285,23 @@ def run(
         if artifact.computation:
             for dep in artifact.computation.deps:
                 dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
-                if dep_path not in artifacts:
-                    if prune_here:
-                        # Don't traverse — register as bare leaf
+                if prune_here:
+                    if dep_path not in artifacts:
+                        # Don't traverse — register as a provisional bare leaf
                         artifacts[dep_path] = Artifact(path=dep_path)
-                        continue
-                    dvc_file = Path(str(dep_path) + ".dvc")
-                    if dvc_file.exists():
-                        pending.append(dvc_file)
-                    else:
-                        # No .dvc file — add as leaf so _group_into_levels sees it in `done`
-                        artifacts[dep_path] = Artifact(path=dep_path)
+                        placeholders.add(dep_path)
+                    continue
+                # We're not pruning, so this dep needs to be a real node —
+                # even if a pruned consumer already left a placeholder here.
+                if dep_path in artifacts and dep_path not in placeholders:
+                    continue
+                dvc_file = Path(str(dep_path) + ".dvc")
+                if dvc_file.exists():
+                    pending.append(dvc_file)
+                else:
+                    # No .dvc file — add as leaf so _group_into_levels sees it in `done`
+                    artifacts[dep_path] = Artifact(path=dep_path)
+                    placeholders.discard(dep_path)
 
             # git_deps are always leaf nodes (git-tracked, no .dvc file)
             for dep in artifact.computation.git_deps:

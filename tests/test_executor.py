@@ -589,3 +589,106 @@ def test_run_cache_idempotent(tmp_path):
     md5 = compute_md5(output)
     cache_path = tmp_path / ".dvc" / "cache" / "files" / "md5" / md5[:2] / md5[2:]
     assert cache_path.exists()
+
+
+def test_fresh_consumer_does_not_shadow_an_explicit_target(tmp_workdir):
+    """A pruned-fresh consumer must not erase its dep from the plan.
+
+    ``prune_fresh`` registers a fresh artifact's deps as bare leaves ("already
+    satisfied, don't walk further"). That's right only while nothing else needs
+    the dep as a real node. When the dep is *itself* an explicit target and the
+    consumer is popped first, the placeholder used to win: the later target hit
+    ``output_str in artifacts`` and returned early, so the dep lost its
+    computation, vanished from the plan, and — being a leaf — imposed no
+    ordering, leaving the consumer in Level 1 alongside nothing.
+
+    Silent in every direction: no warning, and invisible on a machine where the
+    dep's file already exists. It surfaced as nj-crashes' "co-output dep edges
+    are dropped" (``specs/done/co-output-dep-edge-loss.md``), but co-outputs are
+    incidental — the trigger is target ordering, and ``cm.pqt`` simply sorts
+    ahead of the ``crashes.parquet`` it consumes.
+    """
+    from dvx.run.dvc_files import write_dvc_file
+    from dvx.run.hash import compute_md5
+
+    a_pqt = tmp_workdir / "a.pqt"
+    a_pqt.write_text("a\n")
+    a_md5 = compute_md5(a_pqt)
+    write_dvc_file(output_path=a_pqt, md5=a_md5, size=a_pqt.stat().st_size, cmd="true")
+
+    b_pqt = tmp_workdir / "b.pqt"
+    b_pqt.write_text("b\n")
+    write_dvc_file(
+        output_path=b_pqt,
+        md5=compute_md5(b_pqt),
+        size=b_pqt.stat().st_size,
+        cmd="true",
+        deps={str(a_pqt): a_md5},
+    )
+
+    # Consumer first — the order that triggers it.
+    config = ExecutionConfig(max_workers=1, dry_run=True)
+    output = StringIO()
+    results = run(
+        [Path(f"{b_pqt}.dvc"), Path(f"{a_pqt}.dvc")], config=config, output=output,
+    )
+    assert sorted(r.path for r in results) == [str(a_pqt), str(b_pqt)]
+
+    # ...and the dep is ordered ahead of its consumer, not merely present.
+    plan = [ln for ln in output.getvalue().split("\n") if ln.startswith("Execution plan")]
+    assert plan == ["Execution plan: 2 levels, 2 computations"]
+
+
+def test_warns_when_a_dep_resolves_to_nothing(tmp_workdir):
+    """A bare cross-directory dep misresolves under the .dvc's own dir; say so.
+
+    ``njdot/data/a.pqt`` declared in ``www/b.db.dvc`` resolves to
+    ``www/njdot/data/a.pqt`` — nothing produces it, the edge is dropped, and
+    the stage runs in Level 1 against a file that doesn't exist. The `/`-form
+    is the fix; this warning is what makes the mistake visible at plan time
+    instead of at runtime on a fresh checkout.
+    """
+    from dvx.run.dvc_files import write_dvc_file
+    from dvx.run.hash import compute_md5
+
+    (tmp_workdir / "njdot" / "data").mkdir(parents=True)
+    (tmp_workdir / "www").mkdir()
+
+    # Relative paths: `_resolve_dep_paths` is a no-op for an absolute .dvc dir.
+    a_pqt = Path("njdot/data/a.pqt")
+    a_pqt.write_text("a\n")
+    a_md5 = compute_md5(a_pqt)
+    write_dvc_file(output_path=a_pqt, md5=a_md5, size=a_pqt.stat().st_size, cmd="true")
+
+    # Hand-authored: `write_dvc_file` always emits the `/`-form for a dep
+    # outside the .dvc's dir, so the broken shape only arises from hand-edits
+    # — which is exactly where nj-crashes' six came from.
+    b_db = Path("www/b.db")
+    Path("www/b.db.dvc").write_text(yaml.dump({
+        "meta": {"computation": {
+            "cmd": "true",
+            "deps": {"njdot/data/a.pqt": a_md5},   # bare: misresolves under www/
+            "side_effect": True,
+        }},
+    }))
+
+    config = ExecutionConfig(max_workers=1, dry_run=True)
+    output = StringIO()
+    run([Path(f"{b_db}.dvc")], config=config, output=output)
+    warnings = [ln for ln in output.getvalue().split("\n") if ln.startswith("⚠")]
+    assert warnings == [
+        "⚠ www/b.db: dep 'www/njdot/data/a.pqt' matches no .dvc file and "
+        "no path on disk — no ordering edge"
+    ]
+
+    # Same file, one character different: the `/`-prefixed form binds.
+    Path("www/b.db.dvc").write_text(yaml.dump({
+        "meta": {"computation": {
+            "cmd": "true",
+            "deps": {"/njdot/data/a.pqt": a_md5},
+            "side_effect": True,
+        }},
+    }))
+    output = StringIO()
+    run([Path(f"{b_db}.dvc")], config=config, output=output)
+    assert [ln for ln in output.getvalue().split("\n") if ln.startswith("⚠")] == []
