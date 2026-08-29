@@ -434,40 +434,87 @@ def submit(
     return _watch(c, job_id)
 
 
-def _watch(c: dict, job_id: str) -> int:
+def _drain(c: dict, stream: str, next_token: str | None) -> tuple[str | None, bool]:
+    """Print every log event available on ``stream`` past ``next_token``.
+
+    A single ``get_log_events`` call caps at 1 MB / 10k events, so one call per
+    poll silently falls behind a chatty run — and on the final poll it would
+    drop whatever the container printed last (the run summary, precisely the
+    part worth watching for). Page until the forward token stops advancing.
+
+    Returns ``(next_token, found)``; ``found`` is False when the stream doesn't
+    exist yet, which the caller reports rather than swallows.
+    """
+    while True:
+        kwargs = {
+            "logGroupName": LOG_GROUP,
+            "logStreamName": stream,
+            "startFromHead": True,
+        }
+        if next_token is not None:
+            kwargs["nextToken"] = next_token
+        try:
+            resp = c["logs"].get_log_events(**kwargs)
+        except c["logs"].exceptions.ResourceNotFoundException:
+            return next_token, False
+        for e in resp["events"]:
+            print(e["message"])
+        token = resp["nextForwardToken"]
+        if token == next_token:
+            return token, True
+        next_token = token
+
+
+def _watch(c: dict, job_id: str, interval: float = 15) -> int:
+    """Tail a job's logs until it reaches a terminal state; return its exit code.
+
+    Two things this has to survive, both learned the hard way on nj-crashes'
+    reproc runs (``specs/done/co-output-dep-edge-loss.md``):
+
+    - **A retried attempt gets a new log stream.** Spot reclaims are routine on
+      the Spot queue, and the paging token is scoped to the stream it came
+      from — carrying it across would query the new stream at a meaningless
+      offset. Reset on every stream change and say so, so a silent restart
+      mid-run is visible as a restart.
+    - **A missing stream must not look like a quiet job.** Swallowing
+      ``ResourceNotFoundException`` forever renders a wrong log group as a job
+      that simply prints nothing, which cost an evening of building
+      out-of-band pollers. Warn once.
+    """
     last_status = None
     next_token = None
     stream = None
+    warned_missing = False
     while True:
         desc = c["batch"].describe_jobs(jobs=[job_id])["jobs"][0]
         status = desc["status"]
         if status != last_status:
             err(f"  status: {status}")
             last_status = status
-        stream = desc.get("container", {}).get("logStreamName") or stream
+        current = desc.get("container", {}).get("logStreamName")
+        if current and current != stream:
+            if stream is not None:
+                # New attempt (Spot reclaim / retry): the old token is
+                # meaningless against this stream.
+                err(f"  new attempt, log stream: {current}")
+                next_token = None
+                warned_missing = False
+            stream = current
         if stream is not None:
-            kwargs = {
-                "logGroupName": LOG_GROUP,
-                "logStreamName": stream,
-                "startFromHead": True,
-            }
-            if next_token is not None:
-                kwargs["nextToken"] = next_token
-            try:
-                resp = c["logs"].get_log_events(**kwargs)
-            except c["logs"].exceptions.ResourceNotFoundException:
-                resp = None
-            if resp is not None:
-                for e in resp["events"]:
-                    print(e["message"])
-                next_token = resp["nextForwardToken"]
+            next_token, found = _drain(c, stream, next_token)
+            if not found and not warned_missing:
+                err(
+                    f"  ⚠ log stream {stream} not found in {LOG_GROUP} — "
+                    "job output will not appear here"
+                )
+                warned_missing = True
         if status in ("SUCCEEDED", "FAILED"):
             exit_code = desc.get("container", {}).get("exitCode")
             reason = desc.get("statusReason")
             if reason:
                 err(f"  reason: {reason}")
             return exit_code if exit_code is not None else (0 if status == "SUCCEEDED" else 1)
-        time.sleep(15)
+        time.sleep(interval)
 
 
 def _wait(pred, what: str, timeout: float = 300, interval: float = 5) -> None:

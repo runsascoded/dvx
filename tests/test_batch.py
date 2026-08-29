@@ -446,3 +446,135 @@ def _parse_options(help_output: str) -> set[str]:
         if m:
             seen.append(m.group(1))
     return set(seen)
+
+
+# ── job watching ────────────────────────────────────────────────────────────
+
+class _NotFound(Exception):
+    pass
+
+
+def _capture_err(monkeypatch) -> list[str]:
+    """Collect `dvx.batch.err` output.
+
+    It's a module-level ``partial(print, file=sys.stderr)``, so it holds the
+    stderr object from import time and neither capsys nor capfd sees it.
+    """
+    import dvx.batch as batch_mod
+
+    lines: list[str] = []
+    monkeypatch.setattr(batch_mod, "err", lines.append)
+    return lines
+
+
+class _FakeLogs:
+    """CloudWatch Logs stub: pages events, one per `get_log_events` call.
+
+    Mirrors the real API's shape — a `nextForwardToken` that stops advancing
+    once the stream is exhausted, which is the only signal that a page was the
+    last one.
+    """
+
+    class exceptions:
+        ResourceNotFoundException = _NotFound
+
+    def __init__(self, streams: dict[str, list[str]]):
+        self.streams = streams
+        self.calls: list[tuple[str, str | None]] = []
+
+    def get_log_events(self, *, logGroupName, logStreamName, startFromHead, nextToken=None):
+        self.calls.append((logStreamName, nextToken))
+        if logStreamName not in self.streams:
+            raise _NotFound(logStreamName)
+        events = self.streams[logStreamName]
+        start = 0 if nextToken is None else int(nextToken)
+        # One event per call, so a multi-event stream requires paging.
+        end = min(start + 1, len(events))
+        return {
+            "events": [{"message": m} for m in events[start:end]],
+            "nextForwardToken": str(end),
+        }
+
+
+class _FakeBatch:
+    def __init__(self, descs: list[dict]):
+        self.descs = descs
+
+    def describe_jobs(self, *, jobs):
+        return {"jobs": [self.descs.pop(0) if len(self.descs) > 1 else self.descs[0]]}
+
+
+def test_watch_drains_the_log_tail_before_returning(capsys):
+    """The final poll must page to the end, not print one event and exit.
+
+    `get_log_events` caps a page at 1 MB / 10k events. Draining once per poll
+    meant a chatty run's tail — the `dvx run` summary above all — never
+    printed, which is what made a live job look like it had stopped
+    (nj-crashes reproc, 2026-08-29).
+    """
+    from dvx.batch import _watch
+
+    logs = _FakeLogs({"s1": ["Level 1/8", "Level 8/8", "Summary:", "  Total: 158"]})
+    batch = _FakeBatch([
+        {"status": "RUNNING", "container": {"logStreamName": "s1"}},
+        {"status": "SUCCEEDED", "container": {"logStreamName": "s1", "exitCode": 0}},
+    ])
+    code = _watch({"batch": batch, "logs": logs}, "job-1", interval=0)
+    assert code == 0
+    out = capsys.readouterr()
+    assert out.out.rstrip().split("\n") == [
+        "Level 1/8", "Level 8/8", "Summary:", "  Total: 158",
+    ]
+
+
+def test_watch_resets_paging_token_on_a_new_attempt(capsys, monkeypatch):
+    """A Spot reclaim gives the retry a new log stream; the token can't carry.
+
+    Paging tokens are scoped to the stream that issued them, so reusing one
+    across attempts queries the new stream at a meaningless offset. Assert the
+    retry is read from its start — and announced, so a silent restart reads as
+    a restart.
+    """
+    from dvx.batch import _watch
+
+    logs = _FakeLogs({"s1": ["attempt 1 line"], "s2": ["attempt 2 line", "done"]})
+    batch = _FakeBatch([
+        {"status": "RUNNING", "container": {"logStreamName": "s1"}},
+        {"status": "RUNNING", "container": {"logStreamName": "s2"}},
+        {"status": "SUCCEEDED", "container": {"logStreamName": "s2", "exitCode": 0}},
+    ])
+    logged = _capture_err(monkeypatch)
+    code = _watch({"batch": batch, "logs": logs}, "job-1", interval=0)
+    assert code == 0
+    assert capsys.readouterr().out.rstrip().split("\n") == [
+        "attempt 1 line", "attempt 2 line", "done",
+    ]
+    # Every read of s2 starts from the head, never with s1's token.
+    assert [t for s, t in logs.calls if s == "s2"] == [None, "1", "2", "2"]
+    assert logged == [
+        "  status: RUNNING",
+        "  new attempt, log stream: s2",
+        "  status: SUCCEEDED",
+    ]
+
+
+def test_watch_warns_once_when_the_log_stream_is_missing(capsys, monkeypatch):
+    """A wrong log group must not render as a job that prints nothing."""
+    from dvx.batch import _watch
+
+    logs = _FakeLogs({})
+    batch = _FakeBatch([
+        {"status": "RUNNING", "container": {"logStreamName": "gone"}},
+        {"status": "FAILED", "container": {"logStreamName": "gone"}, "statusReason": "boom"},
+    ])
+    logged = _capture_err(monkeypatch)
+    code = _watch({"batch": batch, "logs": logs}, "job-1", interval=0)
+    assert code == 1
+    assert capsys.readouterr().out == ""
+    assert logged == [
+        "  status: RUNNING",
+        "  ⚠ log stream gone not found in /dvx/batch — "
+        "job output will not appear here",
+        "  status: FAILED",
+        "  reason: boom",
+    ]
