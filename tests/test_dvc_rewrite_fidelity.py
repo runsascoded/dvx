@@ -373,3 +373,54 @@ def test_rewrite_preserves_extra_meta_fields(tmp_path):
         "      /data/a: 2222bbbb2222bbbb2222bbbb2222bbbb",
         "",
     ]
+
+
+def test_rewrite_preserves_side_effect_flag(tmp_path):
+    """A hand-authored ``side_effect: true`` survives the stage's own rerun.
+
+    ``side_effect`` is author intent, not a value DVX recomputes. The
+    executor rewrites a co-output / driver ``.dvc`` after the cmd runs to
+    refresh dep hashes, and does so without passing the flag — so a merge
+    that stripped it (because ``new_comp`` omits it) silently disarmed the
+    co-output wait. nj-crashes hit exactly this: a daily-cron
+    ``harmonize_muni_codes`` run dropped ``side_effect: true`` from
+    ``njsp/data/harmonize.dvc``, and the next reproc failed
+    ``✗ harmonize: co-output not produced``.
+
+    Regression of ``specs/co-output-side-effect-flag-durability.md``.
+    """
+    dvc_path = tmp_path / "harmonize.dvc"
+    dvc_path.write_text(
+        "meta:\n"
+        "  computation:\n"
+        "    cmd: njsp harmonize_muni_codes\n"
+        "    # Driver stage: no outs of its own; the four real co-outputs\n"
+        "    # carry the data. side_effect keeps the co-output wait from\n"
+        "    # expecting an artifact here.\n"
+        "    side_effect: true\n"
+        "    deps:\n"
+        "      /data/FAUQStats2023.xml: 1111aaaa1111aaaa1111aaaa1111aaaa\n"
+    )
+
+    # The rewrite the executor's side-effect branch performs: refresh dep
+    # hashes, cmd re-supplied, no side_effect passed.
+    write_dvc_file(
+        tmp_path / "harmonize",
+        cmd="njsp harmonize_muni_codes",
+        deps={"data/FAUQStats2023.xml": "2222bbbb2222bbbb2222bbbb2222bbbb"},
+    )
+
+    rewritten = dvc_path.read_text().split("\n")
+
+    assert rewritten == [
+        "meta:",
+        "  computation:",
+        "    cmd: njsp harmonize_muni_codes",
+        "    # Driver stage: no outs of its own; the four real co-outputs",
+        "    # carry the data. side_effect keeps the co-output wait from",
+        "    # expecting an artifact here.",
+        "    side_effect: true",
+        "    deps:",
+        "      /data/FAUQStats2023.xml: 2222bbbb2222bbbb2222bbbb2222bbbb",
+        "",
+    ]

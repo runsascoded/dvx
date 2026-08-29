@@ -667,9 +667,12 @@ def _merge_preserving_comments(existing: Any, new_data: dict) -> None:
       updated in place. New entries are appended. Entries whose path is
       absent from ``new_data["outs"]`` are removed.
     - ``meta.computation`` (mapping): DVX-managed keys (``cmd``, ``deps``,
-      ``git_deps``, ``side_effect``, ``fetch``) are updated / removed to
-      match ``new_data``. Other keys under ``meta.computation`` (custom
-      user fields) are left untouched.
+      ``git_deps``, ``git_log_deps``, ``fetch``) are updated / removed to
+      match ``new_data``. ``side_effect`` is author-owned — updated when
+      ``new_data`` carries it, preserved (never stripped) when it doesn't,
+      since the executor rewrites a co-output's ``.dvc`` without passing the
+      flag. Other keys under ``meta.computation`` (custom user fields) are
+      left untouched.
     - ``meta.computation.deps`` / ``git_deps`` (mapping): value updated
       in place for existing keys (preserving order). New keys appended.
       Obsolete keys removed.
@@ -725,13 +728,25 @@ def _merge_preserving_comments(existing: Any, new_data: dict) -> None:
                 meta["computation"] = new_comp
             else:
                 comp = meta["computation"]
-                # DVX-managed keys under `computation` — sync with new_comp.
-                managed = ("cmd", "side_effect")
-                for k in managed:
-                    if k in new_comp:
-                        comp[k] = new_comp[k]
-                    elif k in comp:
-                        del comp[k]
+                # `cmd` is DVX-managed: the executor re-supplies it on every
+                # provenance rewrite, so sync it (add / update / remove).
+                if "cmd" in new_comp:
+                    comp["cmd"] = new_comp["cmd"]
+                elif "cmd" in comp:
+                    del comp["cmd"]
+
+                # `side_effect` is author intent, not a value DVX recomputes.
+                # The executor rewrites a co-output / driver .dvc after its cmd
+                # runs to refresh dep hashes, without knowing or passing the
+                # flag — so a merge that stripped it whenever `new_comp` omits
+                # it silently disarmed the co-output wait. That's the bug in
+                # specs/co-output-side-effect-flag-durability.md: a daily-cron
+                # `harmonize_muni_codes` run dropped `side_effect: true`, and
+                # the next reproc failed `✗ harmonize: co-output not produced`.
+                # Treat it as author-owned — a new value updates it, its
+                # absence preserves it.
+                if "side_effect" in new_comp:
+                    comp["side_effect"] = new_comp["side_effect"]
 
                 # deps / git_deps — in-place merge of the mapping. Preserves
                 # key order, comments interleaved between deps, and *path

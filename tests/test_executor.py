@@ -692,3 +692,48 @@ def test_warns_when_a_dep_resolves_to_nothing(tmp_workdir):
     output = StringIO()
     run([Path(f"{b_db}.dvc")], config=config, output=output)
     assert [ln for ln in output.getvalue().split("\n") if ln.startswith("⚠")] == []
+
+
+def test_side_effect_flag_survives_the_stages_own_run(tmp_workdir):
+    """A driver stage's ``side_effect: true`` must survive dvx rerunning it.
+
+    End-to-end guard for ``specs/co-output-side-effect-flag-durability.md``:
+    the executor rewrites the driver ``.dvc`` after its cmd runs to refresh
+    dep hashes. If that rewrite dropped the flag, the *next* run would treat
+    the outs-less driver as a failed co-output
+    (``✗ ...: co-output not produced``) and halt the level. The unit-level
+    guard is ``test_rewrite_preserves_side_effect_flag``; this exercises the
+    real executor write path end to end.
+    """
+    from dvx.run.dvc_files import read_dvc_file, write_dvc_file
+    from dvx.run.hash import compute_md5
+
+    dep = tmp_workdir / "input.txt"
+    dep.write_text("v1\n")
+
+    driver = tmp_workdir / "harmonize"
+    write_dvc_file(
+        output_path=driver,
+        cmd="true",
+        deps={str(dep): compute_md5(dep)},
+        side_effect=True,
+    )
+    assert read_dvc_file(driver).side_effect is True
+
+    # Change the dep so the stage is stale and actually reruns (and thus
+    # rewrites its .dvc with the refreshed dep hash).
+    dep.write_text("v2\n")
+
+    results = run(
+        [Path(str(driver) + ".dvc")],
+        config=ExecutionConfig(max_workers=1, cache_push=False, commit="never"),
+        output=StringIO(),
+    )
+    assert [(r.path, r.success, r.reason) for r in results] == [
+        (str(driver), True, "completed")
+    ]
+
+    # The flag survived the rewrite, and the dep hash was refreshed.
+    info = read_dvc_file(driver)
+    assert info.side_effect is True
+    assert info.deps == {str(dep): compute_md5(dep)}

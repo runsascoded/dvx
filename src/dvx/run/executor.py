@@ -737,6 +737,14 @@ class ParallelExecutor:
                 git_deps_hashes = artifact.computation.get_git_dep_hashes(recompute=True)
                 git_log_deps_shas = artifact.computation.get_git_log_dep_shas(recompute=True)
 
+            # Re-assert an author-set `side_effect: true` so it survives the
+            # stage's own rewrite even on a fresh write (the merge path in
+            # write_dvc_file preserves an existing flag; this covers the
+            # no-prior-file case too). Only re-stamp an *explicit* flag —
+            # `info.side_effect` is None when side-effect status was merely
+            # inferred from "no outs + cmd", and that inference re-derives on
+            # read without needing the line written out.
+            explicit_side_effect = info.side_effect if info else None
             try:
                 dvc_file = write_dvc_file(
                     output_path=Path(path),
@@ -744,6 +752,7 @@ class ParallelExecutor:
                     deps=deps_hashes if self.config.provenance else None,
                     git_deps=git_deps_hashes if self.config.provenance else None,
                     git_log_deps=git_log_deps_shas if self.config.provenance else None,
+                    side_effect=explicit_side_effect,
                     fetch_schedule=fetch_schedule,
                     fetch_last_run=fetch_last_run,
                 )
