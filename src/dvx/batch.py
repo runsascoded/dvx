@@ -65,6 +65,20 @@ def compute_environment_spec(
     }
 
 
+# Retry a Spot reclaim, never an application failure. A bare
+# ``{"attempts": 2}`` retries everything, so a deterministic error costs a
+# second full run of every stage before failing identically — nj-crashes
+# burned a 122-stage level that way. ``evaluateOnExit`` is first-match-wins,
+# so the catch-all EXIT must come last.
+RECLAIM_ONLY_RETRY = {
+    "attempts": 2,
+    "evaluateOnExit": [
+        {"onStatusReason": "Host EC2*", "action": "RETRY"},
+        {"onReason": "*", "action": "EXIT"},
+    ],
+}
+
+
 def job_definition_spec(
     *,
     name: str = PREFIX,
@@ -76,6 +90,7 @@ def job_definition_spec(
     execution_role_arn: str,
     log_group: str = LOG_GROUP,
     environment: dict[str, str] | None = None,
+    retry_strategy: dict | None = None,
 ) -> dict:
     """Fargate task job definition.
 
@@ -83,6 +98,9 @@ def job_definition_spec(
     ephemeral, ARM64 (Graviton, ~20% cheaper than X86_64 and runtime-verifiable
     on Apple Silicon locally). ``PYTHONFAULTHANDLER=1`` is set into the
     environment by default so a mute SIGSEGV (exit 139) surfaces a traceback.
+
+    ``retry_strategy`` overrides `RECLAIM_ONLY_RETRY` wholesale, for callers
+    that want a different policy (more attempts, or none).
     """
     env = {"PYTHONFAULTHANDLER": "1"}
     if environment:
@@ -112,7 +130,7 @@ def job_definition_spec(
                 {"name": k, "value": v} for k, v in sorted(env.items())
             ],
         },
-        "retryStrategy": {"attempts": 2},  # spot reclaim gets one retry
+        "retryStrategy": retry_strategy or RECLAIM_ONLY_RETRY,
     }
 
 
@@ -303,6 +321,7 @@ def bootstrap(
     ephemeral_gib: int = 100,
     on_demand: bool = False,
     environment: dict[str, str] | None = None,
+    retry_strategy: dict | None = None,
 ) -> None:
     """Create-if-missing IAM role, log group, ECR repo, Fargate-Spot compute
     environment + queue, and (re-)register the job definition. Idempotent."""
@@ -401,6 +420,7 @@ def bootstrap(
         ephemeral_gib=ephemeral_gib,
         execution_role_arn=role["Arn"],
         environment=environment,
+        retry_strategy=retry_strategy,
     ))
     err(f"job definition {PREFIX}: registered")
 

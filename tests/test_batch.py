@@ -53,7 +53,13 @@ def test_job_definition_spec_defaults():
                 {"name": "PYTHONFAULTHANDLER", "value": "1"},
             ],
         },
-        "retryStrategy": {"attempts": 2},
+        "retryStrategy": {
+            "attempts": 2,
+            "evaluateOnExit": [
+                {"onStatusReason": "Host EC2*", "action": "RETRY"},
+                {"onReason": "*", "action": "EXIT"},
+            ],
+        },
     }
 
 
@@ -129,6 +135,16 @@ def test_ecr_lifecycle_policy():
 
 
 # ── docker push commands ────────────────────────────────────────────────────
+
+def test_job_definition_spec_retry_strategy_override():
+    """A caller can replace the reclaim-only policy wholesale."""
+    spec = job_definition_spec(
+        image="img",
+        execution_role_arn="arn:aws:iam::123:role/dvx-batch-execution",
+        retry_strategy={"attempts": 1},
+    )
+    assert spec["retryStrategy"] == {"attempts": 1}
+
 
 def test_push_commands_default():
     ref = "123.dkr.ecr.us-east-1.amazonaws.com/dvx:abc1234"
