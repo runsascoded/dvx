@@ -486,6 +486,32 @@ When adding outputs with dependencies:
 - **Recursive add**: Use `dvx add -r` to auto-add stale deps first
 - **Accurate recording**: Recorded dep hashes always match what was actually used
 
+### Reproducibility: `output hash changed`
+
+A rerun stage that produces *different bytes* than its `.dvc` recorded is a legal, often intended outcome — and it used to be invisible. DVX rewrote the `.dvc`, cached the new blob, and logged a bare `✓ completed`, so a run that reproduced its outputs exactly and one that diverged looked identical.
+
+`dvx run` now says so:
+
+```
+  ⚠ njdot/data/2023/NewJersey2023Accidents.pqt: output hash changed (recorded 6e058a16… → produced 76bdf96e…)
+  ⚠ njdot/data/2023/crashes.parquet: output hash changed (recorded 1f0a… → produced 9b3c…); size 8,412,003 → 8,613,441 (+201,438 B, +2.4%)
+  ✓ njdot/data/2023/crashes.parquet: completed (41.2s)
+```
+
+The size delta is appended only when the size moved — a same-size change points at metadata (e.g. a parquet footer's `created_by`), a size change at an encoding or content difference. Both are worth telling apart at a glance.
+
+The count also lands in the run summary, which is the number a full-DAG reproducibility audit actually reads:
+
+```
+Summary:
+  Total: 136
+  Executed: 130
+  Skipped: 6
+  Hash changed: 119
+```
+
+A first recording — a `.dvc` declaring `outs:` with no `md5` yet — is not a change, and doesn't warn.
+
 ## Side-Effect Stages
 
 Not all pipeline stages produce local file outputs. Deploys, database imports, Slack posts — these are side effects. DVX models them as `.dvc` files with `meta.computation` but no `outs`:

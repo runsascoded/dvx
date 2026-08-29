@@ -29,6 +29,10 @@ class ExecutionResult:
     reason: str = ""
     duration: float = 0.0
     dvc_file: Path | None = None
+    # The regenerated output's md5 differs from the one the .dvc recorded.
+    # Success, not failure — but the signal a reproducibility audit exists
+    # to find, so it survives to the run summary rather than only the log.
+    hash_changed: bool = False
 
 
 @dataclass
@@ -812,6 +816,7 @@ class ParallelExecutor:
 
         # Write .dvc file for output (multi-out aware).
         dvc_file = None
+        hash_changed = False
         try:
             from dvx.cache import cache_blob
 
@@ -822,6 +827,9 @@ class ParallelExecutor:
                 for declared, real_path in zip(declared_outs, output_paths):
                     out_md5 = compute_md5(real_path)
                     out_size = compute_file_size(real_path)
+                    hash_changed |= self._report_hash_change(
+                        declared.path, declared.md5, declared.size, out_md5, out_size,
+                    )
                     is_dir_o = real_path.is_dir()
                     try:
                         cache_blob(real_path, out_md5)
@@ -853,6 +861,13 @@ class ParallelExecutor:
             else:
                 md5 = compute_md5(out)
                 size = compute_file_size(out)
+                hash_changed |= self._report_hash_change(
+                    path,
+                    existing_info.md5 if existing_info else None,
+                    existing_info.size if existing_info else None,
+                    md5,
+                    size,
+                )
                 try:
                     cache_blob(out, md5)
                 except Exception as e:
@@ -887,7 +902,37 @@ class ParallelExecutor:
             reason="completed",
             duration=duration,
             dvc_file=dvc_file,
+            hash_changed=hash_changed,
         )
+
+    def _report_hash_change(
+        self,
+        label: str,
+        recorded_md5: str | None,
+        recorded_size: int | None,
+        produced_md5: str,
+        produced_size: int | None,
+    ) -> bool:
+        """Warn when a rerun output's bytes differ from what the .dvc recorded.
+
+        dvx used to swallow this entirely: the .dvc was rewritten and the new
+        blob pushed under a bare ``✓ completed``, so a full-DAG reproduction
+        that diverged looked exactly like one that didn't. That silence let
+        nj-crashes' reproc audit report "byte-identical" for three rounds
+        while ~119 of 122 outputs were in fact changing.
+
+        A *first* record (no recorded md5) is not a change — nothing to
+        differ from. Returns whether a change was reported, for the summary.
+        """
+        if not recorded_md5 or recorded_md5 == produced_md5:
+            return False
+        msg = f"  ⚠ {label}: output hash changed (recorded {recorded_md5} → produced {produced_md5})"
+        if recorded_size is not None and produced_size is not None and recorded_size != produced_size:
+            delta = produced_size - recorded_size
+            pct = f", {delta / recorded_size:+.1%}" if recorded_size else ""
+            msg += f"; size {recorded_size:,} → {produced_size:,} ({delta:+,} B{pct})"
+        self._log(msg)
+        return True
 
     def _signal_dvc_done(self, path: str) -> None:
         """Mark ``path``'s .dvc as written, releasing any primary waiting on it."""
@@ -966,8 +1011,17 @@ class ParallelExecutor:
 
         # Compute hash and write .dvc file
         try:
+            from dvx.run.dvc_files import read_dvc_file as _read_dvc
+            recorded = _read_dvc(out)
             md5 = compute_md5(out)
             size = compute_file_size(out)
+            hash_changed = self._report_hash_change(
+                path,
+                recorded.md5 if recorded else None,
+                recorded.size if recorded else None,
+                md5,
+                size,
+            )
 
             # Cache the co-output blob
             try:
@@ -1001,6 +1055,7 @@ class ParallelExecutor:
                 skipped=False,
                 reason="co-output",
                 dvc_file=dvc_file,
+                hash_changed=hash_changed,
             )
         except (FileNotFoundError, ValueError) as e:
             self._log(f"  ✗ {path}: failed to process co-output: {e}")

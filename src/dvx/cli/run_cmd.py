@@ -97,12 +97,15 @@ def run_cmd(targets, force, force_upstream, cached, jobs, commit, dry_run, no_pr
         executed = sum(1 for r in results if r.success and not r.skipped)
         skipped = sum(1 for r in results if r.skipped)
         failed = sum(1 for r in results if not r.success)
+        changed = sum(1 for r in results if r.hash_changed)
 
         click.echo("")
         click.echo("Summary:")
         click.echo(f"  Total: {total}")
         click.echo(f"  Executed: {executed}")
         click.echo(f"  Skipped: {skipped}")
+        if changed:
+            click.echo(f"  Hash changed: {changed}")
         if failed:
             click.echo(f"  Failed: {failed}")
             sys.exit(1)
