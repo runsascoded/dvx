@@ -545,6 +545,48 @@ meta:
       www/package.json: def456blob...  # blob SHA — individual file
 ```
 
+## Git History Dependencies
+
+Some stages consume a path's **history** — every past version, not the one at
+HEAD. `git_log_deps` declares that, keyed by git pathspec (globs work) and
+valued by the most recent commit touching it:
+
+```yaml
+# crash-log.parquet.dvc
+outs:
+- md5: 789abc...
+  path: crash-log.parquet
+meta:
+  computation:
+    cmd: njsp crash_log compute -i -v
+    git_log_deps:
+      /data/FAUQStats*.xml: 1a88245...   # tip commit touching the pathspec
+```
+
+The stage is stale exactly when a new commit has touched the pathspec. Before
+the cmd runs, DVX exports the **recorded** shas — where the last successful
+run left off, not the current tips — so the stage can resume instead of
+rebuilding:
+
+- `$DVX_GIT_LOG_SINCE` — the sha, when a single pathspec is declared
+- `$DVX_GIT_LOG_DEPS` — `{pathspec: sha}` as JSON, always
+
+That splits the two jobs an incremental stage usually conflates: DVX owns
+freshness, the stage owns the resume point — so it no longer has to read its
+own output back in as a cursor (which is what makes such stages
+unreproducible from scratch). With no recorded sha the env vars are absent
+and the stage builds from its own floor.
+
+`git_log_deps` is a freshness input only, never an ordering edge — nothing in
+the plan produces a commit.
+
+**Shallow clones can't answer the question.** `git rev-list` truncates
+silently at a `--depth N` boundary, so DVX reports `git history dep
+unverifiable (shallow clone)` and reruns rather than claiming freshness it
+hasn't established. A `--filter=blob:none` *partial* clone is not shallow —
+full commit graph, blobs fetched lazily over the pack protocol — and is the
+right shape for a container that needs history.
+
 ## Git-Tracked Imports
 
 For small files from URLs (configs, metadata), use `--git` to track in Git instead of DVC cache:

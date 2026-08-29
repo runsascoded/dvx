@@ -4,6 +4,7 @@ Executes artifact computations in parallel, respecting dependencies.
 Uses the provenance information in .dvc files (computation blocks).
 """
 
+import json
 import subprocess
 import sys
 import threading
@@ -619,6 +620,20 @@ class ParallelExecutor:
         env["DVX_PUSH_FILE"] = push_file.name
         stage_env_extras = {"push_file": push_file.name}
 
+        # Resume cursor for history deps: the *recorded* shas — where the last
+        # successful run left off — not the current tips. A stage walks
+        # `$DVX_GIT_LOG_SINCE..HEAD` and processes only what's new, which is
+        # what lets it stop reading its own output back in as a cursor: dvx
+        # owns freshness, the stage owns the resume point.
+        if artifact.computation and artifact.computation.git_log_deps:
+            recorded = artifact.computation.get_git_log_dep_shas()
+            if recorded:
+                env["DVX_GIT_LOG_DEPS"] = json.dumps(recorded, sort_keys=True)
+                # Unambiguous only for a single pathspec; with several the
+                # stage must read the JSON and pick the cursor it wants.
+                if len(recorded) == 1:
+                    env["DVX_GIT_LOG_SINCE"] = next(iter(recorded.values()))
+
         # Run cmd with CWD set to .dvc file's directory
         dvc_dir = Path(path).parent
         cmd_cwd = str(dvc_dir) if str(dvc_dir) != "." else None
@@ -712,9 +727,11 @@ class ParallelExecutor:
             dvc_file = None
             deps_hashes = {}
             git_deps_hashes = {}
+            git_log_deps_shas = {}
             if self.config.provenance and artifact.computation:
                 deps_hashes = artifact.computation.get_dep_hashes(recompute=True)
                 git_deps_hashes = artifact.computation.get_git_dep_hashes(recompute=True)
+                git_log_deps_shas = artifact.computation.get_git_log_dep_shas(recompute=True)
 
             try:
                 dvc_file = write_dvc_file(
@@ -722,6 +739,7 @@ class ParallelExecutor:
                     cmd=cmd if self.config.provenance else None,
                     deps=deps_hashes if self.config.provenance else None,
                     git_deps=git_deps_hashes if self.config.provenance else None,
+                    git_log_deps=git_log_deps_shas if self.config.provenance else None,
                     fetch_schedule=fetch_schedule,
                     fetch_last_run=fetch_last_run,
                 )
@@ -786,9 +804,11 @@ class ParallelExecutor:
         # Compute dependency hashes for provenance
         deps_hashes = {}
         git_deps_hashes = {}
+        git_log_deps_shas = {}
         if self.config.provenance and artifact.computation:
             deps_hashes = artifact.computation.get_dep_hashes(recompute=True)
             git_deps_hashes = artifact.computation.get_git_dep_hashes(recompute=True)
+            git_log_deps_shas = artifact.computation.get_git_log_dep_shas(recompute=True)
 
         # Write .dvc file for output (multi-out aware).
         dvc_file = None
@@ -826,6 +846,7 @@ class ParallelExecutor:
                     cmd=cmd if self.config.provenance else None,
                     deps=deps_hashes if self.config.provenance else None,
                     git_deps=git_deps_hashes if self.config.provenance else None,
+                    git_log_deps=git_log_deps_shas if self.config.provenance else None,
                     fetch_schedule=fetch_schedule,
                     fetch_last_run=fetch_last_run,
                 )
@@ -843,6 +864,7 @@ class ParallelExecutor:
                     cmd=cmd if self.config.provenance else None,
                     deps=deps_hashes if self.config.provenance else None,
                     git_deps=git_deps_hashes if self.config.provenance else None,
+                    git_log_deps=git_log_deps_shas if self.config.provenance else None,
                     fetch_schedule=fetch_schedule,
                     fetch_last_run=fetch_last_run,
                 )
@@ -956,9 +978,11 @@ class ParallelExecutor:
 
             deps_hashes = {}
             git_deps_hashes = {}
+            git_log_deps_shas = {}
             if self.config.provenance and artifact.computation:
                 deps_hashes = artifact.computation.get_dep_hashes(recompute=True)
                 git_deps_hashes = artifact.computation.get_git_dep_hashes(recompute=True)
+                git_log_deps_shas = artifact.computation.get_git_log_dep_shas(recompute=True)
 
             dvc_file = write_dvc_file(
                 output_path=out,
@@ -967,6 +991,7 @@ class ParallelExecutor:
                 cmd=cmd if self.config.provenance else None,
                 deps=deps_hashes if self.config.provenance else None,
                 git_deps=git_deps_hashes if self.config.provenance else None,
+                git_log_deps=git_log_deps_shas if self.config.provenance else None,
             )
 
             self._log(f"  ✓ {path}: co-output ready")

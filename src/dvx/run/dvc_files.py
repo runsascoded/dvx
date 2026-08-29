@@ -244,6 +244,56 @@ def get_git_blob_sha(path: str, ref: str = "HEAD", repo_path: Path | None = None
         return None
 
 
+def is_shallow_repo(repo_path: Path | None = None) -> bool:
+    """Whether the repo is a shallow clone (``--depth N``).
+
+    ``git rev-list`` silently truncates at the shallow boundary rather than
+    erroring, so a ``git_log_dep`` evaluated in a ``--depth 1`` clone reports
+    HEAD as "the last commit touching this pathspec" no matter the truth.
+    Callers must treat a shallow repo as "can't answer", never as "fresh".
+
+    A ``--filter=blob:none`` partial clone is NOT shallow — it carries the
+    full commit graph and fetches blobs lazily, which is exactly the shape a
+    history dep wants.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--is-shallow-repository"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+    return result.stdout.strip() == "true"
+
+
+def get_git_log_dep_sha(pathspec: str, repo_path: Path | None = None) -> str | None:
+    """Most recent commit touching ``pathspec``, or None if none does.
+
+    This is the recorded state of a ``git_log_dep``: a stage that consumes a
+    file's *history* (every past version, not just the one at HEAD) is stale
+    exactly when a new commit has touched that pathspec. Recording the tip
+    commit rather than a ``since..HEAD`` range keeps the check symmetric with
+    ``git_deps`` — one recorded value, one comparison — and immune to the
+    ancestry rewrites (rebase, amend) that make range arithmetic fragile.
+
+    ``pathspec`` is a git pathspec, so globs work: ``data/FAUQStats*.xml``.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-list", "-1", "HEAD", "--", pathspec],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    return result.stdout.strip() or None
+
+
 def get_git_dep_sha(path: str, repo_path: Path | None = None) -> str | None:
     """Get the git object SHA for a ``git_dep`` from the **working tree**.
 
@@ -425,6 +475,9 @@ class DVCFileInfo:
     cmd: str | None = None
     deps: dict[str, str] = field(default_factory=dict)  # {path: md5}
     git_deps: dict[str, str] = field(default_factory=dict)  # {path: blob_sha}
+    # {pathspec: commit_sha} — deps on a path's *history*, not its content
+    # at HEAD. Recorded value is the tip commit touching the pathspec.
+    git_log_deps: dict[str, str] = field(default_factory=dict)
     # Directory metadata
     nfiles: int | None = None
     is_dir: bool = False
@@ -504,8 +557,10 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
     dvc_dir = dvc_path.parent
     raw_deps = computation.get("deps") or {}
     raw_git_deps = computation.get("git_deps") or {}
+    raw_git_log_deps = computation.get("git_log_deps") or {}
     deps = _resolve_dep_paths(raw_deps, dvc_dir)
     git_deps = _resolve_dep_paths(raw_git_deps, dvc_dir)
+    git_log_deps = _resolve_dep_paths(raw_git_log_deps, dvc_dir)
 
     if not has_outs:
         # Side-effect stage: no outputs, but must have computation
@@ -519,6 +574,7 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
             cmd=computation.get("cmd"),
             deps=deps,
             git_deps=git_deps,
+            git_log_deps=git_log_deps,
             side_effect=explicit_side_effect,
             fetch_schedule=fetch_schedule,
             fetch_last_run=fetch_last_run,
@@ -552,6 +608,7 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
         cmd=computation.get("cmd"),
         deps=deps,
         git_deps=git_deps,
+        git_log_deps=git_log_deps,
         # Directory metadata (mirrors outs[0])
         nfiles=first.nfiles,
         is_dir=first.is_dir,
@@ -681,7 +738,7 @@ def _merge_preserving_comments(existing: Any, new_data: dict) -> None:
                 # spelling* (see `_norm_dep_key`): existing entries whose
                 # normalized form matches a new entry keep their original
                 # key, just with the value updated.
-                for deps_key in ("deps", "git_deps"):
+                for deps_key in ("deps", "git_deps", "git_log_deps"):
                     new_deps = new_comp.get(deps_key)
                     if new_deps is not None:
                         existing_deps = comp.get(deps_key)
@@ -727,6 +784,7 @@ def write_dvc_file(
     cmd: str | None = None,
     deps: dict[str, str] | None = None,
     git_deps: dict[str, str] | None = None,
+    git_log_deps: dict[str, str] | None = None,
     nfiles: int | None = None,
     is_dir: bool | None = None,
     side_effect: bool | None = None,
@@ -831,7 +889,7 @@ def write_dvc_file(
 
     # Add computation block inside meta for DVC compatibility
     # (DVC allows arbitrary data in meta, but rejects unknown top-level keys)
-    if cmd or deps or git_deps or fetch_schedule:
+    if cmd or deps or git_deps or git_log_deps or fetch_schedule:
         computation = {}
         if cmd:
             computation["cmd"] = cmd
@@ -841,6 +899,8 @@ def write_dvc_file(
             computation["deps"] = _relativize_dep_paths(deps, dvc_dir)
         if git_deps:
             computation["git_deps"] = _relativize_dep_paths(git_deps, dvc_dir)
+        if git_log_deps:
+            computation["git_log_deps"] = _relativize_dep_paths(git_log_deps, dvc_dir)
         if side_effect is True:
             computation["side_effect"] = True
         if fetch_schedule:
@@ -981,6 +1041,21 @@ def is_output_fresh(
                 return False, f"git dep missing: {dep_path}"
             if current_sha != recorded_sha:
                 return False, f"git dep changed: {dep_path}"
+
+    # Check git *history* dependencies if requested. Stale when a new commit
+    # has touched the pathspec since the recorded tip. A shallow clone can't
+    # answer the question, so it reruns rather than claiming freshness it
+    # hasn't established (see `is_shallow_repo`).
+    if check_deps and info.git_log_deps:
+        shallow = is_shallow_repo()
+        for pathspec, recorded_sha in info.git_log_deps.items():
+            if shallow:
+                return False, f"git history dep unverifiable (shallow clone): {pathspec}"
+            current_sha = get_git_log_dep_sha(pathspec)
+            if current_sha is None:
+                return False, f"git history dep missing: {pathspec}"
+            if current_sha != recorded_sha:
+                return False, f"git history dep changed: {pathspec}"
 
     return True, "up-to-date"
 
@@ -1145,6 +1220,32 @@ def get_freshness_details(
             return FreshnessDetails(
                 fresh=False,
                 reason=f"git dep changed: {first_dep}",
+                output_expected=info.md5,
+                output_expected_commit=output_expected_commit,
+                output_actual=current_md5,
+                changed_deps=changed_deps,
+            )
+
+    # Git history deps — see `is_output_fresh` for the semantics.
+    if check_deps and info.git_log_deps:
+        shallow = is_shallow_repo()
+        changed_deps = {}
+        for pathspec, recorded_sha in info.git_log_deps.items():
+            current_sha = None if shallow else get_git_log_dep_sha(pathspec)
+            if shallow:
+                changed_deps[pathspec] = {"expected": recorded_sha, "expected_commit": None, "actual": "(shallow clone)"}
+            elif current_sha is None:
+                changed_deps[pathspec] = {"expected": recorded_sha, "expected_commit": None, "actual": "(missing)"}
+            elif current_sha != recorded_sha:
+                changed_deps[pathspec] = {"expected": recorded_sha, "expected_commit": None, "actual": current_sha}
+
+        if changed_deps:
+            first_dep = next(iter(changed_deps))
+            dvc_file_path = str(path) + ".dvc"
+            output_expected_commit = find_hash_commit(info.md5, dvc_file_path) if info.md5 else None
+            return FreshnessDetails(
+                fresh=False,
+                reason=f"git history dep changed: {first_dep}",
                 output_expected=info.md5,
                 output_expected_commit=output_expected_commit,
                 output_actual=current_md5,

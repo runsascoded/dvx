@@ -52,6 +52,7 @@ from dvx.run.dvc_files import (
     get_git_blob_sha,
     get_git_head_sha,
     get_git_dep_sha,
+    get_git_log_dep_sha,
     get_git_object_sha,
     read_dvc_file,
     write_dvc_file,
@@ -75,6 +76,9 @@ class Computation:
     cmd: str
     deps: list[Artifact | str | Path] = field(default_factory=list)
     git_deps: list[Artifact | str | Path] = field(default_factory=list)
+    # Pathspecs whose *history* the cmd consumes. Not ordering edges —
+    # nothing in the plan produces a commit — only freshness inputs.
+    git_log_deps: list[Artifact | str | Path] = field(default_factory=list)
     params: dict[str, Any] = field(default_factory=dict)
 
     def get_dep_paths(self) -> list[Path]:
@@ -146,6 +150,32 @@ class Computation:
                 if sha:
                     hashes[path] = sha
         return hashes
+
+    def get_git_log_dep_shas(self, recompute: bool = False) -> dict[str, str]:
+        """Tip commit touching each ``git_log_dep`` pathspec.
+
+        Unlike `get_git_dep_hashes`, a *missing* answer is never silently
+        replaced by the recorded value on recompute: "no commit touches this
+        pathspec" is a real state (a stage declaring a path that doesn't
+        exist), and papering over it would freeze the recorded sha forever.
+
+        Args:
+            recompute: If True, always look up from git, ignoring the sha
+                carried on the Artifact. Use after execution.
+        """
+        shas = {}
+        for dep in self.git_log_deps:
+            if isinstance(dep, Artifact):
+                pathspec = dep.path
+                if not recompute and dep.md5:
+                    shas[pathspec] = dep.md5
+                    continue
+            else:
+                pathspec = str(dep)
+            sha = get_git_log_dep_sha(pathspec)
+            if sha:
+                shas[pathspec] = sha
+        return shas
 
 
 @dataclass
@@ -226,14 +256,19 @@ class Artifact:
             )
 
         computation = None
-        if info.cmd or info.deps or info.git_deps:
+        if info.cmd or info.deps or info.git_deps or info.git_log_deps:
             # Convert deps dict to Artifact objects
             deps = [Artifact(path=dep_path, md5=dep_md5) for dep_path, dep_md5 in info.deps.items()]
             git_deps = [Artifact(path=dep_path, md5=blob_sha) for dep_path, blob_sha in info.git_deps.items()]
+            git_log_deps = [
+                Artifact(path=pathspec, md5=commit_sha)
+                for pathspec, commit_sha in info.git_log_deps.items()
+            ]
             computation = Computation(
                 cmd=info.cmd or "",
                 deps=deps,
                 git_deps=git_deps,
+                git_log_deps=git_log_deps,
             )
 
         # Always use the original path passed in (preserves directory prefix)
@@ -275,11 +310,13 @@ class Artifact:
         cmd = None
         deps_hashes = None
         git_deps_hashes = None
+        git_log_deps_hashes = None
 
         if self.computation:
             cmd = self.computation.cmd
             deps_hashes = self.computation.get_dep_hashes()
             git_deps_hashes = self.computation.get_git_dep_hashes() or None
+            git_log_deps_hashes = self.computation.get_git_log_dep_shas() or None
 
         return write_dvc_file(
             output_path=path,
@@ -288,6 +325,7 @@ class Artifact:
             cmd=cmd,
             deps=deps_hashes,
             git_deps=git_deps_hashes,
+            git_log_deps=git_log_deps_hashes,
         )
 
     def is_computed(self) -> bool:
