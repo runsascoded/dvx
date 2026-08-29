@@ -639,6 +639,11 @@ DVX is optimized for large repos:
 - **Lock-free adds**: Parallel-safe via atomic file writes
 - **Parallel status**: Check many files concurrently with `-j/--jobs`
 - **Parallel runs**: Independent computations execute concurrently
+- **Reflinked outputs**: On a copy-on-write filesystem (APFS, btrfs, XFS), a
+  generated output is CoW-cloned onto its cache blob at ingest, so it costs 1×
+  on disk instead of 2× — matching what DVC does on checkout. Falls back to a
+  plain copy where reflinks aren't supported (ext4, NFS); honors an explicit
+  `cache.type: copy`, and `DVX_NO_REFLINK=1` disables it.
 
 ## Compatibility
 

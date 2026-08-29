@@ -593,6 +593,117 @@ def _cache_directory(dir_path, manifest_hash: str, cache_dir, force: bool = Fals
     os.replace(tmp_path, manifest_cache_path)
 
 
+def _reflink(src, dst) -> bool:
+    """CoW-clone ``src`` to a NEW path ``dst`` (must not exist beforehand).
+
+    Returns True if a copy-on-write clone was created (``src`` and ``dst`` now
+    share physical extents), False if the platform / filesystem doesn't support
+    reflinks. Never raises for the unsupported case — the caller keeps the plain
+    copy it already has.
+
+    macOS/APFS uses ``clonefile(2)``; Linux (btrfs/XFS) uses the ``FICLONE``
+    ioctl. Everything else (ext4, tmpfs, NFS, a cross-device dst) returns False.
+    """
+    import sys
+    from pathlib import Path
+
+    src = Path(src)
+    dst = Path(dst)
+    try:
+        if sys.platform == "darwin":
+            import ctypes
+
+            libc = ctypes.CDLL(None, use_errno=True)
+            fn = libc.clonefile
+            fn.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
+            fn.restype = ctypes.c_int
+            if fn(os.fspath(src).encode(), os.fspath(dst).encode(), 0) == 0:
+                return True
+            err = ctypes.get_errno()
+            raise OSError(err, os.strerror(err))
+        if sys.platform.startswith("linux"):
+            import fcntl
+
+            ficlone = 0x40049409  # _IOW(0x94, 9, int) — FICLONE
+            src_fd = os.open(src, os.O_RDONLY)
+            try:
+                dst_fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+                try:
+                    fcntl.ioctl(dst_fd, ficlone, src_fd)
+                    return True
+                finally:
+                    os.close(dst_fd)
+            finally:
+                os.close(src_fd)
+    except OSError:
+        return False
+    return False
+
+
+def _relink_worktree_from_cache(worktree, cache_path) -> bool:
+    """Replace a just-cached worktree file with a CoW clone of its cache blob,
+    so the two share physical extents instead of duplicating them on disk.
+
+    dvx's ingest path copies the worktree output *into* the cache and left the
+    original in place — so every ``dvx run``-generated or ``dvx add``-ed output
+    cost 2x until a future re-checkout re-linked it. DVC reflinks on checkout;
+    this closes the same gap on the generate-in-place path. See
+    ``specs/done/reflink-generated-outputs.md``.
+
+    Safe by construction: clones into a temp path in the same directory and only
+    swaps it in on success, preserving the original mtime so the freshness
+    mtime-cache stays valid. Any failure — an FS without reflink support, a
+    ``cache.type`` that excludes reflink, a missing blob — leaves the plain copy
+    untouched. Returns whether a reflink replaced the copy.
+    """
+    from pathlib import Path
+
+    if os.environ.get("DVX_NO_REFLINK"):
+        return False
+
+    worktree = Path(worktree)
+    cache_path = Path(cache_path)
+    if not cache_path.exists():
+        return False
+
+    # Respect an explicit cache.type that opts out of reflinking. An unset /
+    # empty config means DVC's default (``["reflink", "copy"]``), which does.
+    try:
+        from dvx.gc import cache_link_types
+
+        types = cache_link_types()
+    except Exception:
+        types = []
+    if types and "reflink" not in types:
+        return False
+
+    tmp = worktree.parent / f".{worktree.name}.dvx-reflink.tmp"
+    try:
+        if tmp.exists():
+            tmp.unlink()
+    except OSError:
+        return False
+
+    if not _reflink(cache_path, tmp):
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return False
+
+    try:
+        st = worktree.stat()
+        os.replace(tmp, worktree)
+        os.utime(worktree, (st.st_atime, st.st_mtime))
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return False
+    return True
+
+
 def _cache_file(file_path, file_hash: str, cache_dir, force: bool = False):
     """Copy a file to DVC cache atomically."""
     import shutil
@@ -602,17 +713,23 @@ def _cache_file(file_path, file_hash: str, cache_dir, force: bool = False):
     cache_path = cache_dir / file_hash[:2] / file_hash[2:]
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if not force and cache_path.exists():
-        return  # Already cached
+    if force or not cache_path.exists():
+        # Atomic copy: write to temp file, then rename
+        with tempfile.NamedTemporaryFile(
+            dir=cache_path.parent, delete=False, suffix=".tmp"
+        ) as tmp:
+            tmp_path = Path(tmp.name)
 
-    # Atomic copy: write to temp file, then rename
-    with tempfile.NamedTemporaryFile(
-        dir=cache_path.parent, delete=False, suffix=".tmp"
-    ) as tmp:
-        tmp_path = Path(tmp.name)
+        shutil.copy2(file_path, tmp_path)
+        os.replace(tmp_path, cache_path)
 
-    shutil.copy2(file_path, tmp_path)
-    os.replace(tmp_path, cache_path)
+    # Dedup the worktree copy onto the cache blob's extents (CoW). The blob now
+    # holds this file's exact bytes (content-addressed), so a reflink is
+    # byte-identical; on a filesystem without reflink support this is a no-op
+    # and the plain copy stays. Runs whether we just wrote the blob or found it
+    # already present — a fresh run writes an independent worktree copy either
+    # way. See `_relink_worktree_from_cache`.
+    _relink_worktree_from_cache(file_path, cache_path)
 
 
 # =============================================================================
