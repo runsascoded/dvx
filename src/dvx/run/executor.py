@@ -456,6 +456,19 @@ class ParallelExecutor:
                 elif reason.startswith("dep missing"):
                     targets = self._missing_dep_pull_targets(path)
                     if not targets:
+                        # No pullable targets for the missing deps. Under
+                        # parallelism this is often benign: a sibling stage
+                        # sharing a tracked dep dir materialized it between
+                        # our freshness check and here, so `_missing_dep_pull_
+                        # targets` sees every dep already on disk and returns
+                        # nothing. Re-check freshness before bailing — the
+                        # stage may now be fresh (concurrent materialization),
+                        # and rerunning it would violate the zero-cmd
+                        # fresh-clone invariant. Only a genuinely unpullable
+                        # dep (raw file, no .dvc, still absent) falls through.
+                        fresh2, reason2 = is_output_fresh(Path(path))
+                        if fresh2:
+                            return False, f"fetched ({reason2})"
                         break
                     if not self._try_materialize_from_remote(targets, label=path):
                         break

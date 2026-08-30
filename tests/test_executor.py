@@ -737,3 +737,89 @@ def test_side_effect_flag_survives_the_stages_own_run(tmp_workdir):
     info = read_dvc_file(driver)
     assert info.side_effect is True
     assert info.deps == {str(dep): compute_md5(dep)}
+
+
+def test_should_run_rechecks_freshness_when_concurrent_worker_satisfies_deps(
+    tmp_workdir,
+):
+    """A dep-missing stage whose deps get satisfied by a concurrent worker
+    must NOT rerun — the pre-pass re-checks freshness before bailing.
+
+    Regression (specs/done/parallel-dep-materialization-recheck.md): several
+    sibling stages sharing one tracked dep dir race in `_should_run`. Worker
+    A's freshness check reports ``dep missing: data/inA.txt``; before A calls
+    `_missing_dep_pull_targets`, worker B materializes the shared ``data/``
+    dir, satisfying every dep on disk. A's `_missing_dep_pull_targets` then
+    finds nothing to pull (all deps present) and returns ``[]`` — which used
+    to break straight to a rerun, executing a cmd on a stage that was already
+    fully materialized and violating the zero-cmd fresh-clone invariant.
+    """
+    artifact = Artifact(
+        path="out0.txt",
+        computation=Computation(cmd="cat data/in0.txt > out0.txt", deps=["data/in0.txt"]),
+    )
+    executor = ParallelExecutor([artifact], ExecutionConfig(max_workers=8), StringIO())
+
+    # Scripted freshness: the first check (top of `_should_run`) sees the dep
+    # absent; by the time the empty-targets branch re-checks, a concurrent
+    # worker has materialized the shared dir, so we're fresh.
+    freshness_returns = iter([
+        (False, "dep missing: data/in0.txt"),
+        (True, "up-to-date"),
+    ])
+    import dvx.run.executor as executor_mod
+
+    orig_is_fresh = executor_mod.is_output_fresh
+
+    def _scripted_is_output_fresh(path, *args, **kwargs):
+        try:
+            return next(freshness_returns)
+        except StopIteration:  # pragma: no cover - guards over-calling
+            return orig_is_fresh(path, *args, **kwargs)
+
+    executor_mod.is_output_fresh = _scripted_is_output_fresh
+    # A sibling already materialized every dep, so there is nothing to pull.
+    executor._missing_dep_pull_targets = lambda path: []
+    try:
+        should_run, reason = executor._should_run(artifact)
+    finally:
+        executor_mod.is_output_fresh = orig_is_fresh
+
+    assert (should_run, reason) == (False, "fetched (up-to-date)")
+
+
+def test_should_run_reruns_when_deps_genuinely_unpullable(tmp_workdir):
+    """The empty-targets recheck only spares a stage that is *actually* fresh.
+
+    A stage whose dep is a raw, uncached file that is genuinely absent has no
+    pull targets and stays stale on recheck — it must still fall through to a
+    rerun (negative control for the concurrent-materialization recheck).
+    """
+    artifact = Artifact(
+        path="out0.txt",
+        computation=Computation(cmd="cat missing.txt > out0.txt", deps=["missing.txt"]),
+    )
+    executor = ParallelExecutor([artifact], ExecutionConfig(max_workers=8), StringIO())
+
+    freshness_returns = iter([
+        (False, "dep missing: missing.txt"),
+        (False, "dep missing: missing.txt"),
+    ])
+    import dvx.run.executor as executor_mod
+
+    orig_is_fresh = executor_mod.is_output_fresh
+
+    def _scripted_is_output_fresh(path, *args, **kwargs):
+        try:
+            return next(freshness_returns)
+        except StopIteration:  # pragma: no cover - guards over-calling
+            return orig_is_fresh(path, *args, **kwargs)
+
+    executor_mod.is_output_fresh = _scripted_is_output_fresh
+    executor._missing_dep_pull_targets = lambda path: []
+    try:
+        should_run, reason = executor._should_run(artifact)
+    finally:
+        executor_mod.is_output_fresh = orig_is_fresh
+
+    assert (should_run, reason) == (True, "dep missing: missing.txt")
