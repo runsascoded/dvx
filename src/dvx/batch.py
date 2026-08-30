@@ -23,6 +23,7 @@ are thin wrappers around them.
 """
 from __future__ import annotations
 
+import json
 import sys
 import time
 from functools import partial
@@ -32,6 +33,7 @@ err = partial(print, file=sys.stderr)
 PREFIX = "dvx"
 LOG_GROUP = f"/{PREFIX}/batch"
 EXECUTION_ROLE = f"{PREFIX}-batch-execution"
+SECRETS_POLICY = f"{PREFIX}-batch-secrets"
 ECS_TRUST_POLICY = (
     '{"Version": "2012-10-17", "Statement": [{"Effect": "Allow", '
     '"Principal": {"Service": "ecs-tasks.amazonaws.com"}, '
@@ -79,6 +81,78 @@ RECLAIM_ONLY_RETRY = {
 }
 
 
+# ── secrets (Secrets Manager / SSM `valueFrom`) ──────────────────────────────
+#
+# AWS Batch fetches a `secrets` entry's value via the *execution* role at
+# container start and injects it as an env var, so the credential lives only as
+# an ARN reference in the job-def / job — never as plaintext readable by
+# `batch:DescribeJobDefinition` / `DescribeJobs`. See
+# `specs/done/batch-secrets-manager.md`.
+
+def _secrets_container_list(secrets: dict[str, str]) -> list[dict]:
+    """AWS Batch ``secrets`` array: ``ENV_VAR -> valueFrom`` ARN, name-sorted."""
+    return [{"name": k, "valueFrom": v} for k, v in sorted(secrets.items())]
+
+
+def _reject_env_secret_overlap(
+    environment: dict[str, str],
+    secrets: dict[str, str],
+) -> None:
+    """A name delivered as both plaintext ``environment`` and a ``secrets`` ref
+    is ambiguous (which value wins is undefined) — reject it."""
+    overlap = sorted(set(environment) & set(secrets))
+    if overlap:
+        raise ValueError(
+            "names set as both environment and secrets: " + ", ".join(overlap)
+        )
+
+
+def execution_role_secrets_policy(secrets: dict[str, str]) -> dict:
+    """Inline IAM policy letting the execution role read ``secrets``' values at
+    container start.
+
+    Scopes ``secretsmanager:GetSecretValue`` / ``ssm:GetParameters`` to the
+    referenced ARNs. A Secrets Manager ``valueFrom`` may append
+    ``:json-key:version-stage:version-id`` to select one field — the grant is
+    on the base secret ARN (the first 7 colon fields). ``kms:Decrypt`` is
+    unavoidable when the secret uses a CMK, but the CMK ARN isn't known here,
+    so it is granted on ``*``; scope it down manually for a customer-managed
+    key.
+    """
+    sm: list[str] = []
+    ssm: list[str] = []
+    for arn in sorted(set(secrets.values())):
+        parts = arn.split(":")
+        service = parts[2] if len(parts) > 2 else ""
+        if service == "secretsmanager":
+            sm.append(":".join(parts[:7]))
+        elif service == "ssm":
+            ssm.append(arn)
+        else:
+            raise ValueError(
+                f"unrecognized secret ARN (not Secrets Manager or SSM): {arn!r}"
+            )
+    statements: list[dict] = []
+    if sm:
+        statements.append({
+            "Effect": "Allow",
+            "Action": "secretsmanager:GetSecretValue",
+            "Resource": sorted(set(sm)),
+        })
+    if ssm:
+        statements.append({
+            "Effect": "Allow",
+            "Action": "ssm:GetParameters",
+            "Resource": sorted(set(ssm)),
+        })
+    statements.append({
+        "Effect": "Allow",
+        "Action": "kms:Decrypt",
+        "Resource": "*",
+    })
+    return {"Version": "2012-10-17", "Statement": statements}
+
+
 def job_definition_spec(
     *,
     name: str = PREFIX,
@@ -90,6 +164,7 @@ def job_definition_spec(
     execution_role_arn: str,
     log_group: str = LOG_GROUP,
     environment: dict[str, str] | None = None,
+    secrets: dict[str, str] | None = None,
     retry_strategy: dict | None = None,
 ) -> dict:
     """Fargate task job definition.
@@ -99,37 +174,46 @@ def job_definition_spec(
     on Apple Silicon locally). ``PYTHONFAULTHANDLER=1`` is set into the
     environment by default so a mute SIGSEGV (exit 139) surfaces a traceback.
 
+    ``secrets`` maps ``ENV_VAR -> valueFrom`` ARN (Secrets Manager / SSM); the
+    execution role must be allowed to read them (see ``bootstrap``). A name in
+    both ``environment`` and ``secrets`` is a config error.
+
     ``retry_strategy`` overrides `RECLAIM_ONLY_RETRY` wholesale, for callers
     that want a different policy (more attempts, or none).
     """
     env = {"PYTHONFAULTHANDLER": "1"}
     if environment:
         env.update(environment)
+    if secrets:
+        _reject_env_secret_overlap(env, secrets)
+    container: dict = {
+        "image": image,
+        "runtimePlatform": {
+            "operatingSystemFamily": "LINUX",
+            "cpuArchitecture": arch,
+        },
+        "resourceRequirements": [
+            {"type": "VCPU", "value": str(vcpus)},
+            {"type": "MEMORY", "value": str(memory_mib)},
+        ],
+        "ephemeralStorage": {"sizeInGiB": ephemeral_gib},
+        "executionRoleArn": execution_role_arn,
+        "networkConfiguration": {"assignPublicIp": "ENABLED"},
+        "logConfiguration": {
+            "logDriver": "awslogs",
+            "options": {"awslogs-group": log_group},
+        },
+        "environment": [
+            {"name": k, "value": v} for k, v in sorted(env.items())
+        ],
+    }
+    if secrets:
+        container["secrets"] = _secrets_container_list(secrets)
     return {
         "jobDefinitionName": name,
         "type": "container",
         "platformCapabilities": ["FARGATE"],
-        "containerProperties": {
-            "image": image,
-            "runtimePlatform": {
-                "operatingSystemFamily": "LINUX",
-                "cpuArchitecture": arch,
-            },
-            "resourceRequirements": [
-                {"type": "VCPU", "value": str(vcpus)},
-                {"type": "MEMORY", "value": str(memory_mib)},
-            ],
-            "ephemeralStorage": {"sizeInGiB": ephemeral_gib},
-            "executionRoleArn": execution_role_arn,
-            "networkConfiguration": {"assignPublicIp": "ENABLED"},
-            "logConfiguration": {
-                "logDriver": "awslogs",
-                "options": {"awslogs-group": log_group},
-            },
-            "environment": [
-                {"name": k, "value": v} for k, v in sorted(env.items())
-            ],
-        },
+        "containerProperties": container,
         "retryStrategy": retry_strategy or RECLAIM_ONLY_RETRY,
     }
 
@@ -213,6 +297,7 @@ def submit_overrides(
     vcpus: int | None = None,
     memory_mib: int | None = None,
     environment: dict[str, str] | None = None,
+    secrets: dict[str, str] | None = None,
 ) -> dict:
     overrides: dict = {"command": command}
     rr = []
@@ -222,10 +307,14 @@ def submit_overrides(
         rr.append({"type": "MEMORY", "value": str(memory_mib)})
     if rr:
         overrides["resourceRequirements"] = rr
+    if secrets:
+        _reject_env_secret_overlap(environment or {}, secrets)
     if environment:
         overrides["environment"] = [
             {"name": k, "value": v} for k, v in sorted(environment.items())
         ]
+    if secrets:
+        overrides["secrets"] = _secrets_container_list(secrets)
     return overrides
 
 
@@ -321,10 +410,17 @@ def bootstrap(
     ephemeral_gib: int = 100,
     on_demand: bool = False,
     environment: dict[str, str] | None = None,
+    secrets: dict[str, str] | None = None,
     retry_strategy: dict | None = None,
 ) -> None:
     """Create-if-missing IAM role, log group, ECR repo, Fargate-Spot compute
-    environment + queue, and (re-)register the job definition. Idempotent."""
+    environment + queue, and (re-)register the job definition. Idempotent.
+
+    ``secrets`` maps ``ENV_VAR -> valueFrom`` ARN (Secrets Manager / SSM): each
+    is baked into the job definition's ``secrets`` array, and an inline policy
+    scoped to those ARNs is (re-)attached to the execution role so it can read
+    them at container start. Submit-time secrets (``submit(secrets=...)``) must
+    reference ARNs already covered here — ``submit`` doesn't touch IAM."""
     c = _clients()
 
     # Execution role (image pull + logs).
@@ -340,6 +436,18 @@ def bootstrap(
             RoleName=EXECUTION_ROLE, PolicyArn=ECS_EXECUTION_POLICY_ARN,
         )
         err(f"role {EXECUTION_ROLE}: created")
+
+    # Secrets-access inline policy, scoped to the referenced ARNs. Overwrites
+    # any prior revision (put_role_policy is idempotent), so the grant always
+    # matches the currently-bootstrapped secret set.
+    if secrets:
+        c["iam"].put_role_policy(
+            RoleName=EXECUTION_ROLE,
+            PolicyName=SECRETS_POLICY,
+            PolicyDocument=json.dumps(execution_role_secrets_policy(secrets)),
+        )
+        err(f"role {EXECUTION_ROLE}: secrets policy {SECRETS_POLICY} put "
+            f"({len(secrets)} ref(s))")
 
     # Log group.
     groups = c["logs"].describe_log_groups(logGroupNamePrefix=LOG_GROUP)["logGroups"]
@@ -420,6 +528,7 @@ def bootstrap(
         ephemeral_gib=ephemeral_gib,
         execution_role_arn=role["Arn"],
         environment=environment,
+        secrets=secrets,
         retry_strategy=retry_strategy,
     ))
     err(f"job definition {PREFIX}: registered")
@@ -433,17 +542,24 @@ def submit(
     vcpus: int | None = None,
     memory_mib: int | None = None,
     environment: dict[str, str] | None = None,
+    secrets: dict[str, str] | None = None,
     watch: bool = False,
 ) -> int:
     """Submit a job; with ``watch``, tail its log stream and return the
-    container's exit code (also non-zero on FAILED without one)."""
+    container's exit code (also non-zero on FAILED without one).
+
+    ``secrets`` (``ENV_VAR -> valueFrom`` ARN) is injected as a per-job
+    ``secrets`` override — ephemeral, never stored in the job definition. The
+    execution role must already be allowed to read the ARNs (grant them at
+    ``bootstrap(secrets=...)`` time; ``submit`` makes no IAM changes)."""
     c = _clients()
     job = c["batch"].submit_job(
         jobName=job_name,
         jobQueue=queue,
         jobDefinition=PREFIX,
         containerOverrides=submit_overrides(
-            command, vcpus=vcpus, memory_mib=memory_mib, environment=environment,
+            command, vcpus=vcpus, memory_mib=memory_mib,
+            environment=environment, secrets=secrets,
         ),
     )
     job_id = job["jobId"]

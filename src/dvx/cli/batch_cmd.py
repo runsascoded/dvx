@@ -15,17 +15,27 @@ from __future__ import annotations
 import click
 
 
-def _parse_env(pairs: tuple[str, ...]) -> dict[str, str]:
+def _parse_pairs(pairs: tuple[str, ...], *, hint: str) -> dict[str, str]:
     """Parse ``NAME=VALUE`` tokens into a dict; raises on malformed input."""
     out: dict[str, str] = {}
     for p in pairs:
         if "=" not in p:
             raise click.BadParameter(
-                f"expected NAME=VALUE, got {p!r}", param_hint="-e/--env",
+                f"expected NAME=VALUE, got {p!r}", param_hint=hint,
             )
         k, v = p.split("=", 1)
         out[k] = v
     return out
+
+
+def _parse_env(pairs: tuple[str, ...]) -> dict[str, str]:
+    """Parse ``-e/--env NAME=VALUE`` tokens (plaintext container env)."""
+    return _parse_pairs(pairs, hint="-e/--env")
+
+
+def _parse_secrets(pairs: tuple[str, ...]) -> dict[str, str]:
+    """Parse ``-s/--secret NAME=ARN`` tokens (Secrets Manager / SSM refs)."""
+    return _parse_pairs(pairs, hint="-s/--secret")
 
 
 @click.group()
@@ -64,6 +74,7 @@ def batch_push(no_build: bool, context: str, dockerfile: str | None, platform: s
 @click.option("-M", "--max-vcpus", type=int, default=16, show_default=True, help="Compute-environment max vCPUs.")
 @click.option("-m", "--memory", type=int, default=65536, show_default=True, help="Job-definition memory MiB.")
 @click.option("-o", "--on-demand", is_flag=True, help="Also create an on-demand (non-Spot) CE + queue `dvx-od` (submit -O targets it).")
+@click.option("-s", "--secret", "secrets", multiple=True, metavar="NAME=ARN", help="Secret env var from a Secrets Manager / SSM ARN (repeatable); baked into the job-def `secrets` + granted to the execution role.")
 @click.option("-v", "--vcpus", type=int, default=16, show_default=True, help="Job-definition vCPUs.")
 def bootstrap(
     arch: str,
@@ -73,6 +84,7 @@ def bootstrap(
     max_vcpus: int,
     memory: int,
     on_demand: bool,
+    secrets: tuple[str, ...],
     vcpus: int,
 ) -> None:
     """Idempotently create the role, log group, ECR repo, Fargate-Spot
@@ -87,6 +99,7 @@ def bootstrap(
         ephemeral_gib=ephemeral,
         on_demand=on_demand,
         environment=_parse_env(envs),
+        secrets=_parse_secrets(secrets),
     )
 
 
@@ -100,6 +113,7 @@ def bootstrap(
 @click.option("-O", "--on-demand", is_flag=True, help="Submit to the on-demand queue (needs `bootstrap -o`); no Spot reclaims.")
 @click.option("-p", "--push", default="each", show_default=True, help="`dvx run --push` mode (`each`, `end`, or `never`).")
 @click.option("-r", "--remote", help="`dvx run --remote` (named DVC remote for cache reads and pushes; default: the repo's default remote).")
+@click.option("-s", "--secret", "secrets", multiple=True, metavar="NAME=ARN", help="Per-job secret env var from a Secrets Manager / SSM ARN (repeatable); the execution role must already permit the ARN (grant at `bootstrap --secret`).")
 @click.option("-V", "--vcpus", type=int, help="Override job vCPUs.")
 @click.option("-w", "--watch", is_flag=True, help="Tail the job's log stream; exit with its status.")
 @click.argument("targets", nargs=-1)
@@ -113,6 +127,7 @@ def batch_submit(
     on_demand: bool,
     push: str,
     remote: str | None,
+    secrets: tuple[str, ...],
     vcpus: int | None,
     watch: bool,
     targets: tuple[str, ...],
@@ -143,6 +158,7 @@ def batch_submit(
         vcpus=vcpus,
         memory_mib=memory,
         environment=_parse_env(envs),
+        secrets=_parse_secrets(secrets),
         watch=watch,
     )
     if code != 0:

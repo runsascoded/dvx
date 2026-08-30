@@ -6,18 +6,24 @@ regressions without spinning up a mocked AWS.
 """
 from __future__ import annotations
 
+import json
+
+import pytest
 from click.testing import CliRunner
 
 from dvx.batch import (
     ECR_LIFECYCLE_POLICY,
+    EXECUTION_ROLE,
+    LOG_GROUP,
+    SECRETS_POLICY,
     compute_environment_spec,
+    execution_role_secrets_policy,
     job_definition_spec,
     push_commands,
     run_command,
     submit_overrides,
 )
 from dvx.cli import cli
-
 
 # ── job definition ──────────────────────────────────────────────────────────
 
@@ -321,12 +327,12 @@ def test_batch_submit_passes_remote_through(monkeypatch):
     """`dvx batch submit --remote` reaches the container's `dvx run`."""
     from click.testing import CliRunner
 
-    from dvx.cli.batch_cmd import batch
     import dvx.batch as batch_mod
+    from dvx.cli.batch_cmd import batch
 
     captured = {}
 
-    def fake_submit(*, command, job_name, queue, vcpus, memory_mib, environment, watch):
+    def fake_submit(*, command, job_name, queue, vcpus, memory_mib, environment, secrets, watch):
         captured["command"] = command
         return 0
 
@@ -410,7 +416,7 @@ def test_batch_bootstrap_help():
     opts = _parse_options(result.output)
     assert opts == {
         "--arch", "--env", "--ephemeral", "--image",
-        "--max-vcpus", "--memory", "--on-demand", "--vcpus",
+        "--max-vcpus", "--memory", "--on-demand", "--secret", "--vcpus",
         "--help",
     }
 
@@ -422,7 +428,7 @@ def test_batch_submit_help():
     opts = _parse_options(result.output)
     assert opts == {
         "--commit", "--env", "--force", "--jobs", "--memory", "--job-name",
-        "--on-demand", "--push", "--remote", "--vcpus", "--watch",
+        "--on-demand", "--push", "--remote", "--secret", "--vcpus", "--watch",
         "--help",
     }
 
@@ -594,3 +600,205 @@ def test_watch_warns_once_when_the_log_stream_is_missing(capsys, monkeypatch):
         "  status: FAILED",
         "  reason: boom",
     ]
+
+
+# ── secrets (Secrets Manager / SSM `valueFrom`) ──────────────────────────────
+
+SM_ARN = "arn:aws:secretsmanager:us-east-1:123456789012:secret:gh-token-AbCdEf"
+SSM_ARN = "arn:aws:ssm:us-east-1:123456789012:parameter/dvx/aws-key"
+
+
+def test_job_definition_spec_secrets():
+    """`secrets` becomes a name-sorted `containerProperties.secrets` array of
+    `{name, valueFrom}`; plaintext `environment` is untouched alongside it."""
+    spec = job_definition_spec(
+        image="img",
+        execution_role_arn="arn:role",
+        secrets={"GH_TOKEN": SM_ARN, "AWS_SECRET_ACCESS_KEY": SSM_ARN},
+    )
+    assert spec["containerProperties"]["secrets"] == [
+        {"name": "AWS_SECRET_ACCESS_KEY", "valueFrom": SSM_ARN},
+        {"name": "GH_TOKEN", "valueFrom": SM_ARN},
+    ]
+    assert spec["containerProperties"]["environment"] == [
+        {"name": "PYTHONFAULTHANDLER", "value": "1"},
+    ]
+
+
+def test_job_definition_spec_no_secrets_key_when_absent():
+    """No `secrets` key at all when none are given (not an empty list)."""
+    spec = job_definition_spec(image="img", execution_role_arn="arn:role")
+    assert "secrets" not in spec["containerProperties"]
+
+
+def test_job_definition_spec_env_secret_overlap_raises():
+    """A name set as both plaintext env and a secret is a config error."""
+    with pytest.raises(ValueError) as excinfo:
+        job_definition_spec(
+            image="img",
+            execution_role_arn="arn:role",
+            environment={"GH_TOKEN": "plaintext"},
+            secrets={"GH_TOKEN": SM_ARN},
+        )
+    assert str(excinfo.value) == (
+        "names set as both environment and secrets: GH_TOKEN"
+    )
+
+
+def test_submit_overrides_secrets():
+    """`secrets` becomes a per-job `secrets` override array, name-sorted."""
+    assert submit_overrides(
+        ["run", "-v"],
+        secrets={"GH_TOKEN": SM_ARN},
+    ) == {
+        "command": ["run", "-v"],
+        "secrets": [{"name": "GH_TOKEN", "valueFrom": SM_ARN}],
+    }
+
+
+def test_submit_overrides_env_secret_overlap_raises():
+    """Overlap check applies to per-job overrides too."""
+    with pytest.raises(ValueError) as excinfo:
+        submit_overrides(
+            ["run", "-v"],
+            environment={"GH_TOKEN": "plaintext"},
+            secrets={"GH_TOKEN": SM_ARN},
+        )
+    assert str(excinfo.value) == (
+        "names set as both environment and secrets: GH_TOKEN"
+    )
+
+
+def test_execution_role_secrets_policy_secretsmanager():
+    """A Secrets Manager ARN (with a `:json-key::` selector suffix) grants
+    GetSecretValue on the *base* secret ARN, plus kms:Decrypt."""
+    policy = execution_role_secrets_policy({"GH_TOKEN": SM_ARN + ":api:AWSCURRENT:"})
+    assert policy == {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Action": "secretsmanager:GetSecretValue",
+                "Resource": [SM_ARN],
+            },
+            {"Effect": "Allow", "Action": "kms:Decrypt", "Resource": "*"},
+        ],
+    }
+
+
+def test_execution_role_secrets_policy_ssm_and_mixed():
+    """SSM ARNs grant GetParameters; a mixed set yields both statements
+    (SM first, then SSM, then the kms catch-all)."""
+    policy = execution_role_secrets_policy({"A": SM_ARN, "B": SSM_ARN})
+    assert policy["Statement"] == [
+        {
+            "Effect": "Allow",
+            "Action": "secretsmanager:GetSecretValue",
+            "Resource": [SM_ARN],
+        },
+        {
+            "Effect": "Allow",
+            "Action": "ssm:GetParameters",
+            "Resource": [SSM_ARN],
+        },
+        {"Effect": "Allow", "Action": "kms:Decrypt", "Resource": "*"},
+    ]
+
+
+def test_execution_role_secrets_policy_unknown_arn_raises():
+    """A non-SM/SSM ARN can't be scoped — reject rather than over-grant."""
+    with pytest.raises(ValueError) as excinfo:
+        execution_role_secrets_policy({"X": "arn:aws:s3:::bucket/key"})
+    assert str(excinfo.value) == (
+        "unrecognized secret ARN (not Secrets Manager or SSM): "
+        "'arn:aws:s3:::bucket/key'"
+    )
+
+
+def test_batch_submit_passes_secrets_through(monkeypatch):
+    """`dvx batch submit --secret NAME=ARN` reaches `submit(secrets=...)`."""
+    import dvx.batch as batch_mod
+    from dvx.cli.batch_cmd import batch
+
+    captured = {}
+
+    def fake_submit(*, command, job_name, queue, vcpus, memory_mib,
+                    environment, secrets, watch):
+        captured["secrets"] = secrets
+        return 0
+
+    monkeypatch.setattr(batch_mod, "submit", fake_submit)
+    result = CliRunner().invoke(
+        batch, ["submit", "--secret", f"GH_TOKEN={SM_ARN}", "t.dvc"],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["secrets"] == {"GH_TOKEN": SM_ARN}
+
+
+def test_batch_secret_parse_error():
+    """Malformed `-s KEY` (no `=`) surfaces a click.BadParameter naming -s."""
+    result = CliRunner().invoke(cli, [
+        "batch", "submit", "-s", "MISSING_EQUALS", "t.dvc",
+    ])
+    assert result.exit_code != 0
+    assert "expected NAME=VALUE" in result.output
+
+
+def _bootstrap_clients(monkeypatch):
+    """A fully-canned client set that drives `bootstrap` down its
+    everything-already-exists path, so the only IAM write under test is the
+    secrets policy."""
+    from unittest.mock import MagicMock
+
+    import dvx.batch as b
+
+    iam = MagicMock()
+    iam.get_role.return_value = {
+        "Role": {"Arn": f"arn:aws:iam::1:role/{EXECUTION_ROLE}"},
+    }
+    logs = MagicMock()
+    logs.describe_log_groups.return_value = {
+        "logGroups": [{"logGroupName": LOG_GROUP}],
+    }
+    ec2 = MagicMock()
+    ec2.describe_subnets.return_value = {"Subnets": [{"SubnetId": "subnet-1"}]}
+    ec2.describe_security_groups.return_value = {
+        "SecurityGroups": [{"GroupId": "sg-1"}],
+    }
+    batch = MagicMock()
+    batch.describe_compute_environments.return_value = {
+        "computeEnvironments": [{"status": "VALID"}],
+    }
+    batch.describe_job_queues.return_value = {"jobQueues": [{"jobQueueName": "dvx"}]}
+    clients = {"iam": iam, "logs": logs, "ecr": MagicMock(), "ec2": ec2, "batch": batch}
+    monkeypatch.setattr(b, "_clients", lambda: clients)
+    monkeypatch.setattr(b, "_ensure_repo", lambda ecr, image: None)
+    monkeypatch.setattr(b, "err", lambda *a, **k: None)
+    return b, clients
+
+
+def test_bootstrap_attaches_scoped_secrets_policy(monkeypatch):
+    """`bootstrap(secrets=...)` puts an inline execution-role policy scoped to
+    the referenced ARNs, and bakes the secrets into the job definition."""
+    b, clients = _bootstrap_clients(monkeypatch)
+    b.bootstrap(image="img", secrets={"GH_TOKEN": SM_ARN})
+
+    clients["iam"].put_role_policy.assert_called_once_with(
+        RoleName=EXECUTION_ROLE,
+        PolicyName=SECRETS_POLICY,
+        PolicyDocument=json.dumps(execution_role_secrets_policy({"GH_TOKEN": SM_ARN})),
+    )
+    reg = clients["batch"].register_job_definition.call_args.kwargs
+    assert reg["containerProperties"]["secrets"] == [
+        {"name": "GH_TOKEN", "valueFrom": SM_ARN},
+    ]
+
+
+def test_bootstrap_without_secrets_touches_no_secrets_policy(monkeypatch):
+    """No `secrets` → no inline policy, and no `secrets` key on the job-def."""
+    b, clients = _bootstrap_clients(monkeypatch)
+    b.bootstrap(image="img")
+
+    clients["iam"].put_role_policy.assert_not_called()
+    reg = clients["batch"].register_job_definition.call_args.kwargs
+    assert "secrets" not in reg["containerProperties"]
