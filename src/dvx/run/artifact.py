@@ -79,6 +79,9 @@ class Computation:
     # Pathspecs whose *history* the cmd consumes. Not ordering edges —
     # nothing in the plan produces a commit — only freshness inputs.
     git_log_deps: list[Artifact | str | Path] = field(default_factory=list)
+    # Advisory resource hints for budget-aware scheduling, e.g.
+    # {"mem_gb": 40, "cpus": 4}. Not an ordering input — a scheduling weight.
+    resources: dict[str, float] = field(default_factory=dict)
     params: dict[str, Any] = field(default_factory=dict)
 
     def get_dep_paths(self) -> list[Path]:
@@ -256,7 +259,7 @@ class Artifact:
             )
 
         computation = None
-        if info.cmd or info.deps or info.git_deps or info.git_log_deps:
+        if info.cmd or info.deps or info.git_deps or info.git_log_deps or info.resources:
             # Convert deps dict to Artifact objects
             deps = [Artifact(path=dep_path, md5=dep_md5) for dep_path, dep_md5 in info.deps.items()]
             git_deps = [Artifact(path=dep_path, md5=blob_sha) for dep_path, blob_sha in info.git_deps.items()]
@@ -269,6 +272,7 @@ class Artifact:
                 deps=deps,
                 git_deps=git_deps,
                 git_log_deps=git_log_deps,
+                resources=dict(info.resources),
             )
 
         # Always use the original path passed in (preserves directory prefix)
@@ -312,11 +316,13 @@ class Artifact:
         git_deps_hashes = None
         git_log_deps_hashes = None
 
+        resources = None
         if self.computation:
             cmd = self.computation.cmd
             deps_hashes = self.computation.get_dep_hashes()
             git_deps_hashes = self.computation.get_git_dep_hashes() or None
             git_log_deps_hashes = self.computation.get_git_log_dep_shas() or None
+            resources = self.computation.resources or None
 
         return write_dvc_file(
             output_path=path,
@@ -326,6 +332,7 @@ class Artifact:
             deps=deps_hashes,
             git_deps=git_deps_hashes,
             git_log_deps=git_log_deps_hashes,
+            resources=resources,
         )
 
     def is_computed(self) -> bool:

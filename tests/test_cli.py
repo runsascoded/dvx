@@ -286,7 +286,8 @@ def test_run_help(runner):
     # The `run` command exposes these flags. Exact set match guards
     # against unintended additions / removals to the CLI surface.
     assert set(help.options) == {
-        "--force", "--force-upstream", "--cached", "--jobs", "--commit",
+        "--force", "--force-upstream", "--cached", "--jobs", "--mem",
+        "--mem-default", "--commit",
         "--dry-run", "--no-provenance", "--push", "--remote", "--push-timeout",
         "--no-cache-push",
         "--no-pull-deps", "--no-prune-fresh", "--verbose", "--help",

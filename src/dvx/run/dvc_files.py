@@ -478,6 +478,11 @@ class DVCFileInfo:
     # {pathspec: commit_sha} — deps on a path's *history*, not its content
     # at HEAD. Recorded value is the tip commit touching the pathspec.
     git_log_deps: dict[str, str] = field(default_factory=dict)
+    # Advisory per-stage resource hints for budget-aware level scheduling,
+    # e.g. {"mem_gb": 40, "cpus": 4}. Author-owned (survives rewrites like
+    # `side_effect`); absent ⇒ today's fixed-fanout behavior. See
+    # specs/done/resource-aware-scheduling.md.
+    resources: dict[str, float] = field(default_factory=dict)
     # Directory metadata
     nfiles: int | None = None
     is_dir: bool = False
@@ -506,6 +511,26 @@ class DVCFileInfo:
         if self.side_effect is not None:
             return self.side_effect
         return self.md5 is None and self.cmd is not None
+
+
+_RESOURCE_KEYS = ("mem_gb", "cpus")
+
+
+def _parse_resources(raw: object) -> dict[str, float]:
+    """Normalize a ``computation.resources`` mapping to ``{key: float}``.
+
+    Advisory only — unknown keys are dropped rather than erroring (a hint the
+    scheduler doesn't understand yet shouldn't fail a run), and non-numeric
+    values are ignored. Known keys today: ``mem_gb``, ``cpus``.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, float] = {}
+    for key in _RESOURCE_KEYS:
+        val = raw.get(key)
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            out[key] = float(val)
+    return out
 
 
 def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
@@ -561,6 +586,7 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
     deps = _resolve_dep_paths(raw_deps, dvc_dir)
     git_deps = _resolve_dep_paths(raw_git_deps, dvc_dir)
     git_log_deps = _resolve_dep_paths(raw_git_log_deps, dvc_dir)
+    resources = _parse_resources(computation.get("resources"))
 
     if not has_outs:
         # Side-effect stage: no outputs, but must have computation
@@ -575,6 +601,7 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
             deps=deps,
             git_deps=git_deps,
             git_log_deps=git_log_deps,
+            resources=resources,
             side_effect=explicit_side_effect,
             fetch_schedule=fetch_schedule,
             fetch_last_run=fetch_last_run,
@@ -609,6 +636,7 @@ def read_dvc_file(output_path: Path) -> DVCFileInfo | None:
         deps=deps,
         git_deps=git_deps,
         git_log_deps=git_log_deps,
+        resources=resources,
         # Directory metadata (mirrors outs[0])
         nfiles=first.nfiles,
         is_dir=first.is_dir,
@@ -668,8 +696,9 @@ def _merge_preserving_comments(existing: Any, new_data: dict) -> None:
       absent from ``new_data["outs"]`` are removed.
     - ``meta.computation`` (mapping): DVX-managed keys (``cmd``, ``deps``,
       ``git_deps``, ``git_log_deps``, ``fetch``) are updated / removed to
-      match ``new_data``. ``side_effect`` is author-owned — updated when
-      ``new_data`` carries it, preserved (never stripped) when it doesn't,
+      match ``new_data``. ``side_effect`` and ``resources`` are author-owned —
+      updated when ``new_data`` carries them, preserved (never stripped) when
+      it doesn't,
       since the executor rewrites a co-output's ``.dvc`` without passing the
       flag. Other keys under ``meta.computation`` (custom user fields) are
       left untouched.
@@ -748,6 +777,13 @@ def _merge_preserving_comments(existing: Any, new_data: dict) -> None:
                 if "side_effect" in new_comp:
                     comp["side_effect"] = new_comp["side_effect"]
 
+                # `resources` is author-owned too — advisory scheduling hints
+                # the executor never recomputes. Same durability rule: update
+                # when new_comp carries it, preserve when it doesn't, so a
+                # stage's own rewrite can't strip its `mem_gb` hint.
+                if "resources" in new_comp:
+                    comp["resources"] = new_comp["resources"]
+
                 # deps / git_deps — in-place merge of the mapping. Preserves
                 # key order, comments interleaved between deps, and *path
                 # spelling* (see `_norm_dep_key`): existing entries whose
@@ -800,6 +836,7 @@ def write_dvc_file(
     deps: dict[str, str] | None = None,
     git_deps: dict[str, str] | None = None,
     git_log_deps: dict[str, str] | None = None,
+    resources: dict[str, float] | None = None,
     nfiles: int | None = None,
     is_dir: bool | None = None,
     side_effect: bool | None = None,
@@ -904,7 +941,7 @@ def write_dvc_file(
 
     # Add computation block inside meta for DVC compatibility
     # (DVC allows arbitrary data in meta, but rejects unknown top-level keys)
-    if cmd or deps or git_deps or git_log_deps or fetch_schedule:
+    if cmd or deps or git_deps or git_log_deps or resources or fetch_schedule:
         computation = {}
         if cmd:
             computation["cmd"] = cmd
@@ -916,6 +953,8 @@ def write_dvc_file(
             computation["git_deps"] = _relativize_dep_paths(git_deps, dvc_dir)
         if git_log_deps:
             computation["git_log_deps"] = _relativize_dep_paths(git_log_deps, dvc_dir)
+        if resources:
+            computation["resources"] = {k: resources[k] for k in _RESOURCE_KEYS if k in resources}
         if side_effect is True:
             computation["side_effect"] = True
         if fetch_schedule:

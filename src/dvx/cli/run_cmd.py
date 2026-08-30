@@ -12,6 +12,8 @@ import click
 @click.option("--force-upstream", multiple=True, metavar="<pattern>", help="Force re-run upstream artifacts matching pattern.")
 @click.option("--cached", multiple=True, metavar="<pattern>", help="Use cached value for artifacts matching pattern.")
 @click.option("-j", "--jobs", type=int, help="Number of parallel jobs (default: CPU count).")
+@click.option("-m", "--mem", type=float, metavar="<GB>", help="Memory budget (GB) for scheduling a level: stages acquire their meta.computation.resources.mem_gb from it, so heavy stages serialize while light ones stay parallel. Default: total RAM when any stage is labeled, else off.")
+@click.option("--mem-default", type=float, default=0.0, show_default=True, metavar="<GB>", help="Budget weight charged to a stage with no mem_gb hint (0 = unlabeled stages never block).")
 @click.option("-c", "--commit/--no-commit", default=None, help="Commit strategy: --commit = always commit after each stage, --no-commit = never (batch containers without git identity), neither = auto (per-stage config).")
 @click.option("-n", "--dry-run", is_flag=True, help="Show execution plan without running.")
 @click.option("--no-provenance", is_flag=True, help="Don't include provenance in .dvc files.")
@@ -22,7 +24,7 @@ import click
 @click.option("-D", "--no-pull-deps", is_flag=True, help="Don't auto-fetch materializable trans-deps from remote (default: try fetch before rerunning).")
 @click.option("-U", "--no-prune-fresh", is_flag=True, help="Walk full upstream chain even past fresh artifacts (default: stop at fresh).")
 @click.option("-v", "--verbose", is_flag=True, help="Show detailed output.")
-def run_cmd(targets, force, force_upstream, cached, jobs, commit, dry_run, no_provenance, push, remote, push_timeout, no_cache_push, no_pull_deps, no_prune_fresh, verbose):
+def run_cmd(targets, force, force_upstream, cached, jobs, mem, mem_default, commit, dry_run, no_provenance, push, remote, push_timeout, no_cache_push, no_pull_deps, no_prune_fresh, verbose):
     """Execute artifact computations from .dvc files.
 
     Run computations defined in .dvc files, respecting dependencies and
@@ -73,6 +75,8 @@ def run_cmd(targets, force, force_upstream, cached, jobs, commit, dry_run, no_pr
 
     config = ExecutionConfig(
         max_workers=jobs,
+        mem_budget_gb=mem,
+        mem_default_gb=mem_default,
         dry_run=dry_run,
         force=force,
         force_patterns=list(force_upstream) if force_upstream else [],

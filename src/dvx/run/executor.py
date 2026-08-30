@@ -72,6 +72,72 @@ class ExecutionConfig:
     # .dvc before proceeding without it. Only reachable if a co-output's
     # thread is wedged — `_execute_artifact` signals on every exit.
     co_output_timeout: float = 1800.0
+    # Memory budget (GB) for scheduling a level: a stage acquires its
+    # `resources.mem_gb` from a shared budget before its cmd runs and releases
+    # after, so a level's heavy stages serialize while light ones stay
+    # parallel — instead of the blunt "ceiling the whole job" / "cap -j
+    # globally" levers. None + any stage labeled ⇒ introspect total RAM; None +
+    # nothing labeled ⇒ disabled (today's fixed fan-out). See
+    # specs/done/resource-aware-scheduling.md.
+    mem_budget_gb: float | None = None
+    # Weight charged to a stage with no `resources.mem_gb`. Default 0 keeps the
+    # feature opt-in per stage — an unlabeled stage never blocks on the budget.
+    mem_default_gb: float = 0.0
+
+
+def _total_ram_gb() -> float | None:
+    """Total physical RAM in GB, or None if it can't be determined.
+
+    Used as the default memory budget when stages carry `mem_gb` hints but no
+    explicit ``--mem`` was given. ``os.sysconf`` covers Linux and macOS (the
+    platforms dvx runs its Batch reproc on); anything else falls back to None,
+    which disables budget scheduling rather than guessing.
+    """
+    import os
+
+    try:
+        return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") / 1024**3
+    except (ValueError, OSError, AttributeError):
+        return None
+
+
+class _BudgetGate:
+    """A shared memory budget that serializes a level's heavy stages.
+
+    ``acquire(w)`` blocks until ``w`` GB fits under the budget alongside
+    what's already running, then reserves it; ``release(w)`` frees it and wakes
+    waiters. Only the stage that runs a cmd acquires — co-outputs (which run no
+    cmd, only verify + write their .dvc) never gate, so the primary's wait for
+    its co-outputs can't deadlock against the budget.
+
+    Forward progress is guaranteed two ways: a request larger than the whole
+    budget is clamped to it (an over-budget stage runs *alone* rather than
+    hanging forever), and the wait condition only holds while something else is
+    running — so when the gate is idle the next stage always proceeds, even if
+    over budget.
+    """
+
+    def __init__(self, budget_gb: float) -> None:
+        self._budget = budget_gb
+        self._running = 0.0
+        self._cond = threading.Condition()
+
+    def acquire(self, weight: float) -> None:
+        if weight <= 0:
+            return
+        w = min(weight, self._budget)
+        with self._cond:
+            while self._running > 0 and self._running + w > self._budget:
+                self._cond.wait()
+            self._running += w
+
+    def release(self, weight: float) -> None:
+        if weight <= 0:
+            return
+        w = min(weight, self._budget)
+        with self._cond:
+            self._running -= w
+            self._cond.notify_all()
 
 
 def _matches_patterns(path: str, patterns: list[str]) -> bool:
@@ -186,6 +252,36 @@ class ParallelExecutor:
         # only blocks on same-level co-outputs; cross-level co-outputs
         # haven't been submitted to the pool yet and can never signal.
         self._scheduled_paths: set[str] = set()
+
+        # Memory-budget gate (None ⇒ disabled). Built once from the config and
+        # whether any stage carries a `mem_gb` hint: an explicit --mem always
+        # wins; otherwise a labeled run introspects total RAM, and an unlabeled
+        # run leaves it off (today's fixed fan-out).
+        self._budget_gate = self._build_budget_gate()
+
+    def _build_budget_gate(self) -> "_BudgetGate | None":
+        any_labeled = any(
+            a.computation and a.computation.resources.get("mem_gb")
+            for a in self.artifacts
+        )
+        budget = self.config.mem_budget_gb
+        if budget is None:
+            if not any_labeled:
+                return None
+            budget = _total_ram_gb()
+            if budget is None:
+                return None
+            self._log(f"Memory-budget scheduling: {budget:.0f} GB (total RAM)")
+        else:
+            self._log(f"Memory-budget scheduling: {budget:.0f} GB (--mem)")
+        return _BudgetGate(budget)
+
+    def _mem_weight(self, artifact: Artifact) -> float:
+        """GB this stage charges against the budget: its `mem_gb` hint, or the
+        configured default for an unlabeled stage."""
+        if artifact.computation and "mem_gb" in artifact.computation.resources:
+            return artifact.computation.resources["mem_gb"]
+        return self.config.mem_default_gb
 
     def execute(self) -> list[ExecutionResult]:
         """Execute all artifacts, respecting dependencies.
@@ -642,15 +738,26 @@ class ParallelExecutor:
         dvc_dir = Path(path).parent
         cmd_cwd = str(dvc_dir) if str(dvc_dir) != "." else None
 
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
-            text=True,
-            check=False,
-            env=env,
-            cwd=cmd_cwd,
-        )
+        # Charge this stage's memory weight against the level budget while its
+        # cmd runs (a no-op when budgeting is off or the weight is 0). Only the
+        # primary reaches here — co-outputs verify + write without a cmd — so
+        # gating here can't deadlock the primary's wait for its co-outputs.
+        weight = self._mem_weight(artifact) if self._budget_gate else 0.0
+        if self._budget_gate:
+            self._budget_gate.acquire(weight)
+        try:
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+                cwd=cmd_cwd,
+            )
+        finally:
+            if self._budget_gate:
+                self._budget_gate.release(weight)
         duration = time.time() - start_time
 
         # Always save output to log file (success or failure)

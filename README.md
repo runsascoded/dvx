@@ -639,6 +639,7 @@ DVX is optimized for large repos:
 - **Lock-free adds**: Parallel-safe via atomic file writes
 - **Parallel status**: Check many files concurrently with `-j/--jobs`
 - **Parallel runs**: Independent computations execute concurrently
+- **Memory-budget scheduling**: stages can declare `meta.computation.resources.mem_gb`; `dvx run --mem <GB>` then serializes a level's heavy stages while light ones stay parallel, instead of ceiling the whole job or capping `-j` globally. Opt-in per stage (unlabeled stages don't block); defaults to total RAM as the budget when any stage is labeled.
 - **Reflinked outputs**: On a copy-on-write filesystem (APFS, btrfs, XFS), a
   generated output is CoW-cloned onto its cache blob at ingest, so it costs 1×
   on disk instead of 2× — matching what DVC does on checkout. Falls back to a
