@@ -228,6 +228,17 @@ class ParallelExecutor:
         self.config = config or ExecutionConfig()
         self.output = output or sys.stderr
 
+        # Serializes the per-stage git critical section (`git add -u` →
+        # `commit` → `push`). Under level-parallelism (`-j>1`) sibling stages
+        # finish concurrently, so without this their git ops race on the one
+        # repo: `index.lock` contention on commit, and — the one that bit the
+        # nj-crashes reproc — `cannot lock ref` rejections when several
+        # per-stage `git push`es hit the shared branch at once, silently
+        # dropping the losing stages' commits. Push is I/O-bound, so
+        # serializing it barely dents wall-clock vs the compute.
+        # See specs/done/parallel-git-pushback-races.md.
+        self._git_lock = threading.Lock()
+
         # Command deduplication state (for multi-output computations)
         self._cmd_lock = threading.Lock()
         self._cmd_events: dict[str, threading.Event] = {}  # cmd -> completion event
@@ -1273,34 +1284,40 @@ class ParallelExecutor:
             should_push = push_strategy == "each" or stage_wants_push
 
             if commit_msg:
-                # Stage tracked changes and commit
-                result = subprocess.run(
-                    ["git", "add", "-u"],
-                    capture_output=True, text=True, check=False,
-                )
-                if result.returncode == 0:
+                # The whole `git add -u` → commit → push triple runs under a
+                # process-wide lock so concurrent stages (level-parallelism)
+                # can't corrupt the index or race the shared branch — see
+                # `self._git_lock`. Held only for the git ops; the cache-blob
+                # push below stays outside it (concurrency-safe, I/O-bound).
+                with self._git_lock:
+                    # Stage tracked changes and commit
                     result = subprocess.run(
-                        ["git", "commit", "--allow-empty", "-m", commit_msg],
+                        ["git", "add", "-u"],
                         capture_output=True, text=True, check=False,
                     )
                     if result.returncode == 0:
-                        self._log(f"    📝 committed: {commit_msg.splitlines()[0]}")
-                        # Git push stays commit-gated (a push without a new
-                        # commit is a no-op at best, a stale-branch push at
-                        # worst); the cache-blob push below is not.
-                        if should_push:
-                            push_result = subprocess.run(
-                                ["git", "push"],
-                                capture_output=True, text=True, check=False,
-                            )
-                            if push_result.returncode == 0:
-                                self._log("    📤 pushed")
-                            else:
-                                self._log(f"    ⚠ push failed: {push_result.stderr.strip()}")
-                    elif "nothing to commit" in result.stdout:
-                        pass  # No changes to commit
-                    else:
-                        self._log(f"    ⚠ commit failed: {result.stderr.strip()}")
+                        result = subprocess.run(
+                            ["git", "commit", "--allow-empty", "-m", commit_msg],
+                            capture_output=True, text=True, check=False,
+                        )
+                        if result.returncode == 0:
+                            self._log(f"    📝 committed: {commit_msg.splitlines()[0]}")
+                            # Git push stays commit-gated (a push without a new
+                            # commit is a no-op at best, a stale-branch push at
+                            # worst); the cache-blob push below is not.
+                            if should_push:
+                                push_result = subprocess.run(
+                                    ["git", "push"],
+                                    capture_output=True, text=True, check=False,
+                                )
+                                if push_result.returncode == 0:
+                                    self._log("    📤 pushed")
+                                else:
+                                    self._log(f"    ⚠ push failed: {push_result.stderr.strip()}")
+                        elif "nothing to commit" in result.stdout:
+                            pass  # No changes to commit
+                        else:
+                            self._log(f"    ⚠ commit failed: {result.stderr.strip()}")
 
             if should_push:
                 dvc_paths = [f"{path}.dvc"]

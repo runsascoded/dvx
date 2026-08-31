@@ -1,6 +1,7 @@
 """Tests for parallel executor, including multi-output deduplication."""
 
 import subprocess
+import time
 from io import StringIO
 from pathlib import Path
 
@@ -823,3 +824,63 @@ def test_should_run_reruns_when_deps_genuinely_unpullable(tmp_workdir):
         executor_mod.is_output_fresh = orig_is_fresh
 
     assert (should_run, reason) == (True, "dep missing: missing.txt")
+
+
+def test_git_critical_section_is_serialized_under_parallelism(tmp_workdir, monkeypatch):
+    """The per-stage `git add -u` → commit → push triple must be mutually
+    exclusive across worker threads, or concurrent stages race the index and
+    the shared branch (dropping the losers' commits). Drives
+    ``_handle_stage_output`` from N threads with a widened git-subprocess
+    window and asserts no two threads are ever inside it at once.
+    """
+    import threading
+
+    import dvx.run.executor as executor_mod
+
+    artifact = Artifact(
+        path="out.txt",
+        computation=Computation(cmd="echo hi", deps=[]),
+    )
+    config = ExecutionConfig(commit="always", push="each", max_workers=8)
+    executor = ParallelExecutor([artifact], config, StringIO())
+    # The cache-blob push is deliberately outside the lock; stub it out so the
+    # test isolates the git critical section.
+    monkeypatch.setattr(executor, "_push_cache_blobs", lambda *a, **k: None)
+
+    active = 0
+    max_active = 0
+    tracker_lock = threading.Lock()
+
+    def fake_run(cmd, *args, **kwargs):
+        nonlocal active, max_active
+        if cmd[:1] == ["git"]:
+            with tracker_lock:
+                active += 1
+                max_active = max(max_active, active)
+            try:
+                time.sleep(0.01)  # widen the window a real race would exploit
+            finally:
+                with tracker_lock:
+                    active -= 1
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(executor_mod.subprocess, "run", fake_run)
+
+    def drive(i: int) -> None:
+        commit_msg_path = tmp_workdir / f"msg-{i}.txt"
+        commit_msg_path.write_text(f"commit {i}\n")
+        summary_path = tmp_workdir / f"summary-{i}.txt"
+        summary_path.write_text("")
+        executor._handle_stage_output(
+            path=f"out-{i}.txt",
+            commit_msg_path=str(commit_msg_path),
+            summary_path=str(summary_path),
+        )
+
+    threads = [threading.Thread(target=drive, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert max_active == 1
