@@ -303,12 +303,28 @@ class Artifact:
         # Compute output hash if file exists and we don't have it
         md5 = self.md5
         size = self.size
+        preserved_outs = None
         if md5 is None and path.exists():
             md5 = compute_md5(path)
             size = compute_file_size(path)
+        elif md5 is None:
+            # Output not materialized locally. If a committed .dvc already
+            # records this output, preserve its ``outs`` (md5/size/nfiles/dir
+            # markers) rather than clobbering the file with a placeholder — so
+            # ``prep`` can record/refresh ``meta.computation`` on an
+            # already-produced artifact without a ``dvx pull``, whether the
+            # output lives only in the cache/remote or is a multi-GB dir nobody
+            # wants to download. Only the genuine "output doesn't exist yet"
+            # case (no prior spec, or a prior placeholder with no md5) falls
+            # through to the placeholder below.
+            # See specs/done/write-dvc-preserve-committed-outs.md.
+            prior = read_dvc_file(path)
+            if prior and prior.outs and any(o.md5 for o in prior.outs):
+                preserved_outs = prior.outs
 
-        # If still no hash, leave as None - write_dvc_file will omit these fields
-        # to signal output doesn't exist yet (placeholder for prep phase)
+        # If still no hash and no prior outs to preserve, leave as None -
+        # write_dvc_file will omit these fields to signal output doesn't exist
+        # yet (placeholder for prep phase).
 
         # Get computation metadata
         cmd = None
@@ -333,6 +349,7 @@ class Artifact:
             git_deps=git_deps_hashes,
             git_log_deps=git_log_deps_hashes,
             resources=resources,
+            outs=preserved_outs,
         )
 
     def is_computed(self) -> bool:

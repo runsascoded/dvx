@@ -530,3 +530,119 @@ def test_get_dep_hashes_recompute_falls_back_to_recorded(tmp_path):
     hashes = comp.get_dep_hashes(recompute=True)
 
     assert hashes == {str(tmp_path / "missing.txt"): "recorded-md5"}
+
+
+def test_write_dvc_preserves_committed_outs_when_output_absent(tmp_path, monkeypatch):
+    """`prep` on an already-produced-but-not-materialized output must record
+    provenance without clobbering the committed `outs`.
+
+    See specs/done/write-dvc-preserve-committed-outs.md.
+    """
+    monkeypatch.chdir(tmp_path)  # so the in-dir dep relativizes to bare form
+    output = Path("e_c_202512.parquet")
+    dvc_path = Path("e_c_202512.parquet.dvc")
+    dvc_path.write_text(
+        "outs:\n"
+        "- md5: a06fb2c47ae86e4b652e59ec9d132aec\n"
+        "  size: 25204\n"
+        "  hash: md5\n"
+        "  path: e_c_202512.parquet\n"
+    )
+    assert not output.exists()  # output lives only in the cache/remote
+
+    artifact = Artifact(
+        path=str(output),
+        computation=Computation(
+            cmd="ctbk agg create -w0 -g e -a c 202512",
+            deps=[Artifact(path="202512.parquet", md5="a61a93f13d32b16e1d375680c6e64122")],
+        ),
+    )
+    artifact.write_dvc()
+
+    data = yaml.safe_load(dvc_path.read_text())
+    assert data["outs"] == [{
+        "md5": "a06fb2c47ae86e4b652e59ec9d132aec",
+        "size": 25204,
+        "hash": "md5",
+        "path": "e_c_202512.parquet",
+    }]
+    assert data["meta"]["computation"]["cmd"] == "ctbk agg create -w0 -g e -a c 202512"
+    assert data["meta"]["computation"]["deps"] == {
+        "202512.parquet": "a61a93f13d32b16e1d375680c6e64122",
+    }
+
+
+def test_write_dvc_preserves_committed_dir_outs_with_nfiles(tmp_path):
+    """The dir case (norm dirs carry `nfiles` + `.dir` md5) is preserved too."""
+    output = tmp_path / "202512"
+    dvc_path = tmp_path / "202512.dvc"
+    dvc_path.write_text(
+        "outs:\n"
+        "- md5: b45b3dae77db64c0ecf1dbe7aa52d588.dir\n"
+        "  size: 204444832\n"
+        "  hash: md5\n"
+        "  nfiles: 2\n"
+        "  path: '202512'\n"
+    )
+    assert not output.exists()
+
+    artifact = Artifact(
+        path=str(output),
+        computation=Computation(cmd="ctbk norm create -w0 202512", deps=[]),
+    )
+    artifact.write_dvc()
+
+    data = yaml.safe_load(dvc_path.read_text())
+    assert data["outs"] == [{
+        "md5": "b45b3dae77db64c0ecf1dbe7aa52d588.dir",
+        "size": 204444832,
+        "hash": "md5",
+        "nfiles": 2,
+        "path": "202512",
+    }]
+    assert data["meta"]["computation"]["cmd"] == "ctbk norm create -w0 202512"
+
+
+def test_write_dvc_placeholder_when_no_prior_and_output_absent(tmp_path):
+    """With no committed `.dvc` and no output, `write_dvc` still writes a
+    placeholder (md5/size omitted) — the genuine two-phase-prep case."""
+    output = tmp_path / "brand_new.parquet"
+    assert not output.exists()
+
+    artifact = Artifact(
+        path=str(output),
+        computation=Computation(cmd="make brand_new", deps=[]),
+    )
+    dvc_path = artifact.write_dvc()
+
+    # cmd + no output hash + no prior spec => a side-effect-shaped placeholder
+    # (no `outs` block at all), the existing two-phase-prep signal.
+    data = yaml.safe_load(dvc_path.read_text())
+    assert "outs" not in data
+    assert data["meta"]["computation"]["cmd"] == "make brand_new"
+
+
+def test_write_dvc_recomputes_from_disk_when_output_present(tmp_path):
+    """Regression guard: when the output is materialized, `write_dvc` hashes it
+    from disk (ignoring any stale committed `outs`)."""
+    output = tmp_path / "materialized.txt"
+    output.write_text("fresh bytes\n")
+    dvc_path = tmp_path / "materialized.txt.dvc"
+    dvc_path.write_text(
+        "outs:\n"
+        "- md5: 00000000000000000000000000000000\n"
+        "  size: 1\n"
+        "  hash: md5\n"
+        "  path: materialized.txt\n"
+    )
+
+    artifact = Artifact(
+        path=str(output),
+        computation=Computation(cmd="echo fresh", deps=[]),
+    )
+    artifact.write_dvc()
+
+    from dvx.run.hash import compute_md5
+    data = yaml.safe_load(dvc_path.read_text())
+    assert data["outs"][0]["md5"] == compute_md5(output)
+    assert data["outs"][0]["md5"] != "00000000000000000000000000000000"
