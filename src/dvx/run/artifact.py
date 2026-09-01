@@ -109,18 +109,29 @@ class Computation:
         """
         hashes = {}
         for dep in self.deps:
-            if isinstance(dep, Artifact):
-                path = Path(dep.path)
-                if not recompute and dep.md5:
-                    hashes[str(path)] = dep.md5
-                elif path.exists():
-                    hashes[str(path)] = compute_md5(path)
-                elif dep.md5:
-                    hashes[str(path)] = dep.md5
-            else:
-                path = Path(dep)
-                if path.exists():
-                    hashes[str(path)] = compute_md5(path)
+            is_artifact = isinstance(dep, Artifact)
+            path = Path(dep.path) if is_artifact else Path(dep)
+            if not recompute and is_artifact and dep.md5:
+                hashes[str(path)] = dep.md5
+                continue
+            # A dep that is itself a tracked artifact has an authoritative hash
+            # in its own ``.dvc`` ``outs`` — the exact value `is_output_fresh`
+            # compares our recorded dep-hash against. Record *that*, not a
+            # re-hash of the worktree file: the two diverge whenever the
+            # on-disk copy is transiently wrong (a partial or racing
+            # materialization during a parallel reproc), and re-hashing then
+            # records a phantom md5 that matches no blob and never matches
+            # freshness → the stage reads "dep changed" forever. Re-hash from
+            # disk only for a raw dep (no ``.dvc``), which is exactly what
+            # `is_output_fresh` does for the same case.
+            # See specs/done/leaf-dep-hash-corruption-on-md5-rewrite.md.
+            dep_info = read_dvc_file(path)
+            if dep_info is not None and dep_info.md5:
+                hashes[str(path)] = dep_info.md5
+            elif path.exists():
+                hashes[str(path)] = compute_md5(path)
+            elif is_artifact and dep.md5:
+                hashes[str(path)] = dep.md5
         return hashes
 
     def get_git_dep_hashes(self, recompute: bool = False) -> dict[str, str]:

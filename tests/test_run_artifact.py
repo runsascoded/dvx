@@ -646,3 +646,59 @@ def test_write_dvc_recomputes_from_disk_when_output_present(tmp_path):
     data = yaml.safe_load(dvc_path.read_text())
     assert data["outs"][0]["md5"] == compute_md5(output)
     assert data["outs"][0]["md5"] != "00000000000000000000000000000000"
+
+
+def test_get_dep_hashes_records_dep_dvc_outhash_not_disk_rehash(tmp_path):
+    """A tracked dep's recorded hash must come from its own `.dvc` `outs`, not
+    a re-hash of the worktree file — otherwise a transiently-wrong worktree
+    copy is recorded as a phantom md5.
+
+    See specs/done/leaf-dep-hash-corruption-on-md5-rewrite.md.
+    """
+    from dvx.run.hash import compute_md5
+    leaf = tmp_path / "leaf.parquet"
+    leaf.write_bytes(b"transient worktree bytes\n")
+    disk_md5 = compute_md5(leaf)
+    auth_md5 = "a1b2c3d4e5f60718293a4b5c6d7e8f90"  # the leaf's committed out-hash
+    (tmp_path / "leaf.parquet.dvc").write_text(
+        f"outs:\n- md5: {auth_md5}\n  size: 10\n  hash: md5\n  path: leaf.parquet\n"
+    )
+    assert disk_md5 != auth_md5
+
+    comp = Computation(cmd="build", deps=[Artifact(path=str(leaf))])
+    assert comp.get_dep_hashes(recompute=True) == {str(leaf): auth_md5}
+
+
+def test_rewritten_stage_stays_fresh_against_a_tracked_dep(tmp_path, monkeypatch):
+    """End-to-end: a rewrite records dep hashes that `is_output_fresh` then
+    accepts. Re-hashing the worktree (the bug) would record a value the
+    freshness check — which compares against the dep's `.dvc` — rejects
+    forever as `dep changed`."""
+    from dvx.run.dvc_files import is_output_fresh
+    monkeypatch.chdir(tmp_path)
+
+    leaf = Path("leaf.parquet")
+    leaf.write_bytes(b"worktree copy\n")  # differs from the recorded out-hash
+    auth_md5 = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
+    Path("leaf.parquet.dvc").write_text(
+        f"outs:\n- md5: {auth_md5}\n  size: 8\n  hash: md5\n  path: leaf.parquet\n"
+    )
+
+    out = Path("out.parquet")
+    out.write_bytes(b"result bytes\n")
+    Artifact(
+        path="out.parquet",
+        computation=Computation(cmd="build", deps=[Artifact(path="leaf.parquet")]),
+    ).write_dvc()
+
+    assert is_output_fresh(out) == (True, "up-to-date")
+
+
+def test_get_dep_hashes_raw_dep_still_hashes_from_disk(tmp_path):
+    """Regression guard: a raw dep (no `.dvc`) is still hashed from disk, the
+    same source `is_output_fresh` uses for raw deps."""
+    from dvx.run.hash import compute_md5
+    raw = tmp_path / "raw.txt"
+    raw.write_text("x\n")
+    comp = Computation(cmd="c", deps=[str(raw)])
+    assert comp.get_dep_hashes(recompute=True) == {str(raw): compute_md5(raw)}
