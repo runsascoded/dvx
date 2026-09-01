@@ -30,10 +30,45 @@ from functools import partial
 
 err = partial(print, file=sys.stderr)
 
+# Every AWS resource `dvx.batch` manages is namespaced by a project prefix, so
+# projects that both `import dvx.batch` (ctbk, nj-crashes, …) don't share — and
+# race over — one global set of resources. `PREFIX` is the default; pass
+# `prefix=` to `bootstrap`/`submit` (CLI `-P/--prefix`) for a per-project
+# namespace like `nj-crashes`. The old behavior is exactly `prefix="dvx"`.
+# See specs/done/batch-per-project-prefix.md.
 PREFIX = "dvx"
-LOG_GROUP = f"/{PREFIX}/batch"
-EXECUTION_ROLE = f"{PREFIX}-batch-execution"
-SECRETS_POLICY = f"{PREFIX}-batch-secrets"
+
+
+def log_group(prefix: str = PREFIX) -> str:
+    """CloudWatch log group for a prefix (`/dvx/batch` by default)."""
+    return f"/{prefix}/batch"
+
+
+def execution_role(prefix: str = PREFIX) -> str:
+    """Fargate execution-role name for a prefix."""
+    return f"{prefix}-batch-execution"
+
+
+def secrets_policy(prefix: str = PREFIX) -> str:
+    """Inline secrets-access policy name for a prefix."""
+    return f"{prefix}-batch-secrets"
+
+
+def spot_ce(prefix: str = PREFIX) -> str:
+    """Spot compute-environment name for a prefix."""
+    return f"{prefix}-spot"
+
+
+def od_name(prefix: str = PREFIX) -> str:
+    """On-demand compute-environment + queue name for a prefix (spot queue is
+    the bare prefix; the on-demand pair is ``<prefix>-od``)."""
+    return f"{prefix}-od"
+
+
+# Default-prefix constants, kept for back-compat with existing importers.
+LOG_GROUP = log_group()
+EXECUTION_ROLE = execution_role()
+SECRETS_POLICY = secrets_policy()
 ECS_TRUST_POLICY = (
     '{"Version": "2012-10-17", "Statement": [{"Effect": "Allow", '
     '"Principal": {"Service": "ecs-tasks.amazonaws.com"}, '
@@ -49,13 +84,14 @@ ECS_EXECUTION_POLICY_ARN = (
 def compute_environment_spec(
     *,
     name: str | None = None,
+    prefix: str = PREFIX,
     spot: bool = True,
     max_vcpus: int = 16,
     subnets: list[str],
     security_group_ids: list[str],
 ) -> dict:
     return {
-        "computeEnvironmentName": name or (f"{PREFIX}-spot" if spot else f"{PREFIX}-od"),
+        "computeEnvironmentName": name or (spot_ce(prefix) if spot else od_name(prefix)),
         "type": "MANAGED",
         "state": "ENABLED",
         "computeResources": {
@@ -383,6 +419,7 @@ def push_image(
     Creates the ECR repo if missing, so push can run before ``bootstrap``."""
     import base64
     from subprocess import run
+
     import boto3
     ecr = boto3.client("ecr")
     _ensure_repo(ecr, image)
@@ -403,6 +440,7 @@ def push_image(
 def bootstrap(
     *,
     image: str,
+    prefix: str = PREFIX,
     arch: str = "ARM64",
     max_vcpus: int = 16,
     vcpus: int = 16,
@@ -416,46 +454,56 @@ def bootstrap(
     """Create-if-missing IAM role, log group, ECR repo, Fargate-Spot compute
     environment + queue, and (re-)register the job definition. Idempotent.
 
+    All resource names are namespaced by ``prefix`` (default ``dvx``): the role
+    ``<prefix>-batch-execution``, log group ``/<prefix>/batch``, spot queue
+    ``<prefix>`` + CE ``<prefix>-spot``, optional on-demand pair ``<prefix>-od``,
+    and job definition ``<prefix>``. Pass a per-project ``prefix`` so projects
+    sharing ``dvx.batch`` don't collide on one global resource set. ``submit``
+    must be called with the same ``prefix``.
+
     ``secrets`` maps ``ENV_VAR -> valueFrom`` ARN (Secrets Manager / SSM): each
     is baked into the job definition's ``secrets`` array, and an inline policy
     scoped to those ARNs is (re-)attached to the execution role so it can read
     them at container start. Submit-time secrets (``submit(secrets=...)``) must
     reference ARNs already covered here — ``submit`` doesn't touch IAM."""
     c = _clients()
+    role_name = execution_role(prefix)
+    lg = log_group(prefix)
 
     # Execution role (image pull + logs).
     try:
-        role = c["iam"].get_role(RoleName=EXECUTION_ROLE)["Role"]
-        err(f"role {EXECUTION_ROLE}: exists")
+        role = c["iam"].get_role(RoleName=role_name)["Role"]
+        err(f"role {role_name}: exists")
     except c["iam"].exceptions.NoSuchEntityException:
         role = c["iam"].create_role(
-            RoleName=EXECUTION_ROLE,
+            RoleName=role_name,
             AssumeRolePolicyDocument=ECS_TRUST_POLICY,
         )["Role"]
         c["iam"].attach_role_policy(
-            RoleName=EXECUTION_ROLE, PolicyArn=ECS_EXECUTION_POLICY_ARN,
+            RoleName=role_name, PolicyArn=ECS_EXECUTION_POLICY_ARN,
         )
-        err(f"role {EXECUTION_ROLE}: created")
+        err(f"role {role_name}: created")
 
     # Secrets-access inline policy, scoped to the referenced ARNs. Overwrites
     # any prior revision (put_role_policy is idempotent), so the grant always
     # matches the currently-bootstrapped secret set.
     if secrets:
+        policy_name = secrets_policy(prefix)
         c["iam"].put_role_policy(
-            RoleName=EXECUTION_ROLE,
-            PolicyName=SECRETS_POLICY,
+            RoleName=role_name,
+            PolicyName=policy_name,
             PolicyDocument=json.dumps(execution_role_secrets_policy(secrets)),
         )
-        err(f"role {EXECUTION_ROLE}: secrets policy {SECRETS_POLICY} put "
+        err(f"role {role_name}: secrets policy {policy_name} put "
             f"({len(secrets)} ref(s))")
 
     # Log group.
-    groups = c["logs"].describe_log_groups(logGroupNamePrefix=LOG_GROUP)["logGroups"]
-    if not any(g["logGroupName"] == LOG_GROUP for g in groups):
-        c["logs"].create_log_group(logGroupName=LOG_GROUP)
-        err(f"log group {LOG_GROUP}: created")
+    groups = c["logs"].describe_log_groups(logGroupNamePrefix=lg)["logGroups"]
+    if not any(g["logGroupName"] == lg for g in groups):
+        c["logs"].create_log_group(logGroupName=lg)
+        err(f"log group {lg}: created")
     else:
-        err(f"log group {LOG_GROUP}: exists")
+        err(f"log group {lg}: exists")
 
     # ECR repo.
     _ensure_repo(c["ecr"], image)
@@ -481,9 +529,10 @@ def bootstrap(
     # Compute environments + queues: the spot pair always; an on-demand pair
     # (queue `<prefix>-od`) when requested — ~3.3× compute cost but immune
     # to Spot reclaims, for "final" runs.
-    pairs = [(True, PREFIX)] + ([(False, f"{PREFIX}-od")] if on_demand else [])
+    pairs = [(True, prefix)] + ([(False, od_name(prefix))] if on_demand else [])
     for spot, queue_name in pairs:
         spec = compute_environment_spec(
+            prefix=prefix,
             spot=spot,
             max_vcpus=max_vcpus,
             subnets=subnets,
@@ -521,24 +570,27 @@ def bootstrap(
 
     # Job definition — always (re-)registered; revisions are harmless.
     c["batch"].register_job_definition(**job_definition_spec(
+        name=prefix,
         image=image,
         arch=arch,
         vcpus=vcpus,
         memory_mib=memory_mib,
         ephemeral_gib=ephemeral_gib,
         execution_role_arn=role["Arn"],
+        log_group=lg,
         environment=environment,
         secrets=secrets,
         retry_strategy=retry_strategy,
     ))
-    err(f"job definition {PREFIX}: registered")
+    err(f"job definition {prefix}: registered")
 
 
 def submit(
     *,
     command: list[str],
     job_name: str,
-    queue: str = PREFIX,
+    prefix: str = PREFIX,
+    queue: str | None = None,
     vcpus: int | None = None,
     memory_mib: int | None = None,
     environment: dict[str, str] | None = None,
@@ -548,6 +600,10 @@ def submit(
     """Submit a job; with ``watch``, tail its log stream and return the
     container's exit code (also non-zero on FAILED without one).
 
+    Targets the ``prefix``-namespaced job definition and log group (must match
+    the ``bootstrap(prefix=...)`` that created them). ``queue`` defaults to the
+    spot queue ``<prefix>``; pass ``<prefix>-od`` for the on-demand queue.
+
     ``secrets`` (``ENV_VAR -> valueFrom`` ARN) is injected as a per-job
     ``secrets`` override — ephemeral, never stored in the job definition. The
     execution role must already be allowed to read the ARNs (grant them at
@@ -555,8 +611,8 @@ def submit(
     c = _clients()
     job = c["batch"].submit_job(
         jobName=job_name,
-        jobQueue=queue,
-        jobDefinition=PREFIX,
+        jobQueue=queue or prefix,
+        jobDefinition=prefix,
         containerOverrides=submit_overrides(
             command, vcpus=vcpus, memory_mib=memory_mib,
             environment=environment, secrets=secrets,
@@ -567,10 +623,15 @@ def submit(
     if not watch:
         print(job_id)
         return 0
-    return _watch(c, job_id)
+    return _watch(c, job_id, log_group_name=log_group(prefix))
 
 
-def _drain(c: dict, stream: str, next_token: str | None) -> tuple[str | None, bool]:
+def _drain(
+    c: dict,
+    stream: str,
+    next_token: str | None,
+    log_group_name: str = LOG_GROUP,
+) -> tuple[str | None, bool]:
     """Print every log event available on ``stream`` past ``next_token``.
 
     A single ``get_log_events`` call caps at 1 MB / 10k events, so one call per
@@ -583,7 +644,7 @@ def _drain(c: dict, stream: str, next_token: str | None) -> tuple[str | None, bo
     """
     while True:
         kwargs = {
-            "logGroupName": LOG_GROUP,
+            "logGroupName": log_group_name,
             "logStreamName": stream,
             "startFromHead": True,
         }
@@ -601,7 +662,12 @@ def _drain(c: dict, stream: str, next_token: str | None) -> tuple[str | None, bo
         next_token = token
 
 
-def _watch(c: dict, job_id: str, interval: float = 15) -> int:
+def _watch(
+    c: dict,
+    job_id: str,
+    interval: float = 15,
+    log_group_name: str = LOG_GROUP,
+) -> int:
     """Tail a job's logs until it reaches a terminal state; return its exit code.
 
     Two things this has to survive, both learned the hard way on nj-crashes'
@@ -637,10 +703,10 @@ def _watch(c: dict, job_id: str, interval: float = 15) -> int:
                 warned_missing = False
             stream = current
         if stream is not None:
-            next_token, found = _drain(c, stream, next_token)
+            next_token, found = _drain(c, stream, next_token, log_group_name)
             if not found and not warned_missing:
                 err(
-                    f"  ⚠ log stream {stream} not found in {LOG_GROUP} — "
+                    f"  ⚠ log stream {stream} not found in {log_group_name} — "
                     "job output will not appear here"
                 )
                 warned_missing = True

@@ -73,7 +73,8 @@ def batch_push(no_build: bool, context: str, dockerfile: str | None, platform: s
 @click.option("-i", "--image", required=True, help="Container image ref (ECR); repo is created if missing.")
 @click.option("-M", "--max-vcpus", type=int, default=16, show_default=True, help="Compute-environment max vCPUs.")
 @click.option("-m", "--memory", type=int, default=65536, show_default=True, help="Job-definition memory MiB.")
-@click.option("-o", "--on-demand", is_flag=True, help="Also create an on-demand (non-Spot) CE + queue `dvx-od` (submit -O targets it).")
+@click.option("-o", "--on-demand", is_flag=True, help="Also create an on-demand (non-Spot) CE + queue `<prefix>-od` (submit -O targets it).")
+@click.option("-P", "--prefix", default="dvx", show_default=True, help="Project namespace for every managed resource (role/log-group/CE/queue/job-def); use a per-project value so projects sharing `dvx.batch` don't collide.")
 @click.option("-s", "--secret", "secrets", multiple=True, metavar="NAME=ARN", help="Secret env var from a Secrets Manager / SSM ARN (repeatable); baked into the job-def `secrets` + granted to the execution role.")
 @click.option("-v", "--vcpus", type=int, default=16, show_default=True, help="Job-definition vCPUs.")
 def bootstrap(
@@ -84,6 +85,7 @@ def bootstrap(
     max_vcpus: int,
     memory: int,
     on_demand: bool,
+    prefix: str,
     secrets: tuple[str, ...],
     vcpus: int,
 ) -> None:
@@ -92,6 +94,7 @@ def bootstrap(
     from dvx.batch import bootstrap as _bootstrap
     _bootstrap(
         image=image,
+        prefix=prefix,
         arch=arch,
         max_vcpus=max_vcpus,
         vcpus=vcpus,
@@ -111,6 +114,7 @@ def bootstrap(
 @click.option("-M", "--memory", type=int, help="Override job memory MiB.")
 @click.option("-n", "--job-name", help="Batch job name (default: `dvx-<slug>` derived from targets or the repo).")
 @click.option("-O", "--on-demand", is_flag=True, help="Submit to the on-demand queue (needs `bootstrap -o`); no Spot reclaims.")
+@click.option("-P", "--prefix", default="dvx", show_default=True, help="Project namespace to target (must match the `bootstrap --prefix` that created the job-def/queue/log-group).")
 @click.option("-p", "--push", default="each", show_default=True, help="`dvx run --push` mode (`each`, `end`, or `never`).")
 @click.option("-r", "--remote", help="`dvx run --remote` (named DVC remote for cache reads and pushes; default: the repo's default remote).")
 @click.option("-s", "--secret", "secrets", multiple=True, metavar="NAME=ARN", help="Per-job secret env var from a Secrets Manager / SSM ARN (repeatable); the execution role must already permit the ARN (grant at `bootstrap --secret`).")
@@ -125,6 +129,7 @@ def batch_submit(
     memory: int | None,
     job_name: str | None,
     on_demand: bool,
+    prefix: str,
     push: str,
     remote: str | None,
     secrets: tuple[str, ...],
@@ -140,8 +145,9 @@ def batch_submit(
     reconciling ``.dvc`` files in git happens on a dev machine or in CI via
     ``dvx run`` (instant — auto-pull materializes everything).
     """
-    from dvx.batch import PREFIX, run_command, submit as _submit
-    queue = f"{PREFIX}-od" if on_demand else PREFIX
+    from dvx.batch import od_name, run_command
+    from dvx.batch import submit as _submit
+    queue = od_name(prefix) if on_demand else prefix
     name = job_name or _derive_job_name(targets)
     code = _submit(
         command=run_command(
@@ -154,6 +160,7 @@ def batch_submit(
             verbose=True,
         ),
         job_name=name,
+        prefix=prefix,
         queue=queue,
         vcpus=vcpus,
         memory_mib=memory,

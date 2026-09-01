@@ -15,12 +15,18 @@ from dvx.batch import (
     ECR_LIFECYCLE_POLICY,
     EXECUTION_ROLE,
     LOG_GROUP,
+    PREFIX,
     SECRETS_POLICY,
     compute_environment_spec,
+    execution_role,
     execution_role_secrets_policy,
     job_definition_spec,
+    log_group,
+    od_name,
     push_commands,
     run_command,
+    secrets_policy,
+    spot_ce,
     submit_overrides,
 )
 from dvx.cli import cli
@@ -332,7 +338,7 @@ def test_batch_submit_passes_remote_through(monkeypatch):
 
     captured = {}
 
-    def fake_submit(*, command, job_name, queue, vcpus, memory_mib, environment, secrets, watch):
+    def fake_submit(*, command, job_name, prefix, queue, vcpus, memory_mib, environment, secrets, watch):
         captured["command"] = command
         return 0
 
@@ -416,7 +422,7 @@ def test_batch_bootstrap_help():
     opts = _parse_options(result.output)
     assert opts == {
         "--arch", "--env", "--ephemeral", "--image",
-        "--max-vcpus", "--memory", "--on-demand", "--secret", "--vcpus",
+        "--max-vcpus", "--memory", "--on-demand", "--prefix", "--secret", "--vcpus",
         "--help",
     }
 
@@ -428,7 +434,7 @@ def test_batch_submit_help():
     opts = _parse_options(result.output)
     assert opts == {
         "--commit", "--env", "--force", "--jobs", "--memory", "--job-name",
-        "--on-demand", "--push", "--remote", "--secret", "--vcpus", "--watch",
+        "--on-demand", "--prefix", "--push", "--remote", "--secret", "--vcpus", "--watch",
         "--help",
     }
 
@@ -722,7 +728,7 @@ def test_batch_submit_passes_secrets_through(monkeypatch):
 
     captured = {}
 
-    def fake_submit(*, command, job_name, queue, vcpus, memory_mib,
+    def fake_submit(*, command, job_name, prefix, queue, vcpus, memory_mib,
                     environment, secrets, watch):
         captured["secrets"] = secrets
         return 0
@@ -802,3 +808,153 @@ def test_bootstrap_without_secrets_touches_no_secrets_policy(monkeypatch):
     clients["iam"].put_role_policy.assert_not_called()
     reg = clients["batch"].register_job_definition.call_args.kwargs
     assert "secrets" not in reg["containerProperties"]
+
+
+# ── per-project prefix namespacing ───────────────────────────────────────────
+# See specs/done/batch-per-project-prefix.md.
+
+def test_name_helpers_default_and_custom_prefix():
+    assert (PREFIX, log_group(), execution_role(), secrets_policy(),
+            spot_ce(), od_name()) == (
+        "dvx", "/dvx/batch", "dvx-batch-execution", "dvx-batch-secrets",
+        "dvx-spot", "dvx-od",
+    )
+    p = "nj-crashes"
+    assert (log_group(p), execution_role(p), secrets_policy(p),
+            spot_ce(p), od_name(p)) == (
+        "/nj-crashes/batch", "nj-crashes-batch-execution",
+        "nj-crashes-batch-secrets", "nj-crashes-spot", "nj-crashes-od",
+    )
+
+
+def test_default_name_constants_match_helpers():
+    assert (log_group(), execution_role(), secrets_policy()) == (
+        LOG_GROUP, EXECUTION_ROLE, SECRETS_POLICY,
+    )
+
+
+def test_compute_environment_spec_custom_prefix():
+    assert compute_environment_spec(
+        prefix="nj-crashes",
+        subnets=["subnet-1"],
+        security_group_ids=["sg-1"],
+    )["computeEnvironmentName"] == "nj-crashes-spot"
+    assert compute_environment_spec(
+        prefix="nj-crashes",
+        spot=False,
+        subnets=["subnet-1"],
+        security_group_ids=["sg-1"],
+    )["computeEnvironmentName"] == "nj-crashes-od"
+
+
+def test_bootstrap_namespaces_all_resources_by_prefix(monkeypatch):
+    """`bootstrap(prefix=...)` addresses the role, log group, queue, compute
+    environment, and job definition under `<prefix>` — nothing global."""
+    b, clients = _bootstrap_clients(monkeypatch)
+    b.bootstrap(image="img", prefix="nj-crashes")
+
+    clients["iam"].get_role.assert_called_once_with(RoleName="nj-crashes-batch-execution")
+    clients["logs"].create_log_group.assert_called_once_with(logGroupName="/nj-crashes/batch")
+    # (called again by `_wait`'s VALID poll, so assert the first lookup)
+    assert clients["batch"].describe_compute_environments.call_args_list[0].kwargs == {
+        "computeEnvironments": ["nj-crashes-spot"],
+    }
+    clients["batch"].describe_job_queues.assert_called_once_with(jobQueues=["nj-crashes"])
+    reg = clients["batch"].register_job_definition.call_args.kwargs
+    assert reg["jobDefinitionName"] == "nj-crashes"
+    assert reg["containerProperties"]["logConfiguration"]["options"]["awslogs-group"] == (
+        "/nj-crashes/batch"
+    )
+
+
+def test_bootstrap_secrets_policy_namespaced_by_prefix(monkeypatch):
+    """The inline secrets policy is attached to the prefixed role under the
+    prefixed policy name."""
+    b, clients = _bootstrap_clients(monkeypatch)
+    b.bootstrap(image="img", prefix="nj-crashes", secrets={"GH_TOKEN": SM_ARN})
+
+    clients["iam"].put_role_policy.assert_called_once_with(
+        RoleName="nj-crashes-batch-execution",
+        PolicyName="nj-crashes-batch-secrets",
+        PolicyDocument=json.dumps(execution_role_secrets_policy({"GH_TOKEN": SM_ARN})),
+    )
+
+
+def test_submit_targets_prefixed_job_def_and_queue(monkeypatch):
+    """`submit(prefix=...)` submits against the prefixed job def, defaulting the
+    queue to the prefix's spot queue."""
+    from unittest.mock import MagicMock
+
+    import dvx.batch as b
+
+    batch = MagicMock()
+    batch.submit_job.return_value = {"jobId": "j-1"}
+    monkeypatch.setattr(b, "_clients", lambda: {"batch": batch})
+    monkeypatch.setattr(b, "err", lambda *a, **k: None)
+
+    rc = b.submit(command=["run"], job_name="jn", prefix="nj-crashes")
+    assert rc == 0
+    kw = batch.submit_job.call_args.kwargs
+    assert (kw["jobDefinition"], kw["jobQueue"]) == ("nj-crashes", "nj-crashes")
+
+
+def test_submit_on_demand_queue_override(monkeypatch):
+    """An explicit `queue` (e.g. the on-demand `<prefix>-od`) overrides the
+    default spot queue while the job def stays the bare prefix."""
+    from unittest.mock import MagicMock
+
+    import dvx.batch as b
+
+    batch = MagicMock()
+    batch.submit_job.return_value = {"jobId": "j-1"}
+    monkeypatch.setattr(b, "_clients", lambda: {"batch": batch})
+    monkeypatch.setattr(b, "err", lambda *a, **k: None)
+
+    b.submit(command=["run"], job_name="jn", prefix="nj-crashes", queue="nj-crashes-od")
+    kw = batch.submit_job.call_args.kwargs
+    assert (kw["jobDefinition"], kw["jobQueue"]) == ("nj-crashes", "nj-crashes-od")
+
+
+def test_batch_bootstrap_passes_prefix_through(monkeypatch):
+    """`dvx batch bootstrap --prefix` reaches `bootstrap(prefix=...)`."""
+    import dvx.batch as batch_mod
+    from dvx.cli.batch_cmd import batch
+
+    captured = {}
+
+    def fake_bootstrap(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(batch_mod, "bootstrap", fake_bootstrap)
+    result = CliRunner().invoke(
+        batch, ["bootstrap", "-i", "img", "--prefix", "nj-crashes"],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["prefix"] == "nj-crashes"
+
+
+def test_batch_submit_passes_prefix_and_queue_through(monkeypatch):
+    """`dvx batch submit --prefix` targets the prefixed job def + spot queue;
+    with `-O` the queue becomes `<prefix>-od`."""
+    import dvx.batch as batch_mod
+    from dvx.cli.batch_cmd import batch
+
+    captured = {}
+
+    def fake_submit(*, command, job_name, prefix, queue, vcpus, memory_mib,
+                    environment, secrets, watch):
+        captured["prefix"] = prefix
+        captured["queue"] = queue
+        return 0
+
+    monkeypatch.setattr(batch_mod, "submit", fake_submit)
+
+    result = CliRunner().invoke(batch, ["submit", "--prefix", "nj-crashes", "t.dvc"])
+    assert result.exit_code == 0, result.output
+    assert (captured["prefix"], captured["queue"]) == ("nj-crashes", "nj-crashes")
+
+    result = CliRunner().invoke(
+        batch, ["submit", "--prefix", "nj-crashes", "-O", "t.dvc"],
+    )
+    assert result.exit_code == 0, result.output
+    assert (captured["prefix"], captured["queue"]) == ("nj-crashes", "nj-crashes-od")
