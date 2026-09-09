@@ -24,3 +24,23 @@ Net: the only-copy-is-local footgun becomes opt-in; offline/no-remote degrades t
 - Default (no flag): the remote-backed blob is deleted, the local-only blob is retained + reported. (Pre-change: both deleted.)
 - `--unsafe`: both deleted.
 - Safe-default with no remote resolvable: raises the actionable error, deletes nothing.
+
+## Resolution
+
+Implemented in `src/dvx/cli/main.py` (`gc`):
+
+- Added `-U/--unsafe`. `--safe` and `--unsafe` together is a `ClickException`.
+- `retention = keep is not None or older_than is not None`; `use_safe = safe or (retention and not unsafe)`. So `--keep`/`--older-than` default to safe (opt out with `--unsafe`); the DVC-scope paths (`-w`/`-a`/`-A`/`-T` without a retention policy) keep `use_safe == safe` — explicit-`--safe`-only, unchanged. Both the `safe_remotes` setup block and the two `partition_by_remote` call sites now gate on `use_safe`.
+- Fail-loud: `_safe_remote_error(e, explicit=safe)` — an explicit `--safe` keeps the "`--safe`: remote check failed" message; a *defaulted* safe (retention, no `--unsafe`) that can't verify a remote (none configured, or unreachable — expired SSO) raises "gc is safe by default on `--keep`/`--older-than` and could not verify a remote (…); push first, or pass `--unsafe` to delete local-only blobs." Nothing is deleted.
+- The skip report in `_gc_delete` now points at `--unsafe` instead of "gc without --safe".
+
+Scope note: only the retention paths flip. The bare DVC-delegated path (`-w`/`-a`/`-A`/`-T`, no retention) still mirrors DVC's unsafe default unless `--safe` is passed — flipping that is a separate DVC-parity decision.
+
+### Tests (`tests/test_gc.py`)
+
+- `test_gc_keep_safe_by_default_retains_local_only_blob` — `--keep 1 -f`, remote holds only the older superseded version: it's deleted, the local-only superseded version is retained + reported, newest kept. TFFP-verified (pre-change deletes the local-only blob).
+- `test_gc_keep_unsafe_deletes_local_only_blob` — `--unsafe` deletes every superseded version and needs no remote (regression guard for the old behavior).
+- `test_gc_keep_safe_default_requires_a_remote` — no remote ⇒ exit 1 with the actionable message, nothing deleted. TFFP-verified (pre-change exits 0 and deletes).
+- Updated `test_gc_cli_dry_run` (now passes `--unsafe` to exercise the raw plan without a remote) and the two `test_cache_comm.py` skip-message assertions to the new `--unsafe` wording.
+
+Full suite green.

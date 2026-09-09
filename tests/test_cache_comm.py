@@ -303,7 +303,7 @@ def test_gc_safe_skips_unpushed_deletes_pushed(runner, comm_repo):
     assert result.exit_code == 0, result.output
 
     assert result.output.rstrip().split("\n") == [
-        "⚠ Skipping 1 blob(s) (5 B) not present in any checked remote — push first or gc without --safe:",
+        "⚠ Skipping 1 blob(s) (5 B) not present in any checked remote — push first, or pass --unsafe:",
         f"  {junk_key[:12]}...  5 B",
         "Would delete 1 blob(s) (12 B):",
         f"  {old_key[:12]}...  12 B",
@@ -329,7 +329,7 @@ def test_gc_safe_composes_with_keep(runner, comm_repo):
     result = runner.invoke(cli, ["gc", "--keep", "1", "--safe", "-f"])
     assert result.exit_code == 0, result.output
     assert result.output.rstrip().split("\n") == [
-        "⚠ Skipping 1 blob(s) (5 B) not present in any checked remote — push first or gc without --safe:",
+        "⚠ Skipping 1 blob(s) (5 B) not present in any checked remote — push first, or pass --unsafe:",
         f"  {junk_key[:12]}...  5 B",
         "Nothing to delete.",
     ]

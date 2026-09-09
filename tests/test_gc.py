@@ -340,7 +340,9 @@ def test_gc_cli_dry_run(tmp_path):
 
     os.chdir(repo)
     runner = CliRunner()
-    result = runner.invoke(cli, ["gc", "--keep", "1", "--dry"])
+    # --unsafe: exercise the raw retention plan without a remote (safe is the
+    # default on --keep now — see test_gc_keep_* below).
+    result = runner.invoke(cli, ["gc", "--keep", "1", "--dry", "--unsafe"])
     assert result.exit_code == 0
 
     # Output shape: "Would delete N blob(s) (<size>):" then one line per
@@ -353,3 +355,123 @@ def test_gc_cli_dry_run(tmp_path):
 
     # Blob should NOT be deleted (dry run)
     assert (cache_dir / "aa" / "aa1111bbbb2222cccc3333dddd4444").exists()
+
+
+# ── safe-by-default on the retention paths (specs/done/gc-safe-by-default-retention.md) ──
+
+_V1 = "aaaa1111bbbb2222cccc3333dddd4444"
+_V2 = "eeee5555ffff6666aaaa7777bbbb8888"
+_V3 = "cccc9999dddd0000eeee1111ffff2222"
+
+
+def _cli_repo_3_versions(tmp_path):
+    """A real git+dvc repo with 3 committed versions of ``d.txt.dvc`` (md5s
+    _V1→_V2→_V3, oldest→newest) and a cache blob on disk for each. Returns
+    ``(repo, cache_md5_dir)``; ``blob(md5)`` locates each."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for cmd in (
+        ["git", "init"],
+        ["git", "config", "user.email", "t@t.com"],
+        ["git", "config", "user.name", "T"],
+        ["dvc", "init"],
+    ):
+        subprocess.run(cmd, cwd=repo, capture_output=True, check=True)
+
+    for i, md5 in enumerate((_V1, _V2, _V3), 1):
+        dvc = {"outs": [{"md5": md5, "size": 100, "path": "d.txt"}]}
+        with open(repo / "d.txt.dvc", "w") as f:
+            yaml.dump(dvc, f)
+        subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
+        subprocess.run(["git", "commit", "-m", f"v{i}"], cwd=repo, capture_output=True, check=True)
+
+    cache_dir = repo / ".dvc" / "cache" / "files" / "md5"
+    for md5 in (_V1, _V2, _V3):
+        d = cache_dir / md5[:2]
+        d.mkdir(parents=True, exist_ok=True)
+        (d / md5[2:]).write_text("data")
+    return repo, cache_dir
+
+
+def _counts(output):
+    """(skipped, deleted) integer counts parsed from a gc run's output."""
+    import re
+    sk = re.search(r"Skipping (\d+) blob", output)
+    dl = re.search(r"Deleted (\d+) blob", output)
+    return (int(sk.group(1)) if sk else 0, int(dl.group(1)) if dl else 0)
+
+
+def test_gc_keep_safe_by_default_retains_local_only_blob(tmp_path, monkeypatch):
+    """`--keep` defaults to safe: a superseded version absent from the remote
+    is retained + reported, only the remote-backed one is deleted."""
+    from click.testing import CliRunner
+
+    from dvx.cli import cli
+
+    repo, cache_dir = _cli_repo_3_versions(tmp_path)
+    # Remote holds only _V1 (superseded, backed); _V2 (superseded) is local-only.
+    monkeypatch.setattr("dvx.comm.remote_objects", lambda r, fresh=False: {_V1})
+    os.chdir(repo)
+
+    result = CliRunner().invoke(cli, ["gc", "--keep", "1", "-f"])
+    assert result.exit_code == 0, result.output
+
+    def blob(md5):
+        return cache_dir / md5[:2] / md5[2:]
+
+    # _V1 deleted (backed), _V2 retained (local-only, skipped), _V3 kept (policy).
+    assert (blob(_V1).exists(), blob(_V2).exists(), blob(_V3).exists()) == (False, True, True)
+    assert _counts(result.output) == (1, 1)
+
+
+def test_gc_keep_unsafe_deletes_local_only_blob(tmp_path):
+    """`--unsafe` restores the pre-change behavior: every superseded version is
+    deleted regardless of remote membership (and needs no remote)."""
+    from click.testing import CliRunner
+
+    from dvx.cli import cli
+
+    repo, cache_dir = _cli_repo_3_versions(tmp_path)
+    os.chdir(repo)
+
+    result = CliRunner().invoke(cli, ["gc", "--keep", "1", "-f", "--unsafe"])
+    assert result.exit_code == 0, result.output
+
+    def blob(md5):
+        return cache_dir / md5[:2] / md5[2:]
+
+    assert (blob(_V1).exists(), blob(_V2).exists(), blob(_V3).exists()) == (False, False, True)
+    assert _counts(result.output) == (0, 2)
+
+
+def test_gc_keep_safe_default_requires_a_remote(tmp_path):
+    """Safe-by-default fails loud (deletes nothing) when no remote can be
+    verified, pointing at --unsafe — rather than silently deleting."""
+    import re
+
+    from click.testing import CliRunner
+
+    from dvx.cli import cli
+
+    repo, cache_dir = _cli_repo_3_versions(tmp_path)
+    os.chdir(repo)
+
+    result = CliRunner().invoke(cli, ["gc", "--keep", "1", "-f"])
+    assert result.exit_code == 1
+
+    normalized = re.sub(
+        r"could not verify a remote \(.*?\); push first",
+        "could not verify a remote (<err>); push first",
+        result.output,
+        flags=re.S,
+    )
+    assert normalized == (
+        "Error: gc is safe by default on --keep/--older-than and could not "
+        "verify a remote (<err>); push first, or pass --unsafe to delete "
+        "local-only blobs.\n"
+    )
+
+    def blob(md5):
+        return cache_dir / md5[:2] / md5[2:]
+
+    assert (blob(_V1).exists(), blob(_V2).exists(), blob(_V3).exists()) == (True, True, True)

@@ -146,6 +146,22 @@ cli.add_command(diff)
 # =============================================================================
 
 
+def _safe_remote_error(e, *, explicit):
+    """Message for a `--safe` remote check that couldn't run (no remote
+    configured, or unreachable — e.g. an expired SSO token).
+
+    When the user typed `--safe`, name that flag. When safe was the *default*
+    (a retention gc with no `--unsafe`), say so and point at the opt-out — the
+    whole point is to fail loud here instead of deleting local-only blobs.
+    """
+    if explicit:
+        return f"--safe: remote check failed: {e}"
+    return (
+        f"gc is safe by default on --keep/--older-than and could not verify a "
+        f"remote ({e}); push first, or pass --unsafe to delete local-only blobs."
+    )
+
+
 def _gc_delete(deletable, force, dry, skipped=None):
     """Shared print/confirm/delete tail for dvx-native gc paths.
 
@@ -157,7 +173,7 @@ def _gc_delete(deletable, force, dry, skipped=None):
         skipped_size = sum(s for _, s, _ in skipped)
         click.echo(
             f"⚠ Skipping {len(skipped)} blob(s) ({format_size(skipped_size)}) "
-            "not present in any checked remote — push first or gc without --safe:"
+            "not present in any checked remote — push first, or pass --unsafe:"
         )
         for md5, size, _path in sorted(skipped, key=lambda x: x[1], reverse=True)[:10]:
             click.echo(f"  {md5[:12]}...  {format_size(size)}")
@@ -208,11 +224,12 @@ def _gc_delete(deletable, force, dry, skipped=None):
 @click.option("-n", "--dry", is_flag=True, help="Dry run - show what would be removed.")
 @click.option("-o", "--older-than", help="Delete versions older than duration (e.g. 30d, 1w, 24h).")
 @click.option("-r", "--remote", help="Remote to gc / (with --safe) require membership in.")
-@click.option("-s", "--safe", is_flag=True, help="Only delete blobs present in a remote (skip + report the rest).")
+@click.option("-s", "--safe", is_flag=True, help="Only delete blobs present in a remote (skip + report the rest). Default on --keep/--older-than.")
 @click.option("--any-remote", is_flag=True, help="With --safe: membership in ANY configured remote suffices.")
 @click.option("-T", "--all-tags", is_flag=True, help="Keep cache for all tags.")
+@click.option("-U", "--unsafe", is_flag=True, help="Delete local-only blobs too (opt out of the default --safe on --keep/--older-than).")
 @click.option("-w", "--workspace", is_flag=True, help="Keep only cache for current workspace.")
-def gc(targets, all_branches, all_commits, cloud, force, jobs, keep, dry, older_than, remote, safe, any_remote, all_tags, workspace):
+def gc(targets, all_branches, all_commits, cloud, force, jobs, keep, dry, older_than, remote, safe, any_remote, all_tags, unsafe, workspace):
     """Garbage collect unused cache files.
 
     With --keep N or --older-than, uses version-aware retention: walks git
@@ -221,7 +238,11 @@ def gc(targets, all_branches, all_commits, cloud, force, jobs, keep, dry, older_
 
     With --safe, only blobs present in a remote (recoverable) are deleted;
     unpushed blobs are reported and skipped. Composes with all retention
-    policies.
+    policies, and is the **default** on the retention paths (--keep /
+    --older-than): those delete superseded versions, and a superseded version
+    that was never pushed is unrecoverable — so safe is on unless you pass
+    --unsafe. The DVC-scope paths (-w/-a/-A/-T without a retention policy)
+    still default to DVC's unsafe gc unless you pass --safe.
 
     Without --keep/--older-than/--safe, delegates to DVC's gc (requires -w,
     -a, -T, or -A).
@@ -229,14 +250,24 @@ def gc(targets, all_branches, all_commits, cloud, force, jobs, keep, dry, older_
     Examples:
         dvx gc -w                     # keep only workspace-referenced blobs
         dvx gc -w --safe              # …deleting only what the remote can restore
-        dvx gc --keep 5               # keep 5 most recent versions per artifact
+        dvx gc --keep 5               # keep 5 recent versions/artifact (safe by default)
+        dvx gc --keep 5 --unsafe      # …also delete versions absent from the remote
         dvx gc --older-than 30d       # delete versions older than 30 days
         dvx gc --keep 3 -a            # keep 3 newest, considering all branches
         dvx gc --dry --keep 5         # show what would be deleted
         dvx gc data.parquet.dvc       # GC specific artifact
     """
+    if safe and unsafe:
+        raise click.ClickException("--safe and --unsafe are mutually exclusive.")
+
+    # Retention paths (--keep/--older-than) delete superseded versions, so they
+    # default to safe (delete only remote-backed blobs) unless --unsafe. The
+    # DVC-scope paths keep their explicit-only --safe (DVC's default is unsafe).
+    retention = keep is not None or older_than is not None
+    use_safe = safe or (retention and not unsafe)
+
     safe_remotes = None
-    if safe:
+    if use_safe:
         from dvx.gc import cache_link_types
 
         if "symlink" in cache_link_types():
@@ -269,11 +300,11 @@ def gc(targets, all_branches, all_commits, cloud, force, jobs, keep, dry, older_
             raise click.ClickException(str(e)) from e
 
         skipped = None
-        if safe:
+        if use_safe:
             try:
                 deletable, skipped = partition_by_remote(deletable, safe_remotes, fresh=True)
             except Exception as e:
-                raise click.ClickException(f"--safe: remote check failed: {e}") from e
+                raise click.ClickException(_safe_remote_error(e, explicit=safe)) from e
 
         _gc_delete(deletable, force, dry, skipped=skipped)
         return
@@ -284,11 +315,12 @@ def gc(targets, all_branches, all_commits, cloud, force, jobs, keep, dry, older_
             "-A/--all-commits is required (or use --keep/--older-than)."
         )
 
-    if safe:
+    if use_safe:
         # Native safe GC: keep = referenced objects (with `.dir` manifests
         # expanded), deletable = local − keep, then delete only blobs a
         # remote can restore. Per-object skipping needs the dvx-native
-        # deletion path — DVC's gc is all-or-nothing.
+        # deletion path — DVC's gc is all-or-nothing. (use_safe == safe here:
+        # the DVC-scope paths only take this branch on an explicit --safe.)
         if all_tags:
             raise click.ClickException("--all-tags is not supported with --safe yet.")
 
