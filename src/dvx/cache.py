@@ -800,6 +800,48 @@ def find_dvc_files(
         ]
 
 
+def collect_dir_manifest_hashes(dvc_files: list[str]) -> tuple[list[str], int]:
+    """Collect the ``.dir`` manifest keys for directory outputs.
+
+    A directory output's ``.dvc`` records its manifest under
+    ``outs[i].md5`` (the bare hash, with ``is_dir`` set); the manifest
+    blob itself lives in the cache/remote under ``<md5>.dir``. This walks
+    the given ``.dvc`` files and returns the manifest keys to fetch,
+    without touching the (potentially huge) inner file blobs.
+
+    Args:
+        dvc_files: ``.dvc`` file paths to scan.
+
+    Returns:
+        ``(dir_hashes, n_nondir_outs)`` — ``dir_hashes`` are the
+        ``<md5>.dir`` keys (deduplicated, first-seen order preserved);
+        ``n_nondir_outs`` counts file outputs skipped (they have no
+        manifest, so ``--meta-only`` fetches nothing for them).
+    """
+    from pathlib import Path
+
+    from dvx.run.dvc_files import read_dvc_file
+
+    dir_hashes: list[str] = []
+    seen: set[str] = set()
+    n_nondir = 0
+    for dvc_file in dvc_files:
+        info = read_dvc_file(Path(dvc_file))
+        if info is None:
+            continue
+        for out in info.outs:
+            if not out.md5:
+                continue
+            if out.is_dir:
+                key = out.md5 + ".dir"
+                if key not in seen:
+                    seen.add(key)
+                    dir_hashes.append(key)
+            else:
+                n_nondir += 1
+    return dir_hashes, n_nondir
+
+
 def find_dvc_files_at_ref(ref: str, targets: list[str] | None = None) -> list[str]:
     """Find .dvc files at a specific git ref.
 

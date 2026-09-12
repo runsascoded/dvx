@@ -174,27 +174,94 @@ def push(targets, all_branches, all_commits, jobs, dry_run, remote, all_tags, ve
         raise click.ClickException(str(e)) from e
 
 
+def _pull_meta_only(
+    targets: list[str],
+    remote: str | None,
+    jobs: int | None,
+    dry_run: bool,
+    glob: bool,
+    ref: str | None,
+) -> None:
+    """Fetch only the ``.dir`` manifest blobs for directory outputs.
+
+    Resolves ``targets`` (or all ``.dvc`` files when none given) to their
+    directory-output manifest keys and fetches just those blobs — never
+    the inner file blobs or the payload data. Used to satisfy
+    manifest-derived dependency guards (e.g. a stage that depends on the
+    ``.dir`` manifests of upstream directories) without downloading data.
+    """
+    from dvx.cache import (
+        check_local_cache,
+        collect_dir_manifest_hashes,
+        find_dvc_files,
+        pull_hashes,
+    )
+
+    if ref:
+        raise click.ClickException("--meta-only does not support -R/--ref (worktree manifests only).")
+
+    dvc_files = find_dvc_files(targets or None, glob_pattern=glob)
+    if not dvc_files:
+        click.echo("Nothing to pull.")
+        return
+
+    dir_hashes, n_nondir = collect_dir_manifest_hashes(dvc_files)
+    skipped = "" if not n_nondir else f" ({n_nondir} non-dir out(s) skipped)"
+
+    if not dir_hashes:
+        click.echo(f"No directory manifests to pull{skipped}.")
+        return
+
+    already = sum(1 for h in dir_hashes if check_local_cache(h))
+    to_fetch = len(dir_hashes) - already
+
+    if dry_run:
+        if to_fetch:
+            click.echo(f"Would pull {to_fetch} manifest(s){skipped}:")
+            for key in dir_hashes:
+                if not check_local_cache(key):
+                    click.echo(f"  {key}")
+        else:
+            click.echo(f"Nothing to pull ({already} manifest(s) already cached){skipped}.")
+        return
+
+    try:
+        fetched = pull_hashes(dir_hashes, remote=remote, jobs=jobs)
+    except Exception as e:
+        raise click.ClickException(str(e)) from e
+    failed = to_fetch - fetched
+    click.echo(f"{fetched} manifest(s) fetched, {already} already cached{skipped}.")
+    if failed > 0:
+        raise click.ClickException(f"{failed} manifest(s) could not be fetched from the remote.")
+
+
 @click.command()
 @click.argument("targets", nargs=-1)
 @click.option("-a", "--all-branches", is_flag=True, help="Pull for all branches.")
 @click.option("-A", "--all-commits", is_flag=True, help="Pull for all commits.")
 @click.option("-f", "--force", is_flag=True, help="Force pull, overwriting local files.")
 @click.option("-j", "--jobs", type=int, help="Number of parallel jobs.")
+@click.option("-m", "--meta-only", is_flag=True, help="Fetch only directory `.dir` manifest blobs, not the inner data.")
 @click.option("-n", "--dry-run", is_flag=True, help="Show what would be pulled without pulling.")
 @click.option("-r", "--remote", help="Remote storage to pull from.")
 @click.option("-R", "--ref", help="Pull files as they existed at a specific git ref (fetch to cache only, no checkout).")
 @click.option("-T", "--all-tags", is_flag=True, help="Pull for all tags.")
 @click.option("--glob", is_flag=True, help="Enable globbing for targets.")
-def pull(targets, all_branches, all_commits, force, jobs, dry_run, remote, ref, all_tags, glob):
+def pull(targets, all_branches, all_commits, force, jobs, meta_only, dry_run, remote, ref, all_tags, glob):
     """Download tracked data from remote storage.
 
     By default, pulls files for current worktree state. Use -R/--ref to pull
     files as they existed at a specific git ref (to cache only, no checkout).
 
+    Use -m/--meta-only to fetch just the ``.dir`` manifest blobs for
+    directory outputs (not the inner data) — enough to satisfy
+    manifest-derived dependency guards without downloading the payload.
+
     Examples:
         dvx pull                     # Pull current worktree files
         dvx pull -R HEAD~5           # Pull files as of 5 commits ago
         dvx pull -R v1.0 data/       # Pull data/ files from tag v1.0
+        dvx pull -m --glob 's3/*.dvc' # Fetch dir manifests only
     """
     from dvx.cache import (
         _format_size,
@@ -202,6 +269,17 @@ def pull(targets, all_branches, all_commits, force, jobs, dry_run, remote, ref, 
         get_transfer_status_at_ref,
         pull_hashes,
     )
+
+    if meta_only:
+        _pull_meta_only(
+            targets=list(targets),
+            remote=remote,
+            jobs=jobs,
+            dry_run=dry_run,
+            glob=glob,
+            ref=ref,
+        )
+        return
 
     # Ref-specific pull mode
     if ref:

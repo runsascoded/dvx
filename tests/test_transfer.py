@@ -449,3 +449,131 @@ class TestDryRunDoesNotTransfer:
         cache_files = list(cache_dir.rglob("*")) if cache_dir.exists() else []
         file_count = len([f for f in cache_files if f.is_file()])
         assert file_count == 0
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# dvx pull --meta-only
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _cache_blobs(repo_path: Path) -> tuple[list[str], list[str]]:
+    """Return (dir_manifest_blobs, inner_file_blobs) present in the local cache.
+
+    Each is a list of ``<xx><rest>`` cache keys (``.dir`` suffix kept for
+    manifests). Splitting them lets a test assert meta-only fetched the
+    manifest but none of the payload blobs.
+    """
+    md5_dir = repo_path / ".dvc" / "cache" / "files" / "md5"
+    manifests: list[str] = []
+    inner: list[str] = []
+    if md5_dir.exists():
+        for blob in md5_dir.glob("*/*"):
+            if blob.is_file():
+                key = blob.parent.name + blob.name
+                (manifests if key.endswith(".dir") else inner).append(key)
+    return sorted(manifests), sorted(inner)
+
+
+@pytest.fixture
+def dvc_repo_with_dir(dvc_repo_with_remote):
+    """DVC repo tracking one directory (→ a ``.dir`` manifest) + one file.
+
+    Returns:
+        tuple: (repo_path, remote_path, dir_md5, n_inner) where ``dir_md5``
+        is the tracked directory's manifest hash (``<md5>.dir`` cache key)
+        and ``n_inner`` is the number of distinct inner file blobs.
+    """
+    repo_path, remote_path = dvc_repo_with_remote
+
+    data_dir = repo_path / "data"
+    data_dir.mkdir()
+    for name, content in [("a.txt", "aaa"), ("b.txt", "bbb"), ("c.txt", "ccc")]:
+        (data_dir / name).write_text(content)
+    (repo_path / "solo.txt").write_text("solo")
+
+    subprocess.run(["dvc", "add", "data"], cwd=repo_path, capture_output=True, check=True)
+    subprocess.run(["dvc", "add", "solo.txt"], cwd=repo_path, capture_output=True, check=True)
+    subprocess.run(["git", "add", "."], cwd=repo_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "add data"], cwd=repo_path, capture_output=True, check=True)
+
+    dvc_data = yaml.safe_load((repo_path / "data.dvc").read_text())
+    dir_md5 = dvc_data["outs"][0]["md5"]
+    assert dir_md5.endswith(".dir")
+
+    return repo_path, remote_path, dir_md5, 3
+
+
+class TestPullMetaOnly:
+    """Tests for `dvx pull --meta-only` (fetch dir manifests, not payload)."""
+
+    def _push_and_clear(self, repo_path):
+        subprocess.run(["dvc", "push"], cwd=repo_path, capture_output=True, check=True)
+        import shutil
+        cache_dir = repo_path / ".dvc" / "cache"
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
+
+    def test_meta_only_fetches_manifest_not_inner_blobs(self, runner, dvc_repo_with_dir):
+        """`pull -m data.dvc` fetches only the ``.dir`` blob, no inner file blobs."""
+        repo_path, _remote, dir_md5, _n = dvc_repo_with_dir
+        os.chdir(repo_path)
+        self._push_and_clear(repo_path)
+
+        result = runner.invoke(cli, ["pull", "-m", "data.dvc"])
+        assert result.exit_code == 0, f"output:\n{result.output}"
+        assert result.output.rstrip().split("\n") == ["1 manifest(s) fetched, 0 already cached."]
+
+        manifests, inner = _cache_blobs(repo_path)
+        assert manifests == [dir_md5]
+        assert inner == []
+
+    def test_meta_only_second_run_all_cached(self, runner, dvc_repo_with_dir):
+        """A second `pull -m` reports the manifest already cached, fetches nothing."""
+        repo_path, _remote, _dir_md5, _n = dvc_repo_with_dir
+        os.chdir(repo_path)
+        self._push_and_clear(repo_path)
+
+        runner.invoke(cli, ["pull", "-m", "data.dvc"])
+        result = runner.invoke(cli, ["pull", "-m", "data.dvc"])
+        assert result.exit_code == 0, f"output:\n{result.output}"
+        assert result.output.rstrip().split("\n") == ["0 manifest(s) fetched, 1 already cached."]
+
+    def test_meta_only_dry_run_lists_and_fetches_nothing(self, runner, dvc_repo_with_dir):
+        """`pull -m -n` lists the manifest key and leaves the cache empty."""
+        repo_path, _remote, dir_md5, _n = dvc_repo_with_dir
+        os.chdir(repo_path)
+        self._push_and_clear(repo_path)
+
+        result = runner.invoke(cli, ["pull", "-m", "-n", "data.dvc"])
+        assert result.exit_code == 0, f"output:\n{result.output}"
+        assert result.output.rstrip().split("\n") == [
+            "Would pull 1 manifest(s):",
+            f"  {dir_md5}",
+        ]
+        manifests, inner = _cache_blobs(repo_path)
+        assert (manifests, inner) == ([], [])
+
+    def test_meta_only_file_target_skips_nondir(self, runner, dvc_repo_with_dir):
+        """A file (non-dir) target has no manifest → skipped, nothing fetched."""
+        repo_path, _remote, _dir_md5, _n = dvc_repo_with_dir
+        os.chdir(repo_path)
+        self._push_and_clear(repo_path)
+
+        result = runner.invoke(cli, ["pull", "-m", "solo.txt.dvc"])
+        assert result.exit_code == 0, f"output:\n{result.output}"
+        assert result.output.rstrip().split("\n") == [
+            "No directory manifests to pull (1 non-dir out(s) skipped)."
+        ]
+        manifests, inner = _cache_blobs(repo_path)
+        assert (manifests, inner) == ([], [])
+
+    def test_meta_only_rejects_ref(self, runner, dvc_repo_with_dir):
+        """`pull -m -R <ref>` is rejected (worktree manifests only)."""
+        repo_path, _remote, _dir_md5, _n = dvc_repo_with_dir
+        os.chdir(repo_path)
+
+        result = runner.invoke(cli, ["pull", "-m", "-R", "HEAD", "data.dvc"])
+        assert result.exit_code != 0
+        assert result.output.rstrip().split("\n") == [
+            "Error: --meta-only does not support -R/--ref (worktree manifests only)."
+        ]
