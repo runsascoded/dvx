@@ -7,6 +7,70 @@ import click
 from dvx import Repo
 
 
+def _composed_transfer(
+    targets: list[str],
+    remote: str | None,
+    additional: tuple[str, ...],
+    command: str,
+    jobs: int | None,
+    dry_run: bool = False,
+    glob: bool = False,
+    verify: bool = False,
+    force: bool = False,
+    meta_only: bool = False,
+    unsupported: bool = False,
+) -> None:
+    from dvc.repo import Repo as DVCRepo
+    from dvc.utils import glob_targets
+
+    from dvx.cache import _format_size
+    from dvx.transfer import ComposedTransfer, TransferError
+
+    if unsupported:
+        raise click.ClickException(
+            "Cross-remote transfers do not support --all-branches, --all-commits, "
+            "--all-tags, or --ref. Use current-worktree targets."
+        )
+    direction = "push" if command == "push" else "pull"
+    try:
+        with DVCRepo() as repo, ComposedTransfer(repo, remote, additional, jobs) as transfer:
+            plan = transfer.plan(targets or None, direction, glob=glob, meta_only=meta_only)
+            action = "upload" if direction == "push" else "download"
+            pending = plan.classified(action)
+            size = _format_size(sum(blob.size or 0 for blob in pending))
+            qualifier = "" if all(blob.size is not None for blob in pending) else " known"
+            click.echo(f"{'Would ' if dry_run else ''}{action.capitalize() if not dry_run else action} "
+                       f"{len(pending)} blob(s) ({size}{qualifier}).")
+            if direction == "push":
+                click.echo(f"Already at {transfer.remotes[0].name}: "
+                           f"{len(plan.classified('destination'))} blob(s).")
+                for named in transfer.remotes[1:]:
+                    excluded = [blob for blob in plan.classified("excluded") if blob.remote == named.name]
+                    click.echo(f"Excluded via {named.name}: {len(excluded)} blob(s).")
+            else:
+                click.echo(f"Already cached: {len(plan.classified('local'))} blob(s).")
+            for blob in plan.blobs:
+                source = f" ({blob.remote})" if blob.remote else ""
+                click.echo(f"  {blob.action}{source}: {blob.oid}  {blob.path}")
+            click.echo(f"Errors: {len(plan.errors)}.")
+            if plan.errors:
+                raise TransferError("\n".join(plan.errors))
+            if dry_run:
+                return
+            count = transfer.execute(plan, direction)
+            click.echo(f"{count} blob(s) {'pushed' if direction == 'push' else 'fetched'}.")
+            if command == "pull" and not meta_only:
+                repo.drop_data_index()
+                repo.checkout(targets=glob_targets(targets, glob=glob) if targets else None,
+                              force=force, recursive=True)
+            if verify:
+                transfer.verify(plan)
+                names = ", ".join(named.name for named in transfer.remotes)
+                click.echo(f"Verified {len(plan.blobs)} blob(s) across remote union: {names}.")
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
 def _resolve_pull_targets(targets: list[str], glob: bool = False) -> list[str]:
     """Resolve pull targets to .dvc file paths.
 
@@ -64,12 +128,21 @@ def _resolve_pull_targets(targets: list[str], glob: bool = False) -> list[str]:
 @click.option("-T", "--all-tags", is_flag=True, help="Push for all tags.")
 @click.option("-V", "--verify", is_flag=True, help="Verify remote has correct data after push.")
 @click.option("--glob", is_flag=True, help="Enable globbing for targets.")
-def push(targets, all_branches, all_commits, jobs, dry_run, remote, all_tags, verify, glob):
+@click.option("--exclude-remote", multiple=True, help="Skip blobs present in this named remote (repeatable).")
+def push(targets, all_branches, all_commits, jobs, dry_run, remote, all_tags, verify, glob, exclude_remote):
     """Upload tracked data to remote storage.
 
     Use --verify to check that remote has the correct data after pushing.
     """
     from dvx.cache import _format_size, check_remote_cache_batch, get_transfer_status
+
+    if exclude_remote:
+        _composed_transfer(
+            list(targets), remote, exclude_remote, "push", jobs,
+            dry_run=dry_run, glob=glob, verify=verify,
+            unsupported=all_branches or all_commits or all_tags,
+        )
+        return
 
     if dry_run:
         status = get_transfer_status(
@@ -247,7 +320,8 @@ def _pull_meta_only(
 @click.option("-R", "--ref", help="Pull files as they existed at a specific git ref (fetch to cache only, no checkout).")
 @click.option("-T", "--all-tags", is_flag=True, help="Pull for all tags.")
 @click.option("--glob", is_flag=True, help="Enable globbing for targets.")
-def pull(targets, all_branches, all_commits, force, jobs, meta_only, dry_run, remote, ref, all_tags, glob):
+@click.option("--fallback-remote", multiple=True, help="Try this named remote after not-found (repeatable, ordered).")
+def pull(targets, all_branches, all_commits, force, jobs, meta_only, dry_run, remote, ref, all_tags, glob, fallback_remote):
     """Download tracked data from remote storage.
 
     By default, pulls files for current worktree state. Use -R/--ref to pull
@@ -269,6 +343,14 @@ def pull(targets, all_branches, all_commits, force, jobs, meta_only, dry_run, re
         get_transfer_status_at_ref,
         pull_hashes,
     )
+
+    if fallback_remote:
+        _composed_transfer(
+            list(targets), remote, fallback_remote, "pull", jobs,
+            dry_run=dry_run, glob=glob, force=force, meta_only=meta_only,
+            unsupported=all_branches or all_commits or all_tags or bool(ref),
+        )
+        return
 
     if meta_only:
         _pull_meta_only(
@@ -400,10 +482,27 @@ def pull(targets, all_branches, all_commits, force, jobs, meta_only, dry_run, re
 @click.option("-a", "--all-branches", is_flag=True, help="Fetch for all branches.")
 @click.option("-A", "--all-commits", is_flag=True, help="Fetch for all commits.")
 @click.option("-j", "--jobs", type=int, help="Number of parallel jobs.")
+@click.option("-n", "--dry-run", is_flag=True, help="Show what would be fetched without fetching.")
 @click.option("-r", "--remote", help="Remote storage to fetch from.")
 @click.option("-T", "--all-tags", is_flag=True, help="Fetch for all tags.")
-def fetch(targets, all_branches, all_commits, jobs, remote, all_tags):
+@click.option("--glob", is_flag=True, help="Enable globbing for targets.")
+@click.option("--fallback-remote", multiple=True, help="Try this named remote after not-found (repeatable, ordered).")
+def fetch(targets, all_branches, all_commits, jobs, dry_run, remote, all_tags, glob, fallback_remote):
     """Download tracked data to cache (without checkout)."""
+    if fallback_remote:
+        _composed_transfer(
+            list(targets), remote, fallback_remote, "fetch", jobs,
+            dry_run=dry_run, glob=glob,
+            unsupported=all_branches or all_commits or all_tags,
+        )
+        return
+    if dry_run:
+        raise click.ClickException("fetch --dry-run requires --fallback-remote")
+    if glob:
+        targets = _resolve_pull_targets(list(targets), glob=True)
+        if not targets:
+            click.echo("Nothing to fetch.")
+            return
     try:
         with Repo() as repo:
             fetched = repo.fetch(

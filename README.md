@@ -359,8 +359,26 @@ dvx pull data.parquet.dvc      # by .dvc path
 dvx pull njsp/data/            # all .dvc files in directory
 
 # Ref-specific operations
-dvx pull -r HEAD~3     # pull data as of 3 commits ago
+dvx pull -R HEAD~3     # fetch data as of 3 commits ago, without checkout
 ```
+
+To publish new contributor data to a staging cache while reusing a canonical cache:
+
+```bash
+dvx remote add public https://data.example.org/.dvc/cache
+dvx remote add staging s3://contributor-staging/.dvc/cache
+dvx push -r staging --exclude-remote public data/
+dvx push -n -r staging --exclude-remote public data/  # same plan, no uploads
+dvx push -V -r staging --exclude-remote public data/  # verify availability across the union
+dvx pull -r staging --fallback-remote public data/
+dvx fetch -r staging --fallback-remote public data/   # cache only, no checkout
+```
+
+`--exclude-remote` is repeatable: push skips blobs already at the destination or any exclusion remote. `--fallback-remote` is repeatable and ordered: pull/fetch use valid local cache first, then the primary remote, then the supplied fallbacks for each hash. This includes directory manifests and their children. HTTP remotes need object reads only; transfers never list the canonical cache or write to exclusion/fallback remotes.
+
+Only definite not-found permits fallback or upload. Permission, network, and server errors fail the command; downloaded content must match its MD5 before entering the cache. Failed plans upload nothing. Runtime transfer failures can leave successfully transferred blobs cached or uploaded, report the target incomplete, and prevent pull's checkout. Staging alone can be incomplete; consumers need staging plus canonical, and maintainers must separately verify and promote contributor data.
+
+Cross-remote flags support current-worktree targets, output paths, `.dvc` files, directories, `--glob`, and `--jobs`. Pull also supports `--force`, `--dry-run`, and `--meta-only`; fetch supports `--glob` and `--dry-run` with fallbacks. Combining cross-remote flags with `--all-branches`, `--all-commits`, `--all-tags`, or pull's `--ref` is rejected explicitly. Worktree/versioned remotes, non-MD5 outputs, and nested `.dir` references inside manifests are unsupported. Commands without cross-remote flags retain their existing transfer behavior.
 
 ### Garbage Collection
 
