@@ -222,6 +222,7 @@ dvx run --push each -P  # -P/--no-cache-push: git-push only, skip blob upload
 
 # Route cache reads (dep materialization) and writes (--push) at a named remote
 dvx run --remote scratch --push each -f
+dvx run --remote staging --fallback-remote public output.dvc
 ```
 
 With `--push each|end`, DVX does both `git push` and the equivalent of
@@ -236,6 +237,10 @@ of the default. That's what makes a full-DAG `--force` reproc safe to run:
 its regenerated blobs land in a scratch remote, the one production pulls
 from stays untouched, and `dvx cache comm remote:prod remote:scratch` then
 reports exactly which stages' outputs changed.
+
+`dvx run` compares a stage's recorded dependency stamps before demanding payloads. A current stage restores only its own missing outputs and stops at that boundary; a stale stage restores or rebuilds its required inputs. Changes behind a current artifact remain outside this non-transitive check. A definitely missing required cache object opens the producer's upstream graph; permission, transport, and integrity failures stop execution. Directory-member stamps need only their manifest. `--dry-run` fetches nothing and labels missing-result restores with unknown cache availability. `--no-prune-fresh` and `--force-upstream` retain their full graph walk.
+
+Run's repeatable `--fallback-remote` options apply to reads only, in supplied order after the primary remote. Downloads and probes share invocation-local decisions and per-hash locks; restored blobs must pass MD5 validation before entering the cache. Pushes still use the primary remote.
 
 When a single cmd produces multiple outputs (see [`docs/MULTI_OUTPUT.md`]),
 all co-outputs land in one commit and one batched cache push — the

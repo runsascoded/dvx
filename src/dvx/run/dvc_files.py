@@ -998,6 +998,7 @@ def is_output_fresh(
     check_deps: bool = True,
     use_mtime_cache: bool = True,
     info: DVCFileInfo | None = None,
+    allow_missing_outputs: bool = False,
 ) -> tuple[bool, str]:
     """Check if output is fresh (up-to-date with its .dvc file and deps).
 
@@ -1014,6 +1015,8 @@ def is_output_fresh(
         check_deps: Whether to verify dependencies (default: True)
         use_mtime_cache: Whether to use mtime cache for output hash (default: True)
         info: Pre-parsed DVCFileInfo (avoids re-reading .dvc file if already parsed)
+        allow_missing_outputs: Check recorded currency without requiring payloads.
+            Present outputs still undergo the normal local-change check.
 
     Returns:
         Tuple of (is_fresh, reason)
@@ -1037,6 +1040,8 @@ def is_output_fresh(
         for out in info.outs:
             out_path = dvc_dir / out.path
             if not out_path.exists():
+                if allow_missing_outputs and out.md5:
+                    continue
                 if len(info.outs) > 1:
                     return False, f"output missing: {out.path}"
                 return False, "output missing"
@@ -1069,8 +1074,25 @@ def is_output_fresh(
             # Try to read dep's .dvc file
             dep_info = read_dvc_file(dep)
             if dep_info is None:
+                if allow_missing_outputs:
+                    producer = find_producer(dep)
+                    producer_info = read_dvc_file(producer) if producer is not None else None
+                    declared = next((
+                        out.md5 for out in producer_info.outs
+                        if (producer.parent / out.path).resolve() == dep.resolve()
+                    ), None) if producer_info else None
+                    if declared is not None:
+                        if declared != recorded_md5:
+                            return False, f"dep changed: {dep_path}"
+                        continue
                 # No .dvc file - dep might be a raw file
                 if not dep.exists():
+                    if allow_missing_outputs:
+                        member = get_file_hash_from_dir(dep)
+                        if member is not None:
+                            if member[0] != recorded_md5:
+                                return False, f"dep changed: {dep_path}"
+                            continue
                     return False, f"dep missing: {dep_path}"
                 # Raw file exists — compute actual hash and compare
                 try:
@@ -1354,6 +1376,32 @@ def find_parent_dvc_dir(file_path: Path) -> tuple[Path, str] | None:
         rel_parts.append(current.name)
         current = current.parent
 
+    return None
+
+
+def find_producer(dep: Path) -> Path | None:
+    """Find a dependency's own, parent-directory, or multi-output sidecar."""
+    from os.path import relpath
+
+    if Path(f"{dep}.dvc").exists():
+        return dep
+    parent = find_parent_dvc_dir(dep)
+    if parent:
+        return parent[0] if dep.is_absolute() else Path(relpath(parent[0]))
+    wanted = dep.resolve()
+    for directory in [dep.parent, *dep.parent.parents]:
+        for sidecar in sorted(directory.glob("*.dvc")):
+            if not sidecar.is_file():
+                continue
+            info = read_dvc_file(sidecar)
+            if not info:
+                continue
+            for out in info.outs:
+                output = (sidecar.parent / out.path).resolve()
+                if output == wanted or (out.is_dir and output in wanted.parents):
+                    return Path(str(sidecar)[:-4])
+        if directory.resolve() == Path.cwd():
+            break
     return None
 
 

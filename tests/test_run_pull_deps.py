@@ -257,13 +257,13 @@ def test_fresh_clone_dep_inside_tracked_dir_materializes(runner, repo_with_remot
     result = runner.invoke(cli, ["run", "out.txt.dvc"])
     assert result.exit_code == 0, result.output
 
-    # Zero cmds executed; the stage (and its dep closure) was materialized
-    # from the remote.
+    # Restore the current result; its dep stamp needs only the directory
+    # manifest. Ancestor payloads stay absent under adaptive materialization.
     assert _stage_status_lines(result.output) == ["  ○ out.txt: fetched (up-to-date)"]
     assert _summary_line(result.output, "Executed") == 0
     assert _summary_line(result.output, "Skipped") == 1
     assert (repo / "out.txt").read_text() == "hi\n"
-    assert (repo / "data" / "input.txt").read_text() == "hi\n"
+    assert (repo / "data").exists() is False
 
 
 def test_fresh_clone_parallel_wide_level_zero_cmds(runner, repo_with_remote):

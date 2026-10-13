@@ -1,0 +1,69 @@
+# Adaptive `dvx run`: prune recorded-current stages before fetching upstream payloads
+
+From `hccs/crashes`, 2026-10-13. Requested by Ryan following an audit of unnecessary daily GHA downloads. Implement in DVX; the crashes agent will update its DVX pin and remove remaining explicit pre-pulls after receiving the implementation SHA and verification results.
+
+Status: implemented 2026-10-13. This completed spec accompanies the adaptive materialization implementation commit, which depends on the preceding cross-remote transfer commit. Downstream pinning and the production workflow run remain with the crashes agent.
+
+## Problem and evidence
+
+`dvx run` already auto-pulls by default, but it is not sufficiently selective on a fresh checkout. In the crashes pin `39062ef09` and the inspected DVX HEAD `93e790a6c`, `executor.run()` builds an upstream graph before `_should_run()` materializes missing outputs. Its `prune_here` uses `is_output_fresh()`, which returns `output missing` before examining dependency stamps. Every absent output therefore opens another upstream edge during planning. Execution then proceeds upstream first and fetches artifacts that would have been unnecessary if a downstream recorded-current artifact had been recognized first.
+
+This is distinct from the existing [fresh-artifact pruning] and [auto-pull] fixes: together they avoid some recomputations, but do not guarantee minimal transfers from a fresh checkout. Existing assertions that `Executed: 0` are insufficient to detect it.
+
+The crashes daily workflow explicitly pre-pulls combined NJDOT/AASHTO outputs so the planner can stop upstream traversal. It also had a redundant block pulling 2023–2025 per-year normalized Parquets and raw `Crash.csv` files. We removed that latter block locally. The three CSVs total 2,079,281,107 bytes, and the per-year Parquets add approximately 199 MB. These CSVs were served without HTTP content encoding. Keeping a fresh combined output should avoid downloading those normalization ancestors entirely; deleting all project-side pre-pulls currently risks bringing that transfer cost back through auto-pull.
+
+## Contract
+
+Preserve DVX's documented non-transitive freshness contract: a stage's recorded dependency hashes are compared with the dependency outputs declared in their `.dvc` metadata. A dependency payload need not exist locally to establish that comparison. Raw, untracked dependencies and git dependencies retain their existing validation rules. Scheduled fetches must retain their due/not-due behavior.
+
+Distinguish whether a stage's recorded result is current from whether its payload is materialized. Missing payload alone must not cause upstream payload traversal. A recorded-current stage is a boundary: trust its stamps, materialize its own outputs when required, and leave its ancestors unmaterialized. A genuinely stale stage needs its current declared inputs, and only those inputs and any necessary upstream rebuilds should be resolved.
+
+For a chain `raw.csv -> normalized.parquet -> combined.parquet -> export.parquet`, running a recorded-current `export.parquet` from a checkout with no local data or cache should fetch only the export's output blobs. It must not fetch `combined.parquet`, `normalized.parquet`, or `raw.csv` just to validate the export. If the export is stale while combined is recorded-current, fetch combined, rebuild export, and stop before normalized/raw. These boundaries intentionally do not validate transitive changes behind a recorded-current artifact; that is the established contract, not a new recursive freshness policy.
+
+## Required behavior
+
+1. Resolve requested targets from their recorded state before eagerly scheduling or fetching all ancestors. A metadata-only freshness classifier, demand-driven graph expansion, or equivalent implementation is fine. Avoid simply moving a full closure pull to an earlier phase.
+2. If a result is recorded-current and its outputs are missing, restore those outputs from validated local cache or the selected remote. On success, skip the command and prune the upstream chain. Already-materialized outputs must still be checked for local changes under the existing rules.
+3. If a result is stale, do not download its obsolete output merely to discover its dependency stamps are stale. Resolve the current inputs needed for its command. Restore recorded-current inputs without materializing their ancestors; rebuild stale inputs as necessary in dependency order. Re-evaluate affected downstream decisions after an upstream rebuild changes its output stamps.
+4. When a required recorded output is definitively absent from available caches/remotes, expand its upstream graph and rebuild if it has a command. A required source without a producer must fail with a clear missing-artifact error. Transport, permission, and integrity failures must fail rather than masquerading as absence or triggering a blind recomputation.
+5. Preserve explicit target intent across multiple targets and shared dependencies: pruning one consumer must not drop another explicitly requested node. Handle co-outputs, multi-output `.dvc` files, side-effect stages, and tracked directories using the existing output/provenance model. A side-effect stage that is already fresh should fetch no payloads; a stale one must materialize its declared inputs before running.
+6. Preserve established behavior of `--cached`, `--force`, `--force-upstream`, `--no-prune-fresh`, `--no-pull-deps`, named remotes, and Batch entry points. This spec does not redefine force scope; coordinate with the separate [parallel materialization / Batch flags] spec if its flag semantics change. Forced stages still need their declared inputs before execution.
+7. Keep `--dry-run` non-mutating: report restore/rebuild/unknown-cache-availability decisions without fetching payloads, writing worktree/cache files, running commands, or committing/pushing. Avoid promising remote availability without evidence. `dvx status` can remain a broader audit; do not make routine status checks pull payloads.
+8. Reuse the cache materialization path, including its atomic writes, validation and concurrency protections. Avoid one DVC `Repo` per node or repeatedly fetching/checking a shared hash. Coordinate with the in-progress cross-remote transfer work so adaptive reads honor any supported remote fallback configuration and distinguish absence from errors.
+
+## Regression tests and acceptance
+
+Use small local-remote fixtures and record actual payload fetches/checkouts and executed commands. Assert exact normalized/sorted lists of fetched hashes or artifact paths and commands, rather than just summary counts or substring assertions. Add the principal regression before the fix and show it fails on current code.
+
+- Fresh chain, empty worktree/cache: request only the terminal recorded-current output; fetched payloads equal exactly its output blobs, commands equal `[]`, and ancestor payloads remain absent.
+- Stale terminal stage, current intermediate: fetched payloads equal the required intermediate outputs; only the terminal command executes. Neither its obsolete output nor deeper ancestors are fetched.
+- Missing terminal blob: rebuild it from the nearest available current intermediate; fetch exactly that intermediate, execute only the terminal command, leave deeper ancestors absent.
+- Stale intermediate with a changed raw tracked input: resolve the current raw input, rebuild intermediate then terminal, and record the new dependency stamps. Exact command order must reflect the dependency graph.
+- Shared input plus multiple explicit targets: resolve shared hashes once; a fresh consumer does not erase another target's requested work. Test at `-j 1` and a parallel setting.
+- Fresh and stale side-effect stages, multi-output stages/co-outputs, and tracked-directory inputs: verify complete required output closure and no unrelated upstream pulls. Fetching a whole tracked directory when it is actually required is acceptable; do not fetch it for an already-current consumer solely to establish tracked dependency freshness.
+- Missing blob versus transport/auth/integrity failures: only definite absence enables rebuild; errors leave commands unexecuted and produce a precise failure.
+- Relevant flag combinations and dry-run: preserve existing flag intent; dry-run leaves cache/worktree/provenance unchanged and records no payload fetches or commands.
+
+A reusable integration check should model the crashes shape (raw CSV -> per-year normalized artifacts -> combined artifact -> stale daily consumer). With no pre-pull step, the consumer should restore the recorded-current combined artifact and rebuild successfully, while per-year Parquets and CSVs remain absent. No production downloads are needed to reproduce this.
+
+## Handoff and rollout
+
+Commit this initial spec before implementation per the cross-project spec workflow. After implementation, update it with the final semantics and test results, move it to `specs/done/`, and send the crashes agent the commit SHA and any limitations. Leave changes to `/Users/ryan/c/hccs/crashes` to its agent.
+
+The crashes rollout will bump `pyproject.toml` / `uv.lock`, audit declared inputs for commands that currently rely on undeclared files from pre-pulls, remove the remaining workaround pulls, and dispatch/watch the daily workflow. Undeclared command inputs are a separate project metadata issue; DVX cannot infer arbitrary file accesses. Success means both a passing daily run and logs/transfer evidence showing the unnecessary normalization inputs were not fetched.
+
+## Implementation report
+
+- Added `allow_missing_outputs` to `is_output_fresh`, preserving the default behavior used by status. Adaptive run classifies recorded dependency/git/schedule currency while checking any already-present output for local changes. Tracked dependency payloads are unnecessary for this comparison. Multi-output dependency stamps resolve through their owning sidecar; tracked-directory member stamps resolve through a verified manifest.
+- `executor.run` stops graph expansion at recorded-current boundaries whose required output closure is available. Planning probes candidate objects and fetches only needed directory manifests, never a full ancestor payload closure. Definitive absence expands the producer graph. Stale nodes do not restore their obsolete outputs. Producer ordering edges support directory-member and multi-output dependencies without changing the declared provenance paths, and provisional leaves still upgrade when another consumer or explicit target needs a real node.
+- `MaterializationSession` shares strict candidate probes, not-found decisions, failures, and per-hash restoration locks across planning and execution. It reuses the existing lock-free atomic fetch/checkout path. Downloads now undergo MD5 validation before atomic cache replacement; non-not-found errors cannot be downgraded through a subsequent existence test. Invalid/incomplete directory manifests fail, and directory payloads are checked out only after the whole required closure is fetched. A known-incomplete directory is rebuilt without downloading its surviving obsolete children.
+- Run accepts repeatable ordered `--fallback-remote` options for reads; `ExecutionConfig.fallback_remotes` exposes the same behavior to executor callers. The primary named remote remains the only cache-write destination. Probes and manifest validation share the helpers introduced by cross-remote transfer work.
+- Preserved force semantics over scheduled computations, cached-pattern precedence, full traversal for `--force-upstream`/`--no-prune-fresh`, and local-only execution with `--no-pull-deps`. Forced computations materialize their declared inputs; unavailable inputs open their producers as necessary. Required inputs without available data or a producer fail before invoking their consumer command. Existing Batch entry points continue to call the same run implementation.
+- Dry-run performs no payload/manifest downloads, commands, cache/worktree/provenance writes, commits, or pushes. It distinguishes rebuilds from missing-result restoration with unknown availability; directory-member currency remains unknown if its manifest is absent or invalid locally. Known materialization failures are failures in a dry-run too.
+- TFFP evidence: `test_fresh_terminal_restores_only_its_own_output` failed on the original code, downloading normalized, combined, and export blobs instead of exactly export. The same test passes after the fix. `tmp/test-adaptive-before.log` records the failing run. Fixtures also prove a stale crashes-shaped daily consumer restores only the combined artifact and executes only its own command, leaving normalized and raw inputs absent.
+- Validation: the isolated staged snapshot passed the full suite: 472 tests passed, with 4 opt-in S3 tests skipped on Python 3.13. The run used `ulimit -n 4096` for the pre-existing 100-trial SQLite cold-start stress test, which independently exhausts macOS's default 256-file limit. New files pass Ruff; comparison with the original HEAD found no additional lint findings in the modified existing core files. `git diff --check` passes. All fixtures are tiny local stores or loopback HTTP; no production downloads are required.
+- Rollout boundary: no changes were made in `/Users/ryan/c/hccs/crashes`. Its agent must pin this implementation commit, audit undeclared command inputs, remove workaround pre-pulls, and dispatch/watch the daily workflow to obtain production transfer evidence. The legacy in-memory `artifact.materialize` helper is separate from this `executor.run`/CLI/Batch planning path.
+
+[fresh-artifact pruning]: walk-upstream-overreach-when-direct-deps-fresh.md
+[auto-pull]: run-auto-pull.md
+[parallel materialization / Batch flags]: ../parallel-materialize.md

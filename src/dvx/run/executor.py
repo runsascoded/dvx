@@ -14,8 +14,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
 
+from dvx.cache import MaterializationSession, MaterializeError
 from dvx.run.artifact import Artifact
-from dvx.run.dvc_files import is_output_fresh, write_dvc_file
+from dvx.run.dvc_files import find_producer, is_output_fresh, write_dvc_file
 from dvx.run.hash import compute_file_size, compute_md5
 
 
@@ -55,6 +56,7 @@ class ExecutionConfig:
     # write somewhere other than the remote prod serves from; see
     # specs/done/run-remote-flag.md.
     remote: str | None = None
+    fallback_remotes: tuple[str, ...] = ()
     # Stop traversing upstream once a fresh artifact is reached. Default True;
     # auto-disabled when --force-upstream patterns are set (we have to walk to
     # find pattern matches).
@@ -147,7 +149,10 @@ def _matches_patterns(path: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(path, p) for p in patterns)
 
 
-def _group_into_levels(artifacts: list[Artifact]) -> list[list[Artifact]]:
+def _group_into_levels(
+    artifacts: list[Artifact],
+    ordering_deps: dict[str, set[str]] | None = None,
+) -> list[list[Artifact]]:
     """Group artifacts into execution levels for parallel execution.
 
     Artifacts in the same level have no dependencies on each other
@@ -189,6 +194,9 @@ def _group_into_levels(artifacts: list[Artifact]) -> list[list[Artifact]]:
                             deps_done = False
                             break
 
+                if deps_done and ordering_deps:
+                    deps_done = ordering_deps.get(artifact.path, set()) <= done
+
                 if deps_done:
                     ready.append(artifact)
                 else:
@@ -227,6 +235,11 @@ class ParallelExecutor:
         self.artifacts = artifacts
         self.config = config or ExecutionConfig()
         self.output = output or sys.stderr
+        self._materialization = MaterializationSession(
+            self.config.remote, self.config.fallback_remotes,
+        )
+        self._planning_errors: dict[str, str] = {}
+        self._ordering_deps: dict[str, set[str]] = {}
 
         # Serializes the per-stage git critical section (`git add -u` →
         # `commit` → `push`). Under level-parallelism (`-j>1`) sibling stages
@@ -301,7 +314,7 @@ class ParallelExecutor:
             List of ExecutionResult for each artifact
         """
         # Group into levels
-        levels = _group_into_levels(self.artifacts)
+        levels = _group_into_levels(self.artifacts, self._ordering_deps)
 
         # Filter out leaf nodes (no computation)
         levels = [[a for a in level if a.computation is not None] for level in levels]
@@ -327,17 +340,26 @@ class ParallelExecutor:
             for level in levels:
                 for artifact in level:
                     from dvx.cache import MaterializeError
+                    success = True
                     try:
                         should_run, reason = self._should_run(artifact)
                     except MaterializeError as e:
-                        should_run, reason = True, f"materialization failed: {e}"
-                    status = "would run" if should_run else f"skip ({reason})"
+                        success = False
+                        should_run, reason = False, f"materialization failed: {e}"
+                    if not success:
+                        status = f"fail ({reason})"
+                    elif reason == "restore required (cache availability unknown)":
+                        status = "would restore (cache availability unknown)"
+                    elif reason.startswith("recorded currency unknown"):
+                        status = reason
+                    else:
+                        status = "would run" if should_run else f"skip ({reason})"
                     self._log(f"  {artifact.path}: {status}")
                     results.append(
                         ExecutionResult(
                             path=artifact.path,
-                            success=True,
-                            skipped=not should_run,
+                            success=success,
+                            skipped=success and not should_run,
                             reason=reason,
                         )
                     )
@@ -407,7 +429,7 @@ class ParallelExecutor:
                 continue
             for dep in artifact.computation.deps:
                 dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
-                if Path(dep_path).exists() or Path(f"{dep_path}.dvc").exists():
+                if Path(dep_path).exists() or find_producer(Path(dep_path)) is not None:
                     continue
                 self._log(
                     f"⚠ {artifact.path}: dep {dep_path!r} matches no .dvc file and "
@@ -426,76 +448,41 @@ class ParallelExecutor:
         if _matches_patterns(path, self.config.cached_patterns):
             return False, "cached by pattern"
 
+        if path in self._planning_errors:
+            raise MaterializeError(self._planning_errors[path])
+
         # Check force
         if self.config.force or _matches_patterns(path, self.config.force_patterns):
             return True, "forced"
 
         # Check freshness
-        fresh, reason = is_output_fresh(Path(path))
-        if fresh:
+        fresh, reason = _recorded_state(Path(path), self.config, self._materialization)
+        if not fresh:
+            if reason.startswith("dep missing") and self.config.pull_deps and not self._missing_dep_pull_targets(path):
+                fresh, newer_reason = _recorded_state(Path(path), self.config, self._materialization)
+                if fresh:
+                    return False, f"fetched ({newer_reason})"
+            return not reason.startswith("recorded currency unknown"), reason
+        from dvx.run.dvc_files import read_dvc_file
+
+        info = read_dvc_file(Path(path))
+        missing_output = info and not info.is_side_effect and any(
+            not (Path(path).parent / out.path).exists() for out in info.outs
+        )
+        if not missing_output:
             return False, reason
-
-        # Materialization pre-pass: try fetching recorded state from the
-        # remote cache before falling back to a rerun. Two triggers, looped
-        # because resolving one can surface the other (e.g. pulling the
-        # stage's own output re-classifies it as "dep missing" when the dep
-        # lives inside a tracked dir that's not in the plan):
-        #
-        # - "output missing[: <name>]" — pull the stage's own .dvc targets
-        #   (see specs/done/run-auto-pull.md).
-        # - "dep missing: <path>" — pull the absent dep file(s) by recorded
-        #   hash: via the dep's own .dvc, or its parent tracked-dir .dvc for
-        #   files inside tracked directories
-        #   (see specs/done/batch-run-command-cli-mismatch.md §3).
-        #
-        # Invariant this preserves: on a fresh clone whose recorded closure
-        # exists in the remote, `dvx run <target>` executes zero cmds.
-        if self.config.pull_deps:
-            # Bounded: each iteration must make progress (a successful pull
-            # that changes the freshness reason) or we bail to the rerun.
-            for _ in range(4):
-                if reason.startswith("output missing"):
-                    # Skip placeholder .dvc files (no recorded md5 yet —
-                    # nothing to fetch and `repo.pull` would slow the run
-                    # unnecessarily).
-                    from dvx.run.dvc_files import read_dvc_file
-                    info = read_dvc_file(Path(path))
-                    if info is None or not any(o.md5 for o in info.outs):
-                        break
-                    if not self._try_materialize_from_remote([f"{path}.dvc"], label=path):
-                        break
-                elif reason.startswith("dep missing"):
-                    targets = self._missing_dep_pull_targets(path)
-                    if not targets:
-                        # No pullable targets for the missing deps. Under
-                        # parallelism this is often benign: a sibling stage
-                        # sharing a tracked dep dir materialized it between
-                        # our freshness check and here, so `_missing_dep_pull_
-                        # targets` sees every dep already on disk and returns
-                        # nothing. Re-check freshness before bailing — the
-                        # stage may now be fresh (concurrent materialization),
-                        # and rerunning it would violate the zero-cmd
-                        # fresh-clone invariant. Only a genuinely unpullable
-                        # dep (raw file, no .dvc, still absent) falls through.
-                        fresh2, reason2 = is_output_fresh(Path(path))
-                        if fresh2:
-                            return False, f"fetched ({reason2})"
-                        break
-                    if not self._try_materialize_from_remote(targets, label=path):
-                        break
-                else:
-                    break
-                fresh2, reason2 = is_output_fresh(Path(path))
-                if fresh2:
-                    return False, f"fetched ({reason2})"
-                if reason2 == reason:
-                    # Pull "succeeded" but nothing changed — avoid spinning.
-                    break
-                # Keep the most recent (most accurate) classification for
-                # the next iteration / the rerun log line.
-                reason = reason2
-
-        return True, reason
+        if self.config.dry_run:
+            return False, "restore required (cache availability unknown)"
+        targets = [f"{path}.dvc"]
+        if (
+            self.config.pull_deps
+            and self._materialization.available(targets)
+            and self._try_materialize_from_remote(targets, label=path)
+        ):
+            fresh, reason = _recorded_state(Path(path), self.config, self._materialization)
+            if fresh:
+                return False, f"fetched ({reason})"
+        return True, "output missing"
 
     def _missing_dep_pull_targets(self, path: str) -> list[str]:
         """Pull targets for a stage's absent dep files.
@@ -532,6 +519,10 @@ class ParallelExecutor:
                 parent_dvc = f"{parent_dir}.dvc"
                 if parent_dvc not in targets:
                     targets.append(parent_dvc)
+                continue
+            producer = find_producer(dep)
+            if producer is not None:
+                targets.append(f"{producer}.dvc")
         return targets
 
     def _try_materialize_from_remote(self, targets: list[str], label: str) -> bool:
@@ -549,15 +540,16 @@ class ParallelExecutor:
         from dvx.cache import MaterializeError, materialize_targets
 
         try:
-            ok, missing = materialize_targets(targets, remote=self.config.remote)
+            ok, missing = materialize_targets(
+                targets, remote=self.config.remote, session=self._materialization,
+            )
         except MaterializeError:
             raise
         except Exception as e:
-            # Repo-less contexts (no .dvc dir, no remote configured) land
-            # here — not materializable, fall through to rerun.
+            # Unknown failures are not evidence that a rebuild is needed.
             if self.config.verbose:
                 self._log(f"    ↓ {label}: materialize failed ({e})")
-            return False
+            raise MaterializeError(f"could not materialize {label}: {e}") from e
         if not ok and self.config.verbose:
             self._log(f"    ↓ {label}: not in remote ({', '.join(missing[:3])})")
         return ok
@@ -651,7 +643,7 @@ class ParallelExecutor:
         from dvx.cache import MaterializeError
         try:
             should_run, reason = self._should_run(artifact)
-            if should_run and cmd and self.config.pull_deps:
+            if should_run and cmd:
                 # Execution-time dep materialization: a genuinely-stale (or
                 # forced) stage may have declared dep files absent from the
                 # workspace — the upstream can be out of the plan (pruned,
@@ -663,8 +655,17 @@ class ParallelExecutor:
                 # cmd then fails on its own terms.
                 # See specs/done/parallel-pull-lock-contention.md (run 5).
                 dep_targets = self._missing_dep_pull_targets(path)
-                if dep_targets:
+                if dep_targets and self.config.pull_deps:
                     self._try_materialize_from_remote(dep_targets, label=path)
+                from dvx.run.dvc_files import read_dvc_file
+                missing = []
+                for dep in artifact.computation.deps:
+                    dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
+                    dep_info = read_dvc_file(Path(dep_path))
+                    if not Path(dep_path).exists() and not (dep_info and dep_info.is_side_effect):
+                        missing.append(dep_path)
+                if missing:
+                    raise MaterializeError(f"missing required artifact(s): {', '.join(missing)}")
         except MaterializeError as e:
             self._log(f"  ✗ {path}: materialization failed ({e})")
             return ExecutionResult(
@@ -1437,6 +1438,55 @@ class ParallelExecutor:
             )
 
 
+def _recorded_state(
+    path: Path,
+    config: ExecutionConfig,
+    session: MaterializationSession,
+) -> tuple[bool, str]:
+    """Classify currency from stamps, validating any already-present output.
+
+    A dep inside a tracked directory needs only its directory manifest to
+    establish its stamp. Dry-run leaves an unavailable manifest unknown.
+    """
+    from dvx.run.dvc_files import find_parent_dvc_dir, read_dvc_file
+
+    info = read_dvc_file(path)
+    if info and config.pull_deps:
+        for dep_path in info.deps:
+            dep = Path(dep_path)
+            if dep.exists() or Path(f"{dep}.dvc").exists():
+                continue
+            parent = find_parent_dvc_dir(dep)
+            if parent is None:
+                continue
+            parent_info = read_dvc_file(parent[0])
+            if not parent_info or not parent_info.md5:
+                continue
+            if config.dry_run:
+                from dvx.cache import get_cache_path_from_hash
+                from dvx.run.dvc_files import get_file_hash_from_dir
+                from dvx.transfer import TransferError, _valid_blob, read_manifest_entries
+
+                oid = parent_info.md5 + ".dir"
+                cached = Path(get_cache_path_from_hash(oid, absolute=True))
+                if not _valid_blob(cached, oid):
+                    return False, "recorded currency unknown (directory manifest unavailable)"
+                try:
+                    read_manifest_entries(cached, oid)
+                except TransferError as exc:
+                    raise MaterializeError(str(exc)) from exc
+                if get_file_hash_from_dir(dep) is None:
+                    return False, "recorded currency unknown (directory manifest unavailable)"
+            elif not session.fetch(parent_info.md5 + ".dir"):
+                return False, f"dep missing: {dep_path}"
+    return is_output_fresh(
+        path,
+        use_mtime_cache=not config.dry_run,
+        info=info,
+        allow_missing_outputs=config.pull_deps,
+    )
+
+
 def run(
     targets: list[Path],
     config: ExecutionConfig | None = None,
@@ -1473,6 +1523,9 @@ def run(
     # walk to discover which upstream artifacts to force.
     cfg = config or ExecutionConfig()
     prune_fresh = cfg.prune_fresh and not cfg.force_patterns
+    session = MaterializationSession(cfg.remote, cfg.fallback_remotes)
+    planning_errors: dict[str, str] = {}
+    ordering_deps: dict[str, set[str]] = {}
 
     while pending:
         target = pending.pop(0)
@@ -1501,17 +1554,40 @@ def run(
         # any further-upstream state is irrelevant to anything downstream that's
         # already up-to-date. Add deps as bare leaves so _group_into_levels
         # treats them as already satisfied.
-        prune_here = (
-            prune_fresh
-            and artifact.computation is not None
-            and is_output_fresh(output_path)[0]
-        )
+        prune_here = False
+        cached = _matches_patterns(output_str, cfg.cached_patterns)
+        forced = cfg.force or _matches_patterns(output_str, cfg.force_patterns)
+        if prune_fresh and artifact.computation is not None:
+            try:
+                current, reason = (True, "cached by pattern") if cached else _recorded_state(output_path, cfg, session)
+                prune_here = current or cached or (cfg.dry_run and reason.startswith("recorded currency unknown"))
+                if prune_here and not cached and not forced and not cfg.dry_run:
+                    from dvx.run.dvc_files import read_dvc_file
+                    info = read_dvc_file(output_path)
+                    missing_outputs = info and not info.is_side_effect and any(
+                        not (output_path.parent / out.path).exists() for out in info.outs
+                    )
+                    if missing_outputs:
+                        prune_here = session.available([f"{output_str}.dvc"])
+            except MaterializeError as exc:
+                # A broken remote cannot justify opening an upstream rebuild.
+                planning_errors[output_str] = str(exc)
+                prune_here = True
 
         # Queue dependencies
         if artifact.computation:
             for dep in artifact.computation.deps:
                 dep_path = dep.path if isinstance(dep, Artifact) else str(dep)
-                if prune_here:
+                producer = None
+                need_producer = not prune_here
+                if prune_here and forced and not cached and cfg.pull_deps and not cfg.dry_run and not Path(dep_path).exists():
+                    producer = find_producer(Path(dep_path))
+                    if producer:
+                        try:
+                            need_producer = not session.available([f"{producer}.dvc"])
+                        except MaterializeError as exc:
+                            planning_errors[output_str] = str(exc)
+                if not need_producer:
                     if dep_path not in artifacts:
                         # Don't traverse — register as a provisional bare leaf
                         artifacts[dep_path] = Artifact(path=dep_path)
@@ -1521,9 +1597,14 @@ def run(
                 # even if a pruned consumer already left a placeholder here.
                 if dep_path in artifacts and dep_path not in placeholders:
                     continue
-                dvc_file = Path(str(dep_path) + ".dvc")
-                if dvc_file.exists():
-                    pending.append(dvc_file)
+                producer = producer or find_producer(Path(dep_path))
+                if producer is not None:
+                    producer_str = str(producer)
+                    if producer_str != dep_path:
+                        ordering_deps.setdefault(output_str, set()).add(producer_str)
+                        artifacts.setdefault(dep_path, Artifact(path=dep_path))
+                    if producer_str not in artifacts or producer_str in placeholders:
+                        pending.append(Path(f"{producer}.dvc"))
                 else:
                     # No .dvc file — add as leaf so _group_into_levels sees it in `done`
                     artifacts[dep_path] = Artifact(path=dep_path)
@@ -1540,6 +1621,9 @@ def run(
 
     # Execute
     executor = ParallelExecutor(sorted_artifacts, config, output)
+    executor._materialization = session
+    executor._planning_errors = planning_errors
+    executor._ordering_deps = ordering_deps
     return executor.execute()
 
 

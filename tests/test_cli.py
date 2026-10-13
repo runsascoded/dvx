@@ -288,7 +288,7 @@ def test_run_help(runner):
     assert set(help.options) == {
         "--force", "--force-upstream", "--cached", "--jobs", "--mem",
         "--mem-default", "--commit",
-        "--dry-run", "--no-provenance", "--push", "--remote", "--push-timeout",
+        "--dry-run", "--no-provenance", "--push", "--remote", "--fallback-remote", "--push-timeout",
         "--no-cache-push",
         "--no-pull-deps", "--no-prune-fresh", "--verbose", "--help",
     }

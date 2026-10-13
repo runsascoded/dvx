@@ -1430,8 +1430,11 @@ def _fetch_blob(md5: str, remote: str | None = None) -> bool:
     """
     import uuid
 
+    from dvx.transfer import _valid_blob, _valid_oid
+
+    _valid_oid(md5)
     dest = _local_cache_path(md5)
-    if dest.exists():
+    if _valid_blob(dest, md5):
         return True
 
     odb = _get_remote_odb(remote)
@@ -1439,26 +1442,145 @@ def _fetch_blob(md5: str, remote: str | None = None) -> bool:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_name(f"{dest.name}.{uuid.uuid4().hex[:8]}.tmp")
     try:
-        odb.fs.get(src, str(tmp))
-    except FileNotFoundError:
-        return False
-    except Exception as e:
-        # Ambiguous failure — distinguish "absent" (legit rebuild) from
-        # transport error (must not silently trigger a rebuild).
         try:
-            if not odb.exists(md5):
-                return False
-        except Exception:
-            pass
-        raise MaterializeError(f"fetch failed for {md5}: {e}") from e
-    try:
+            odb.fs.get(src, str(tmp))
+        except FileNotFoundError:
+            return False
+        except Exception as e:
+            raise MaterializeError(
+                f"fetch failed for {md5}: {type(e).__name__}: {e}"
+            ) from e
+        if not _valid_blob(tmp, md5):
+            raise MaterializeError(f"integrity check failed for {md5}")
         os.replace(tmp, dest)
-    except FileNotFoundError:
-        # Concurrent materializer renamed an identical blob into place and
-        # something cleaned our tmp — fine as long as dest now exists.
-        if not dest.exists():
-            raise
+    finally:
+        tmp.unlink(missing_ok=True)
     return True
+
+
+class MaterializationSession:
+    """Invocation-local strict probes and per-hash restoration locks.
+
+    Planning probes payload objects and downloads only directory manifests.
+    Execution reuses those decisions and the existing atomic fetch path.
+    """
+
+    def __init__(
+        self,
+        remote: str | None = None,
+        fallback_remotes: tuple[str, ...] = (),
+    ) -> None:
+        self.remotes = tuple(dict.fromkeys((remote, *fallback_remotes)))
+        self._locks: dict[str, Any] = {}
+        self._lock = threading.Lock()
+        self._presence: dict[tuple[str | None, str], bool] = {}
+        self._fetched: dict[str, bool] = {}
+        self._errors: dict[str, MaterializeError] = {}
+
+    def _hash_lock(self, oid: str):
+        with self._lock:
+            return self._locks.setdefault(oid, threading.RLock())
+
+    def _probe_remote(self, oid: str, remote: str | None) -> bool:
+        from dvc.config import NoRemoteError
+        from dvc.exceptions import NotDvcRepoError
+
+        from dvx.transfer import Remote, TransferError
+
+        key = (remote, oid)
+        if key not in self._presence:
+            try:
+                odb = _get_remote_odb(remote)
+                self._presence[key] = Remote(remote or "default", odb).exists(oid)
+            except (NoRemoteError, NotDvcRepoError):
+                # Repo-less execution and an unconfigured default remote are
+                # legitimate local-only rebuild contexts.
+                if remote is not None:
+                    raise
+                self._presence[key] = False
+            except TransferError as exc:
+                raise MaterializeError(str(exc)) from exc
+            except Exception as exc:
+                raise MaterializeError(f"{oid}: remote configuration failed: {exc}") from exc
+        return self._presence[key]
+
+    def probe(self, oid: str) -> bool:
+        from dvc.exceptions import NotDvcRepoError
+
+        from dvx.transfer import _valid_blob
+
+        with self._hash_lock(oid):
+            if oid in self._errors:
+                raise self._errors[oid]
+            if self._fetched.get(oid):
+                return True
+            try:
+                if _valid_blob(_local_cache_path(oid), oid):
+                    return True
+            except NotDvcRepoError:
+                return False
+            try:
+                return any(self._probe_remote(oid, remote) for remote in self.remotes)
+            except MaterializeError as exc:
+                self._errors[oid] = exc
+                raise
+
+    def fetch(self, oid: str) -> bool:
+        from dvx.transfer import _valid_blob
+
+        with self._hash_lock(oid):
+            if oid in self._errors:
+                raise self._errors[oid]
+            if self._fetched.get(oid):
+                return True
+            if not self.probe(oid):
+                self._fetched[oid] = False
+                return False
+            if _valid_blob(_local_cache_path(oid), oid):
+                self._fetched[oid] = True
+                return True
+            try:
+                for remote in self.remotes:
+                    if self._probe_remote(oid, remote) and _fetch_blob(oid, remote):
+                        self._fetched[oid] = True
+                        return True
+            except MaterializeError as exc:
+                self._errors[oid] = exc
+                raise
+            self._fetched[oid] = False
+            return False
+
+    def manifest(self, oid: str) -> dict[str, str]:
+        from dvx.transfer import TransferError, read_manifest_entries
+
+        try:
+            return {entry["relpath"]: entry["md5"]
+                    for entry in read_manifest_entries(_local_cache_path(oid), oid)}
+        except (TransferError, OSError) as exc:
+            raise MaterializeError(str(exc)) from exc
+
+    def available(self, dvc_paths: list[str]) -> bool:
+        """Check complete required output availability without fetching payloads."""
+        from pathlib import Path
+
+        from dvx.run.dvc_files import read_dvc_file
+
+        for path in dvc_paths:
+            info = read_dvc_file(Path(path))
+            if info is None:
+                return False
+            for out in info.outs:
+                if not out.md5:
+                    return False
+                oid = out.md5 + (".dir" if out.is_dir else "")
+                if not self.probe(oid):
+                    return False
+                if out.is_dir:
+                    if not self.fetch(oid):
+                        return False
+                    if not all(self.probe(child) for child in self.manifest(oid).values()):
+                        return False
+        return True
 
 
 def _checkout_file(md5: str, workspace_path) -> None:
@@ -1476,6 +1598,7 @@ def _checkout_file(md5: str, workspace_path) -> None:
 def materialize_targets(
     dvc_paths: list[str],
     remote: str | None = None,
+    session: MaterializationSession | None = None,
 ) -> tuple[bool, list[str]]:
     """Materialize the outputs of ``dvc_paths`` from the remote cache,
     lock-free: fetch blobs into the local cache, then check out workspace
@@ -1491,8 +1614,9 @@ def materialize_targets(
     """
     from pathlib import Path
 
-    from dvx.run.dvc_files import read_dir_manifest, read_dvc_file
+    from dvx.run.dvc_files import read_dvc_file
 
+    session = session or MaterializationSession(remote)
     missing: list[str] = []
     for dvc_path in dvc_paths:
         p = Path(dvc_path)
@@ -1509,24 +1633,25 @@ def materialize_targets(
             out_path = dvc_dir / out.path
             if out.is_dir:
                 manifest_hash = f"{out.md5}.dir"
-                if not _fetch_blob(manifest_hash, remote):
+                if not session.fetch(manifest_hash):
                     missing.append(manifest_hash)
                     continue
-                cache_md5_dir = _local_cache_path(manifest_hash).parent.parent
-                manifest = read_dir_manifest(out.md5, cache_dir=cache_md5_dir)
+                manifest = session.manifest(manifest_hash)
                 dir_missing = False
-                for relpath, file_md5 in manifest.items():
-                    if not _fetch_blob(file_md5, remote):
+                for file_md5 in manifest.values():
+                    if not session.fetch(file_md5):
                         missing.append(file_md5)
                         dir_missing = True
                         continue
+                if dir_missing:
+                    continue
+                out_path.mkdir(parents=True, exist_ok=True)
+                for relpath, file_md5 in manifest.items():
                     file_path = out_path / relpath
                     if not file_path.exists():
                         _checkout_file(file_md5, file_path)
-                if dir_missing:
-                    continue
             else:
-                if not _fetch_blob(out.md5, remote):
+                if not session.fetch(out.md5):
                     missing.append(out.md5)
                     continue
                 if not out_path.exists():
