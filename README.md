@@ -428,6 +428,8 @@ with Repo() as repo:
 
 ## Commands
 
+AWS and GCP Batch support whole-DAG containers, array targets, and driver-managed remote stages. See [Batch execution](docs/BATCH.md) for profiles, task roles/networking, resource sizing, result reconciliation, and recovery.
+
 | Command | Description |
 |---------|-------------|
 | `run` | Execute computations from .dvc files (parallel) |

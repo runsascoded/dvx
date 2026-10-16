@@ -3,7 +3,12 @@
 import os
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+
+def _cache_root(root: str | Path) -> Path:
+    return Path(os.environ.get("DVC_CACHE_DIR", str(Path(root) / ".dvc" / "cache"))) / "files" / "md5"
 
 
 def is_md5_hash(value: str) -> bool:
@@ -56,7 +61,7 @@ def get_cache_path_from_hash(
         except Exception:
             root = "."
 
-        cache_dir = os.path.join(root, ".dvc", "cache", "files", "md5")
+        cache_dir = str(_cache_root(root))
         hash_value = md5[:-4] if is_dir else md5  # Strip .dir suffix
         cache_path = os.path.join(cache_dir, hash_value[:2], hash_value[2:])
         if is_dir:
@@ -330,7 +335,7 @@ def add_to_cache(
         root = DVCRepo.find_root()
     except Exception:
         root = "."
-    cache_dir = Path(root) / ".dvc" / "cache" / "files" / "md5"
+    cache_dir = _cache_root(root)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     is_dir = target_path.is_dir()
@@ -542,7 +547,7 @@ def cache_blob(file_path, md5: str, force: bool = False):
         root = DVCRepo.find_root()
     except Exception:
         root = "."
-    cache_dir = Path(root) / ".dvc" / "cache" / "files" / "md5"
+    cache_dir = _cache_root(root)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     if file_path.is_dir():
@@ -1009,7 +1014,7 @@ def push_dir_inner_blobs(
         root = Path(DVCRepo.find_root())
     except Exception:
         root = Path(".")
-    local_cache_dir = root / ".dvc" / "cache" / "files" / "md5"
+    local_cache_dir = _cache_root(root)
 
     for dvc_path in dvc_paths:
         # Multi-out aware: iterate every outs[i], not just outs[0]. Each
@@ -1150,8 +1155,6 @@ def check_local_cache(md5: str) -> bool:
     Returns:
         True if hash exists in local cache
     """
-    from pathlib import Path
-
     from dvc.repo import Repo as DVCRepo
 
     try:
@@ -1161,7 +1164,7 @@ def check_local_cache(md5: str) -> bool:
 
     is_dir = md5.endswith(".dir")
     hash_value = md5[:-4] if is_dir else md5
-    cache_path = Path(root) / ".dvc" / "cache" / "files" / "md5" / hash_value[:2] / hash_value[2:]
+    cache_path = _cache_root(root) / hash_value[:2] / hash_value[2:]
     if is_dir:
         cache_path = cache_path.with_suffix(".dir")
 
@@ -1407,14 +1410,12 @@ def _get_remote_odb(remote: str | None = None):
 
 def _local_cache_path(md5: str):
     """Local cache path for a hash (``.dir`` suffix preserved)."""
-    from pathlib import Path
-
     from dvc.repo import Repo as DVCRepo
 
     root = DVCRepo.find_root()
     is_dir = md5.endswith(".dir")
     h = md5[:-4] if is_dir else md5
-    p = Path(root) / ".dvc" / "cache" / "files" / "md5" / h[:2] / h[2:]
+    p = _cache_root(root) / h[:2] / h[2:]
     return p.with_name(p.name + ".dir") if is_dir else p
 
 
@@ -1469,8 +1470,12 @@ class MaterializationSession:
         self,
         remote: str | None = None,
         fallback_remotes: tuple[str, ...] = (),
+        jobs: int = 32,
     ) -> None:
         self.remotes = tuple(dict.fromkeys((remote, *fallback_remotes)))
+        if jobs < 1:
+            raise ValueError("Materialization jobs must be positive")
+        self.jobs = jobs
         self._locks: dict[str, Any] = {}
         self._lock = threading.Lock()
         self._presence: dict[tuple[str | None, str], bool] = {}
@@ -1578,9 +1583,32 @@ class MaterializationSession:
                 if out.is_dir:
                     if not self.fetch(oid):
                         return False
-                    if not all(self.probe(child) for child in self.manifest(oid).values()):
+                    from concurrent.futures import ThreadPoolExecutor
+                    with ThreadPoolExecutor(max_workers=self.jobs) as pool:
+                        present = list(pool.map(self.probe, sorted(set(self.manifest(oid).values()))))
+                    if not all(present):
                         return False
         return True
+
+    def fetch_many(self, oids: list[str]) -> list[str]:
+        """Restore unique blobs with bounded concurrency and visible progress."""
+        import sys
+        import time
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        missing = []
+        unique = sorted(set(oids))
+        last = time.monotonic()
+        with ThreadPoolExecutor(max_workers=self.jobs) as pool:
+            pending = {pool.submit(self.fetch, oid): oid for oid in unique}
+            for count, future in enumerate(as_completed(pending), 1):
+                if not future.result():
+                    missing.append(pending[future])
+                now = time.monotonic()
+                if now - last >= 5 or (len(unique) >= 1000 and count == len(unique)):
+                    print(f"    ↓ materializing: {count}/{len(unique)} blobs", file=sys.stderr)
+                    last = now
+        return sorted(missing)
 
 
 def _checkout_file(md5: str, workspace_path) -> None:
@@ -1637,13 +1665,9 @@ def materialize_targets(
                     missing.append(manifest_hash)
                     continue
                 manifest = session.manifest(manifest_hash)
-                dir_missing = False
-                for file_md5 in manifest.values():
-                    if not session.fetch(file_md5):
-                        missing.append(file_md5)
-                        dir_missing = True
-                        continue
+                dir_missing = session.fetch_many(list(manifest.values()))
                 if dir_missing:
+                    missing.extend(dir_missing)
                     continue
                 out_path.mkdir(parents=True, exist_ok=True)
                 for relpath, file_md5 in manifest.items():

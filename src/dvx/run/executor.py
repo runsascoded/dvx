@@ -9,7 +9,7 @@ import subprocess
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
@@ -34,6 +34,8 @@ class ExecutionResult:
     # Success, not failure — but the signal a reproducibility audit exists
     # to find, so it survives to the run summary rather than only the log.
     hash_changed: bool = False
+    commit_message: str = ""
+    summary: str = ""
 
 
 @dataclass
@@ -85,6 +87,11 @@ class ExecutionConfig:
     # Weight charged to a stage with no `resources.mem_gb`. Default 0 keeps the
     # feature opt-in per stage — an unlabeled stage never blocks on the budget.
     mem_default_gb: float = 0.0
+    executor: str = "local"
+    executor_for: tuple[str, ...] = ()
+    remote_jobs: int = 32
+    allow_image_mismatch: bool = False
+    retry_failed: bool = False
 
 
 def _total_ram_gb() -> float | None:
@@ -240,6 +247,9 @@ class ParallelExecutor:
         )
         self._planning_errors: dict[str, str] = {}
         self._ordering_deps: dict[str, set[str]] = {}
+        self._result_messages: dict[str, tuple[str, str]] = {}
+        from dvx.batch.remote import RemoteRunner
+        self._remote_runner = RemoteRunner(self.config)
 
         # Serializes the per-stage git critical section (`git add -u` →
         # `commit` → `push`). Under level-parallelism (`-j>1`) sibling stages
@@ -354,7 +364,9 @@ class ParallelExecutor:
                         status = reason
                     else:
                         status = "would run" if should_run else f"skip ({reason})"
-                    self._log(f"  {artifact.path}: {status}")
+                    placement = self._placement(artifact.path)
+                    suffix = f" [{placement}]" if placement != "local" else ""
+                    self._log(f"  {artifact.path}: {status}{suffix}")
                     results.append(
                         ExecutionResult(
                             path=artifact.path,
@@ -367,21 +379,11 @@ class ParallelExecutor:
 
         self._log("")
 
-        results = []
-        for level_num, level in enumerate(levels, 1):
-            self._log(f"Level {level_num}/{len(levels)}: {len(level)} computation(s)")
-            level_results = self._execute_level(level)
-            results.extend(level_results)
-
-            # Check for failures
-            failures = [r for r in level_results if not r.success]
-            if failures:
-                failed = ", ".join(r.path for r in failures)
-                self._log(f"\nFailed: {failed}")
-                break
+        results = self._execute_ready()
 
         # Push at end if configured (CLI/env > config file)
         import os
+
         from dvx.config import load_config as _load_config
         _dvx_config = _load_config()
         push_strategy = os.environ.get("DVX_PUSH", self.config.push)
@@ -401,6 +403,140 @@ class ParallelExecutor:
                 self._push_cache_blobs([f"{r.path}.dvc" for r in executed])
 
         return results
+
+    def _placement(self, path: str) -> str:
+        import fnmatch
+
+        from dvx.config import load_config
+        def validate(placement: str) -> str:
+            if not placement or placement.split(":", 1)[0] not in {"local", "aws", "gcp"}:
+                raise ValueError(f"Unknown executor: {placement!r}")
+            if placement.startswith("local:"):
+                raise ValueError("Local execution does not take a profile")
+            return placement
+        for rule in self.config.executor_for:
+            pattern, separator, placement = rule.partition("=")
+            if not separator or not pattern or not placement:
+                raise ValueError("--executor-for requires PATTERN=BACKEND[:PROFILE]")
+            if fnmatch.fnmatch(path, pattern) or fnmatch.fnmatch(path + ".dvc", pattern):
+                return validate(placement)
+        configured = load_config().get_stage_config(path).executor
+        placement = configured or self.config.executor
+        return validate(placement)
+
+    def _execute_ready(self) -> list[ExecutionResult]:
+        """Admit command groups as soon as their own producer groups finish."""
+        groups = {}
+        owners = {}
+        for artifact in self.artifacts:
+            if artifact.computation is None:
+                continue
+            key = artifact.computation.cmd or artifact.path
+            groups.setdefault(key, []).append(artifact)
+            owners[artifact.path] = key
+        deps = {key: set() for key in groups}
+        placements = {}
+        for key, group in groups.items():
+            selected = {self._placement(a.path) for a in group}
+            if len(selected) != 1:
+                raise ValueError(f"Co-outputs require the same executor: {[a.path for a in group]}")
+            placements[key] = selected.pop()
+            for artifact in group:
+                inputs = {d.path if isinstance(d, Artifact) else str(d) for d in artifact.computation.deps}
+                inputs.update(self._ordering_deps.get(artifact.path, set()))
+                deps[key].update(owners[d] for d in inputs if d in owners and owners[d] != key)
+                for path in inputs:
+                    deps[key].update(owners[str(parent)] for parent in Path(path).parents if str(parent) in owners and owners[str(parent)] != key)
+        if self.config.remote_jobs < 1:
+            raise ValueError("remote_jobs must be positive")
+        results = []
+        done = set()
+        pending = dict(groups)
+        futures = {}
+        failed = False
+        import os
+        local_limit = self.config.max_workers or min(32, (os.cpu_count() or 1) + 4)
+        with ThreadPoolExecutor(max_workers=self.config.max_workers) as local, ThreadPoolExecutor(max_workers=self.config.remote_jobs) as remote:
+            try:
+                while pending or futures:
+                    if not failed:
+                        for key, group in list(pending.items()):
+                            if deps[key] <= done:
+                                placement = placements[key]
+                                running = sum((placements[value] == "local") == (placement == "local") for value in futures.values())
+                                if running >= (local_limit if placement == "local" else self.config.remote_jobs):
+                                    continue
+                                if placement == "local":
+                                    future = local.submit(self._execute_group, group)
+                                else:
+                                    future = remote.submit(self._execute_remote_group, group, placement)
+                                futures[future] = key
+                                del pending[key]
+                    if not futures:
+                        if failed:
+                            break
+                        raise RuntimeError("Circular command-group dependency detected")
+                    completed, _ = wait(futures, return_when=FIRST_COMPLETED)
+                    for future in completed:
+                        key = futures.pop(future)
+                        try:
+                            outcome = future.result()
+                        except Exception as exc:
+                            outcome = [ExecutionResult(a.path, False, reason=str(exc)) for a in groups[key]]
+                            self._log(f"  ✗ {groups[key][0].path}: {exc}")
+                        results.extend(outcome)
+                        if all(r.success for r in outcome):
+                            done.add(key)
+                        else:
+                            failed = True
+                            names = ", ".join(r.path for r in outcome if not r.success)
+                            self._log(f"\nFailed: {names}")
+            except KeyboardInterrupt:
+                import click
+                had_jobs = self._remote_runner.stop()
+                try:
+                    if had_jobs and click.confirm("Cancel active remote jobs? (No detaches)", default=False):
+                        self._remote_runner.stop(cancel=True)
+                except KeyboardInterrupt:
+                    pass
+                raise
+        return results
+
+    def _execute_group(self, group: list[Artifact]) -> list[ExecutionResult]:
+        for artifact in group:
+            self._scheduled_paths.add(artifact.path)
+        if len(group) == 1:
+            return [self._execute_artifact(group[0])]
+        paths = {a.path for a in group}
+        def execute_member(artifact: Artifact) -> ExecutionResult:
+            for dep in artifact.computation.deps:
+                path = dep.path if isinstance(dep, Artifact) else str(dep)
+                if path in paths and path != artifact.path and not self._dvc_done_events[path].wait(self.config.co_output_timeout):
+                    raise TimeoutError(f"Co-output dependency {path} did not complete")
+            return self._execute_artifact(artifact)
+        # Metadata co-outputs never consume compute slots. Give every sibling
+        # a thread so its primary cannot wait behind it in a bounded pool.
+        with ThreadPoolExecutor(max_workers=len(group)) as pool:
+            return list(pool.map(execute_member, group))
+
+    def _execute_remote_group(self, group: list[Artifact], placement: str) -> list[ExecutionResult]:
+        decisions = [self._should_run(a) for a in group]
+        if not any(decision[0] for decision in decisions):
+            return [ExecutionResult(a.path, True, skipped=True, reason=decision[1]) for a, decision in zip(group, decisions, strict=True)]
+        result = self._remote_runner.execute(group, placement, self._log)
+        import tempfile
+        messages = result.get("messages", {})
+        Path("tmp").mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="dvx-result-", dir="tmp") as directory:
+            message = Path(directory) / "commit.txt"
+            summary = Path(directory) / "summary.txt"
+            message.write_text(messages.get("DVX_COMMIT_MSG_FILE", ""))
+            summary.write_text(messages.get("DVX_SUMMARY_FILE", ""))
+            self._handle_stage_output(group[0].path, str(message), str(summary), {"pushed_remotely": True}, [a.path for a in group[1:]])
+        for artifact in group:
+            self._signal_dvc_done(artifact.path)
+        self._log(f"  ✓ {group[0].path}: completed remotely")
+        return [ExecutionResult(a.path, True, reason="completed remotely", dvc_file=Path(f"{a.path}.dvc")) for a in group]
 
     def _warn_unresolvable_deps(self) -> None:
         """Warn about declared deps that name neither a tracked artifact nor a
@@ -554,50 +690,6 @@ class ParallelExecutor:
             self._log(f"    ↓ {label}: not in remote ({', '.join(missing[:3])})")
         return ok
 
-    def _execute_level(self, artifacts: list[Artifact]) -> list[ExecutionResult]:
-        """Execute all artifacts in a level in parallel.
-
-        Args:
-            artifacts: List of artifacts to execute
-
-        Returns:
-            List of ExecutionResult, one per artifact
-        """
-        # Track which artifacts are in-flight this level so `_wait_for_co_outputs`
-        # can filter out cross-level co-outputs (their `_dvc_done_events` won't
-        # be armed until a later level submits them — waiting would deadlock).
-        for a in artifacts:
-            self._scheduled_paths.add(a.path)
-
-        if len(artifacts) == 1:
-            # Single artifact - run directly without thread pool overhead
-            return [self._execute_artifact(artifacts[0])]
-
-        # Multiple artifacts - run in parallel
-        results = []
-        with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
-            futures = {
-                executor.submit(self._execute_artifact, artifact): artifact
-                for artifact in artifacts
-            }
-
-            for future in as_completed(futures):
-                artifact = futures[future]
-                try:
-                    result = future.result()
-                    results.append(result)
-                except Exception as e:
-                    self._log(f"  ✗ {artifact.path}: {e}")
-                    results.append(
-                        ExecutionResult(
-                            path=artifact.path,
-                            success=False,
-                            reason=str(e),
-                        )
-                    )
-
-        return results
-
     def _execute_artifact(self, artifact: Artifact) -> ExecutionResult:
         """Execute a single artifact computation, always signalling dvc-done.
 
@@ -615,7 +707,9 @@ class ParallelExecutor:
         paths that already signal mid-body are unaffected.
         """
         try:
-            return self._execute_artifact_inner(artifact)
+            result = self._execute_artifact_inner(artifact)
+            result.commit_message, result.summary = self._result_messages.get(artifact.path, ("", ""))
+            return result
         finally:
             self._signal_dvc_done(artifact.path)
 
@@ -740,6 +834,8 @@ class ParallelExecutor:
         push_file.close()
 
         env = os.environ.copy()
+        for variable in ("DVX_RESULT_URL", "DVX_OVERLAY_URL", "DVX_INPUT_KEY"):
+            env.pop(variable, None)
         env["DVX_COMMIT_MSG_FILE"] = commit_msg_file.name
         env["DVX_SUMMARY_FILE"] = summary_file.name
         env["DVX_PUSH_FILE"] = push_file.name
@@ -1230,6 +1326,9 @@ class ParallelExecutor:
 
         if env_extras is None:
             env_extras = {}
+        message = Path(commit_msg_path).read_text() if Path(commit_msg_path).is_file() else ""
+        summary = Path(summary_path).read_text() if Path(summary_path).is_file() else ""
+        self._result_messages[path] = (message, summary)
 
         try:
             # Check summary file
@@ -1320,7 +1419,7 @@ class ParallelExecutor:
                         else:
                             self._log(f"    ⚠ commit failed: {result.stderr.strip()}")
 
-            if should_push:
+            if should_push and not env_extras.get("pushed_remotely"):
                 dvc_paths = [f"{path}.dvc"]
                 if co_paths:
                     dvc_paths.extend(f"{p}.dvc" for p in co_paths)

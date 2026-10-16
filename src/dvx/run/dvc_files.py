@@ -1420,6 +1420,10 @@ def read_dir_manifest(dir_md5: str, cache_dir: Path | None = None) -> dict[str, 
     import json
 
     if cache_dir is None:
+        import os
+        if os.environ.get("DVC_CACHE_DIR"):
+            cache_dir = Path(os.environ["DVC_CACHE_DIR"]) / "files" / "md5"
+    if cache_dir is None:
         # Auto-detect cache directory by walking up from cwd
         cwd = Path.cwd()
         for parent in [cwd, *cwd.parents]:

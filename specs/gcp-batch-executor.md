@@ -2,6 +2,8 @@
 
 Requested from the disk-tree session (2026-10-16). Its deployments run their pipelines on GCP Batch: one project, one region, a service account per deployment, images in Artifact Registry, secrets from Secret Manager injected as env, cost labels on every job, `gcsfuse` mounts and local-SSD staging. Those pipelines are hand-rolled shell (a JSON job spec in a heredoc, `gcloud batch jobs submit`, Cloud Logging filters pasted from memory). A dvx-native GCP executor would let such a pipeline be a DVX DAG whose heavy stages run on Batch, with DVX's content addressing as the resume and coordination substrate, just as [`batch-executor.md`] does for AWS.
 
+Status (2026-10-16): implementation and offline verification in progress on `batch-backends`, based on the adaptive-materialization review branch. AWS/GCP builders, the backend interface, arrays, ready-set scheduling, sidecar/result exchange, and reattachment are implemented. The full regression run found three scheduler/reporting regressions; their 73-test focused regression run passes after fixes. Live cloud provisioning/preemption and container startup are not yet verified.
+
 Read first: [`batch-executor.md`] (phase 1: single fat job; phase 2 deferred: per-stage jobs), [`batch-per-project-prefix.md`], [`batch-secrets-manager.md`], [`batch-run-command-cli-mismatch.md`], the pending [`batch-job-role-and-networking.md`] and [`parallel-materialize.md`], and [`resource-aware-scheduling.md`].
 
 ## Goals
@@ -113,6 +115,8 @@ Job ID: `<profile>-<slug>-<yyyymmdd-hhmmss>-<4 hex>`, sanitized and ≤ 63 chars
 - **Retry only infrastructure loss** (GCP's analog of `RECLAIM_ONLY_RETRY`). Set `max_retry_count = profile.max_retries`, plus `lifecycle_policies`:
   - `RETRY_TASK` on the Batch-reserved exit codes for preemption and VM loss: 50001 (preempted), 50002 (VM reporting timeout), 50003 (rebooted), 50006 (VM recreated).
   - `FAIL_TASK` on application exit codes 1–255.
+
+Implementation correction: use only the `RETRY_TASK` allowlist. Google's current documentation states that unspecified exit codes take the opposite action, and the allowlist therefore fails application errors without a second policy. Offline protobuf tests assert the exact policy. Live preemption remains a rollout check.
 
   The constant is `PREEMPTION_ONLY_RETRY`. Without the FAIL_TASK rule, `max_retry_count` retries every failure: the nj-crashes "burned a 122-stage level twice" failure. A deterministic stage error must cost one run.
 - **Resume after preemption is DVX's**, as on AWS: `--push each` makes each completed stage durable in the remote, so a retried task re-pulls (or skips) everything it already finished.

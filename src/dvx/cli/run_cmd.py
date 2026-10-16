@@ -11,7 +11,7 @@ import click
 @click.option("-f", "--force", is_flag=True, help="Force re-run all computations.")
 @click.option("--force-upstream", multiple=True, metavar="<pattern>", help="Force re-run upstream artifacts matching pattern.")
 @click.option("--cached", multiple=True, metavar="<pattern>", help="Use cached value for artifacts matching pattern.")
-@click.option("-j", "--jobs", type=int, help="Number of parallel jobs (default: CPU count).")
+@click.option("-j", "--jobs", type=int, help="Parallel command groups (default: min(32, CPU count + 4)).")
 @click.option("-m", "--mem", type=float, metavar="<GB>", help="Memory budget (GB) for scheduling a level: stages acquire their meta.computation.resources.mem_gb from it, so heavy stages serialize while light ones stay parallel. Default: total RAM when any stage is labeled, else off.")
 @click.option("--mem-default", type=float, default=0.0, show_default=True, metavar="<GB>", help="Budget weight charged to a stage with no mem_gb hint (0 = unlabeled stages never block).")
 @click.option("-c", "--commit/--no-commit", default=None, help="Commit strategy: --commit = always commit after each stage, --no-commit = never (batch containers without git identity), neither = auto (per-stage config).")
@@ -25,7 +25,12 @@ import click
 @click.option("-D", "--no-pull-deps", is_flag=True, help="Don't auto-fetch materializable trans-deps from remote (default: try fetch before rerunning).")
 @click.option("-U", "--no-prune-fresh", is_flag=True, help="Walk full upstream chain even past fresh artifacts (default: stop at fresh).")
 @click.option("-v", "--verbose", is_flag=True, help="Show detailed output.")
-def run_cmd(targets, force, force_upstream, cached, jobs, mem, mem_default, commit, dry_run, no_provenance, push, remote, fallback_remote, push_timeout, no_cache_push, no_pull_deps, no_prune_fresh, verbose):
+@click.option("--executor", default="local", help="Execute stages locally or on aws[:PROFILE] / gcp[:PROFILE].")
+@click.option("--executor-for", multiple=True, help="Route PATTERN=BACKEND[:PROFILE] (first match wins).")
+@click.option("--remote-jobs", type=click.IntRange(min=1), default=32, show_default=True)
+@click.option("--allow-image-mismatch", is_flag=True, help="Allow remote execution with an unverified image revision.")
+@click.option("--retry-failed", is_flag=True, help="Resubmit a failed remote job with the same inputs.")
+def run_cmd(targets, force, force_upstream, cached, jobs, mem, mem_default, commit, dry_run, no_provenance, push, remote, fallback_remote, push_timeout, no_cache_push, no_pull_deps, no_prune_fresh, verbose, executor, executor_for, remote_jobs, allow_image_mismatch, retry_failed):
     """Execute artifact computations from .dvc files.
 
     Run computations defined in .dvc files, respecting dependencies and
@@ -42,8 +47,19 @@ def run_cmd(targets, force, force_upstream, cached, jobs, mem, mem_default, comm
         dvx run --force            # Force re-run all
         dvx run --commit           # Auto-commit after each stage
     """
+    import os
+
     from dvx.run.artifact import Artifact
     from dvx.run.executor import ExecutionConfig, run
+    if not dry_run:
+        if os.environ.get("DVX_OVERLAY_URL"):
+            from dvx.batch.remote import apply_overlay
+            apply_overlay(os.environ["DVX_OVERLAY_URL"])
+        cache_dir = os.environ.get("DVC_CACHE_DIR")
+        if cache_dir:
+            from dvc.repo import Repo
+            with Repo() as repo, repo.config.edit("local") as local_config:
+                local_config.setdefault("cache", {})["dir"] = str(Path(cache_dir).resolve())
 
     # Find targets
     target_paths = list(targets) if targets else []
@@ -93,10 +109,19 @@ def run_cmd(targets, force, force_upstream, cached, jobs, mem, mem_default, comm
         push_timeout=push_timeout,
         prune_fresh=not no_prune_fresh,
         pull_deps=not no_pull_deps,
+        executor=executor,
+        executor_for=executor_for,
+        remote_jobs=remote_jobs,
+        allow_image_mismatch=allow_image_mismatch,
+        retry_failed=retry_failed,
     )
 
     try:
         results = run([Path(t) for t in target_paths], config, output=sys.stderr)
+        if not dry_run and os.environ.get("DVX_RESULT_URL"):
+            from dvx.batch.remote import publish_result
+            selected = [str(t).removesuffix(".dvc") for t in target_paths]
+            publish_result(os.environ["DVX_RESULT_URL"], selected, results)
 
         # Print summary
         total = len(results)

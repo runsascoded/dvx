@@ -1,0 +1,12 @@
+# Build from this checkout; derived application images supply the DAG.
+FROM python:3.13-slim
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /opt/dvx
+ARG DVX_VERSION=0.0.dev0
+COPY pyproject.toml README.md ./
+COPY src/ src/
+RUN SETUPTOOLS_SCM_PRETEND_VERSION_FOR_DVX=${DVX_VERSION} pip install --no-cache-dir '.[gs,batch-gcp]'
+ENV PYTHONFAULTHANDLER=1
+ENTRYPOINT ["dvx"]

@@ -291,6 +291,7 @@ def test_run_help(runner):
         "--dry-run", "--no-provenance", "--push", "--remote", "--fallback-remote", "--push-timeout",
         "--no-cache-push",
         "--no-pull-deps", "--no-prune-fresh", "--verbose", "--help",
+        "--executor", "--executor-for", "--remote-jobs", "--allow-image-mismatch", "--retry-failed",
     }
 
 

@@ -45,6 +45,13 @@ oss = ["dvc-oss"]
 cron = ["croniter>=1.0"]
 # AWS Batch packaging + submit (dvx batch push/bootstrap/submit)
 batch = ["boto3"]
+batch-gcp = [
+    "google-cloud-batch>=0.22",
+    "google-cloud-logging",
+    "google-cloud-artifact-registry",
+    "google-cloud-secret-manager",
+    "google-auth",
+]
 # All remotes
 all = [
     "dvc-s3",

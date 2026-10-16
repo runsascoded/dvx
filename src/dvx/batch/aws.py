@@ -11,9 +11,8 @@ end-to-end in July 2026); design points inherited verbatim:
   everything already pushed.
 - Plain boto3 (lazy import; install ``dvx[batch]``), no CDK / TF. Region and
   creds from the standard env / config chain.
-- IAM surface: Fargate *execution* role only (image pull + logs). S3 creds
-  ride as plain env on the job definition / submit overrides — no AWS data
-  permissions involved. (An S3 job role can be added later.)
+- IAM: separate execution (image pull/logs/secrets) and application task roles.
+  Explicit task roles and non-default networking are supported at bootstrap.
 - ``bootstrap`` is create-if-missing for role / logs / ECR / CE / queue;
   the job definition is re-registered each run (revisions are harmless
   and comparing specs is fussier than it's worth).
@@ -21,12 +20,17 @@ end-to-end in July 2026); design points inherited verbatim:
 Pure spec-builder functions below are the tested surface; the boto3 calls
 are thin wrappers around them.
 """
+
 from __future__ import annotations
 
 import json
 import sys
 import time
 from functools import partial
+from typing import Any
+
+from .base import Finding, JobHandle, JobRequest, JobState, LogCursor, LogLine
+from .secrets import _reject_env_secret_overlap
 
 err = partial(print, file=sys.stderr)
 
@@ -74,12 +78,11 @@ ECS_TRUST_POLICY = (
     '"Principal": {"Service": "ecs-tasks.amazonaws.com"}, '
     '"Action": "sts:AssumeRole"}]}'
 )
-ECS_EXECUTION_POLICY_ARN = (
-    "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-)
+ECS_EXECUTION_POLICY_ARN = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 
 
 # ── pure builders ───────────────────────────────────────────────────────────
+
 
 def compute_environment_spec(
     *,
@@ -125,22 +128,10 @@ RECLAIM_ONLY_RETRY = {
 # `batch:DescribeJobDefinition` / `DescribeJobs`. See
 # `specs/done/batch-secrets-manager.md`.
 
+
 def _secrets_container_list(secrets: dict[str, str]) -> list[dict]:
     """AWS Batch ``secrets`` array: ``ENV_VAR -> valueFrom`` ARN, name-sorted."""
     return [{"name": k, "valueFrom": v} for k, v in sorted(secrets.items())]
-
-
-def _reject_env_secret_overlap(
-    environment: dict[str, str],
-    secrets: dict[str, str],
-) -> None:
-    """A name delivered as both plaintext ``environment`` and a ``secrets`` ref
-    is ambiguous (which value wins is undefined) — reject it."""
-    overlap = sorted(set(environment) & set(secrets))
-    if overlap:
-        raise ValueError(
-            "names set as both environment and secrets: " + ", ".join(overlap)
-        )
 
 
 def execution_role_secrets_policy(secrets: dict[str, str]) -> dict:
@@ -165,27 +156,31 @@ def execution_role_secrets_policy(secrets: dict[str, str]) -> dict:
         elif service == "ssm":
             ssm.append(arn)
         else:
-            raise ValueError(
-                f"unrecognized secret ARN (not Secrets Manager or SSM): {arn!r}"
-            )
+            raise ValueError(f"unrecognized secret ARN (not Secrets Manager or SSM): {arn!r}")
     statements: list[dict] = []
     if sm:
-        statements.append({
-            "Effect": "Allow",
-            "Action": "secretsmanager:GetSecretValue",
-            "Resource": sorted(set(sm)),
-        })
+        statements.append(
+            {
+                "Effect": "Allow",
+                "Action": "secretsmanager:GetSecretValue",
+                "Resource": sorted(set(sm)),
+            }
+        )
     if ssm:
-        statements.append({
+        statements.append(
+            {
+                "Effect": "Allow",
+                "Action": "ssm:GetParameters",
+                "Resource": sorted(set(ssm)),
+            }
+        )
+    statements.append(
+        {
             "Effect": "Allow",
-            "Action": "ssm:GetParameters",
-            "Resource": sorted(set(ssm)),
-        })
-    statements.append({
-        "Effect": "Allow",
-        "Action": "kms:Decrypt",
-        "Resource": "*",
-    })
+            "Action": "kms:Decrypt",
+            "Resource": "*",
+        }
+    )
     return {"Version": "2012-10-17", "Statement": statements}
 
 
@@ -198,6 +193,7 @@ def job_definition_spec(
     memory_mib: int = 65536,
     ephemeral_gib: int = 100,
     execution_role_arn: str,
+    job_role_arn: str | None = None,
     log_group: str = LOG_GROUP,
     environment: dict[str, str] | None = None,
     secrets: dict[str, str] | None = None,
@@ -239,12 +235,12 @@ def job_definition_spec(
             "logDriver": "awslogs",
             "options": {"awslogs-group": log_group},
         },
-        "environment": [
-            {"name": k, "value": v} for k, v in sorted(env.items())
-        ],
+        "environment": [{"name": k, "value": v} for k, v in sorted(env.items())],
     }
     if secrets:
         container["secrets"] = _secrets_container_list(secrets)
+    if job_role_arn:
+        container["jobRoleArn"] = job_role_arn
     return {
         "jobDefinitionName": name,
         "type": "container",
@@ -261,6 +257,7 @@ def push_commands(
     context: str = ".",
     platform: str | None = "linux/arm64",
     build: bool = True,
+    revision: str | None = None,
 ) -> list[list[str]]:
     """Docker argvs for ``push`` (login is separate — it needs the ECR token).
 
@@ -277,54 +274,11 @@ def push_commands(
             cmd += ["--platform", platform]
         if dockerfile is not None:
             cmd += ["-f", dockerfile]
+        if revision:
+            cmd += ["--label", f"org.opencontainers.image.revision={revision}"]
         cmds.append(cmd + [context])
     cmds.append(["docker", "push", image])
     return cmds
-
-
-def run_command(
-    targets: tuple[str, ...] = (),
-    *,
-    force: bool = False,
-    jobs: int | None = None,
-    commit: str = "never",
-    push: str = "each",
-    remote: str | None = None,
-    verbose: bool = True,
-) -> list[str]:
-    """Container command for the base image (whose entrypoint is ``dvx``).
-
-    The default is ``dvx run --no-commit --push each -v`` — i.e. no git
-    writes (the container has no push access to the git repo), every completed
-    stage's cache blobs flushed to the remote before the next starts (that's
-    what makes a Spot reclaim survivable), and verbose progress on stderr
-    for CloudWatch.
-
-    ``commit`` maps to the CLI's tri-state flag: ``"never"`` → ``--no-commit``,
-    ``"always"`` → ``--commit``, ``"auto"`` → flag omitted.
-
-    ``remote`` names the DVC remote the run reads deps from and pushes
-    outputs to — a reproc audit points it at a scratch remote so it can't
-    write into the one prod serves from.
-    """
-    cmd = ["run"]
-    if commit == "never":
-        cmd.append("--no-commit")
-    elif commit == "always":
-        cmd.append("--commit")
-    elif commit != "auto":
-        raise ValueError(f"invalid commit mode: {commit!r} (expected never|auto|always)")
-    cmd += ["--push", push]
-    if remote is not None:
-        cmd += ["--remote", remote]
-    if force:
-        cmd.append("--force")
-    if jobs is not None:
-        cmd += ["-j", str(jobs)]
-    if verbose:
-        cmd.append("-v")
-    cmd.extend(targets)
-    return cmd
 
 
 def submit_overrides(
@@ -345,12 +299,11 @@ def submit_overrides(
         overrides["resourceRequirements"] = rr
     if secrets:
         _reject_env_secret_overlap(environment or {}, secrets)
+        raise ValueError(
+            "AWS secrets cannot be containerOverrides; use submit(secrets=...) instead"
+        )
     if environment:
-        overrides["environment"] = [
-            {"name": k, "value": v} for k, v in sorted(environment.items())
-        ]
-    if secrets:
-        overrides["secrets"] = _secrets_container_list(secrets)
+        overrides["environment"] = [{"name": k, "value": v} for k, v in sorted(environment.items())]
     return overrides
 
 
@@ -384,8 +337,10 @@ ECR_LIFECYCLE_POLICY = {
 
 # ── boto3 orchestration ─────────────────────────────────────────────────────
 
+
 def _clients():
     import boto3
+
     return {name: boto3.client(name) for name in ("iam", "logs", "ecr", "ec2", "batch")}
 
 
@@ -400,6 +355,7 @@ def _ensure_repo(ecr, image: str) -> None:
     except ecr.exceptions.RepositoryNotFoundException:
         ecr.create_repository(repositoryName=repo_name)
         import json
+
         ecr.put_lifecycle_policy(
             repositoryName=repo_name,
             lifecyclePolicyText=json.dumps(ECR_LIFECYCLE_POLICY),
@@ -421,6 +377,7 @@ def push_image(
     from subprocess import run
 
     import boto3
+
     ecr = boto3.client("ecr")
     _ensure_repo(ecr, image)
     auth = ecr.get_authorization_token()["authorizationData"][0]
@@ -428,10 +385,20 @@ def push_image(
     registry = auth["proxyEndpoint"]
     run(
         ["docker", "login", "--username", "AWS", "--password-stdin", registry],
-        input=password.encode(), check=True,
+        input=password.encode(),
+        check=True,
     )
     for cmd in push_commands(
-        image, dockerfile=dockerfile, context=context, platform=platform, build=build,
+        image,
+        dockerfile=dockerfile,
+        context=context,
+        platform=platform,
+        build=build,
+        revision=run(
+            ["git", "-C", context, "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        if build
+        else None,
     ):
         err(f"+ {' '.join(cmd)}")
         run(cmd, check=True)
@@ -450,6 +417,10 @@ def bootstrap(
     environment: dict[str, str] | None = None,
     secrets: dict[str, str] | None = None,
     retry_strategy: dict | None = None,
+    job_role_arn: str | None = None,
+    job_role_policy: dict | None = None,
+    subnets: list[str] | None = None,
+    security_group_ids: list[str] | None = None,
 ) -> None:
     """Create-if-missing IAM role, log group, ECR repo, Fargate-Spot compute
     environment + queue, and (re-)register the job definition. Idempotent.
@@ -466,6 +437,12 @@ def bootstrap(
     scoped to those ARNs is (re-)attached to the execution role so it can read
     them at container start. Submit-time secrets (``submit(secrets=...)``) must
     reference ARNs already covered here — ``submit`` doesn't touch IAM."""
+    if job_role_arn and job_role_policy is not None:
+        raise ValueError("Choose job_role_arn or job_role_policy, not both")
+    if (subnets is None) != (security_group_ids is None):
+        raise ValueError("Explicit networking requires both subnets and security_group_ids")
+    if subnets == [] or security_group_ids == []:
+        raise ValueError("Explicit networking cannot be empty")
     c = _clients()
     role_name = execution_role(prefix)
     lg = log_group(prefix)
@@ -480,7 +457,8 @@ def bootstrap(
             AssumeRolePolicyDocument=ECS_TRUST_POLICY,
         )["Role"]
         c["iam"].attach_role_policy(
-            RoleName=role_name, PolicyArn=ECS_EXECUTION_POLICY_ARN,
+            RoleName=role_name,
+            PolicyArn=ECS_EXECUTION_POLICY_ARN,
         )
         err(f"role {role_name}: created")
 
@@ -494,8 +472,24 @@ def bootstrap(
             PolicyName=policy_name,
             PolicyDocument=json.dumps(execution_role_secrets_policy(secrets)),
         )
-        err(f"role {role_name}: secrets policy {policy_name} put "
-            f"({len(secrets)} ref(s))")
+        err(f"role {role_name}: secrets policy {policy_name} put ({len(secrets)} ref(s))")
+
+    # Log group.
+    if job_role_policy is not None:
+        task_role = f"{prefix}-batch-job"
+        try:
+            job_role = c["iam"].get_role(RoleName=task_role)["Role"]
+        except c["iam"].exceptions.NoSuchEntityException:
+            job_role = c["iam"].create_role(
+                RoleName=task_role,
+                AssumeRolePolicyDocument=ECS_TRUST_POLICY,
+            )["Role"]
+        c["iam"].put_role_policy(
+            RoleName=task_role,
+            PolicyName=f"{prefix}-batch-job",
+            PolicyDocument=json.dumps(job_role_policy),
+        )
+        job_role_arn = job_role["Arn"]
 
     # Log group.
     groups = c["logs"].describe_log_groups(logGroupNamePrefix=lg)["logGroups"]
@@ -508,23 +502,31 @@ def bootstrap(
     # ECR repo.
     _ensure_repo(c["ecr"], image)
 
-    # Default-VPC networking.
-    subnets = [
-        s["SubnetId"]
-        for s in c["ec2"].describe_subnets(
-            Filters=[{"Name": "default-for-az", "Values": ["true"]}],
-        )["Subnets"]
-    ]
+    # Discover defaults only when neither explicit network list was supplied.
+    subnets = (
+        subnets
+        if subnets is not None
+        else [
+            s["SubnetId"]
+            for s in c["ec2"].describe_subnets(
+                Filters=[{"Name": "default-for-az", "Values": ["true"]}],
+            )["Subnets"]
+        ]
+    )
     if not subnets:
-        raise SystemExit(
-            "bootstrap: no default-VPC subnets found; pass a configured VPC (unsupported yet)"
-        )
-    sgs = [
-        g["GroupId"]
-        for g in c["ec2"].describe_security_groups(
-            Filters=[{"Name": "group-name", "Values": ["default"]}],
-        )["SecurityGroups"]
-    ][:1]
+        raise SystemExit("bootstrap: no default-VPC subnets found; pass --subnet and --sg")
+    sgs = (
+        security_group_ids
+        if security_group_ids is not None
+        else [
+            g["GroupId"]
+            for g in c["ec2"].describe_security_groups(
+                Filters=[{"Name": "group-name", "Values": ["default"]}],
+            )["SecurityGroups"]
+        ][:1]
+    )
+    if not sgs:
+        raise ValueError("bootstrap: no security groups found; pass --subnet and --sg")
 
     # Compute environments + queues: the spot pair always; an on-demand pair
     # (queue `<prefix>-od`) when requested — ~3.3× compute cost but immune
@@ -548,9 +550,12 @@ def bootstrap(
         else:
             err(f"compute environment {ce_name}: exists ({existing[0]['status']})")
         _wait(
-            lambda: c["batch"].describe_compute_environments(
-                computeEnvironments=[ce_name],
-            )["computeEnvironments"][0]["status"] == "VALID",
+            lambda ce_name=ce_name: (
+                c["batch"].describe_compute_environments(
+                    computeEnvironments=[ce_name],
+                )["computeEnvironments"][0]["status"]
+                == "VALID"
+            ),
             "compute environment VALID",
         )
 
@@ -569,19 +574,22 @@ def bootstrap(
             err(f"job queue {queue_name}: exists")
 
     # Job definition — always (re-)registered; revisions are harmless.
-    c["batch"].register_job_definition(**job_definition_spec(
-        name=prefix,
-        image=image,
-        arch=arch,
-        vcpus=vcpus,
-        memory_mib=memory_mib,
-        ephemeral_gib=ephemeral_gib,
-        execution_role_arn=role["Arn"],
-        log_group=lg,
-        environment=environment,
-        secrets=secrets,
-        retry_strategy=retry_strategy,
-    ))
+    c["batch"].register_job_definition(
+        **job_definition_spec(
+            name=prefix,
+            image=image,
+            arch=arch,
+            vcpus=vcpus,
+            memory_mib=memory_mib,
+            ephemeral_gib=ephemeral_gib,
+            execution_role_arn=role["Arn"],
+            job_role_arn=job_role_arn,
+            log_group=lg,
+            environment=environment,
+            secrets=secrets,
+            retry_strategy=retry_strategy,
+        )
+    )
     err(f"job definition {prefix}: registered")
 
 
@@ -604,18 +612,21 @@ def submit(
     the ``bootstrap(prefix=...)`` that created them). ``queue`` defaults to the
     spot queue ``<prefix>``; pass ``<prefix>-od`` for the on-demand queue.
 
-    ``secrets`` (``ENV_VAR -> valueFrom`` ARN) is injected as a per-job
-    ``secrets`` override — ephemeral, never stored in the job definition. The
-    execution role must already be allowed to read the ARNs (grant them at
-    ``bootstrap(secrets=...)`` time; ``submit`` makes no IAM changes)."""
+    ``secrets`` (``ENV_VAR -> valueFrom`` ARN) creates an isolated job-definition
+    variant containing references and submits its exact ARN. Values are never
+    stored by DVX. The execution role must already permit the ARNs (grant at
+    ``bootstrap(secrets=...)`` time); submission makes no IAM changes."""
     c = _clients()
+    definition = _secret_definition(c, prefix, secrets, environment or {}) if secrets else prefix
     job = c["batch"].submit_job(
         jobName=job_name,
         jobQueue=queue or prefix,
-        jobDefinition=prefix,
+        jobDefinition=definition,
         containerOverrides=submit_overrides(
-            command, vcpus=vcpus, memory_mib=memory_mib,
-            environment=environment, secrets=secrets,
+            command,
+            vcpus=vcpus,
+            memory_mib=memory_mib,
+            environment=environment,
         ),
     )
     job_id = job["jobId"]
@@ -726,3 +737,249 @@ def _wait(pred, what: str, timeout: float = 300, interval: float = 5) -> None:
             return
         time.sleep(interval)
     raise TimeoutError(f"bootstrap: timed out waiting for {what}")
+
+
+class AwsBackend:
+    """AWS adapter; legacy builder and orchestration entry points stay available."""
+
+    def __init__(self, profile: dict | None = None, clients: dict | None = None) -> None:
+        self.profile = profile or {}
+        self._provided_clients = clients
+        self._descriptions: dict[str, dict] = {}
+        self._array_tokens = {}
+
+    @property
+    def clients(self) -> dict:
+        if self._provided_clients is None:
+            self._provided_clients = _clients()
+        return self._provided_clients
+
+    def submit(self, request: JobRequest) -> JobHandle:
+        from .base import JobHandle
+
+        if request.parallelism is not None:
+            raise ValueError("AWS array jobs do not support a parallelism override")
+        if request.task_count > 10000:
+            raise ValueError("AWS array jobs support at most 10000 tasks")
+        definition = self.profile.get("job_definition", request.profile)
+        secrets_applied = False
+        if self.profile.get("image"):
+            selected = _resolve_definition(self.clients, definition)
+            actual = selected["containerProperties"]["image"]
+            if actual != self.profile["image"]:
+
+                def repository(image: str) -> str:
+                    plain = image.split("@", 1)[0]
+                    return plain.rsplit(":", 1)[0] if ":" in plain.rsplit("/", 1)[-1] else plain
+
+                if repository(actual) != repository(self.profile["image"]):
+                    raise ValueError(
+                        "AWS job definition and profile name different image repositories"
+                    )
+                definition = _secret_definition(
+                    self.clients,
+                    selected["jobDefinitionArn"],
+                    request.secrets,
+                    request.env,
+                    image=self.profile["image"],
+                )
+                secrets_applied = True
+            else:
+                definition = selected["jobDefinitionArn"]
+        if request.secrets and not secrets_applied:
+            definition = _secret_definition(self.clients, definition, request.secrets, request.env)
+        spec = {
+            "jobName": request.name,
+            "jobQueue": self.profile.get("on_demand_queue", od_name(request.profile))
+            if request.on_demand
+            else self.profile.get("queue", request.profile),
+            "jobDefinition": definition,
+            "containerOverrides": submit_overrides(
+                request.command,
+                vcpus=request.vcpus,
+                memory_mib=request.memory_mib,
+                environment=request.env,
+            ),
+        }
+        if request.labels:
+            spec.update(tags=request.labels, propagateTags=True)
+        if request.task_count > 1:
+            spec["arrayProperties"] = {"size": request.task_count}
+        if request.max_run_seconds is not None:
+            spec["timeout"] = {"attemptDurationSeconds": request.max_run_seconds}
+        job = self.clients["batch"].submit_job(**spec)
+        return JobHandle("aws", job["jobId"], profile=request.profile)
+
+    def status(self, handle: JobHandle) -> JobState:
+        from .base import JobState
+
+        jobs = self.clients["batch"].describe_jobs(jobs=[handle.name])["jobs"]
+        if not jobs:
+            raise ValueError(f"AWS job not found: {handle.name}")
+        desc = jobs[0]
+        self._descriptions[handle.name] = desc
+        state = desc["status"]
+        normalized = state if state in {"RUNNING", "SUCCEEDED", "FAILED"} else "QUEUED"
+        exits = []
+        if desc.get("arrayProperties", {}).get("size", 0) > 1 and normalized in {
+            "SUCCEEDED",
+            "FAILED",
+        }:
+            for status in ("SUCCEEDED", "FAILED"):
+                token = None
+                while True:
+                    kw = {"arrayJobId": handle.name, "jobStatus": status}
+                    if token:
+                        kw["nextToken"] = token
+                    page = self.clients["batch"].list_jobs(**kw)
+                    for child in page["jobSummaryList"]:
+                        code = child.get("container", {}).get(
+                            "exitCode", 0 if status == "SUCCEEDED" else 1
+                        )
+                        exits.append((child["arrayProperties"]["index"], code))
+                    token = page.get("nextToken")
+                    if not token:
+                        break
+        codes = tuple(sorted(exits))
+        code = next((c for _, c in codes if c), desc.get("container", {}).get("exitCode"))
+        return JobState(
+            normalized, code, len(desc.get("attempts", [])), desc.get("statusReason", ""), codes
+        )
+
+    def logs(self, handle: JobHandle, cursor: LogCursor | None) -> tuple[list[LogLine], LogCursor]:
+        from .base import LogCursor, LogLine
+
+        desc = self._descriptions.get(handle.name)
+        if desc is None:
+            self.status(handle)
+            desc = self._descriptions[handle.name]
+        source = desc.get("container", {}).get("logStreamName")
+        if not source:
+            if desc.get("arrayProperties", {}).get("size", 0) > 1:
+                return self._array_logs(handle)
+            return [], LogCursor(source="missing")
+        token = cursor.token if cursor and cursor.source == source else None
+        lines = []
+        while True:
+            kwargs = {
+                "logGroupName": log_group(handle.profile),
+                "logStreamName": source,
+                "startFromHead": True,
+            }
+            if token:
+                kwargs["nextToken"] = token
+            try:
+                page = self.clients["logs"].get_log_events(**kwargs)
+            except self.clients["logs"].exceptions.ResourceNotFoundException:
+                return [], LogCursor(source="missing")
+            lines.extend(LogLine(e["message"]) for e in page["events"])
+            new_token = page["nextForwardToken"]
+            if token == new_token:
+                return lines, LogCursor(source=source, token=token)
+            token = new_token
+
+    def _array_logs(self, handle: JobHandle) -> tuple[list[LogLine], LogCursor]:
+        from .base import JobHandle, LogCursor, LogLine
+
+        children = {}
+        for status in ("RUNNING", "SUCCEEDED", "FAILED"):
+            token = None
+            while True:
+                kw = {"arrayJobId": handle.name, "jobStatus": status}
+                if token:
+                    kw["nextToken"] = token
+                page = self.clients["batch"].list_jobs(**kw)
+                for child in page["jobSummaryList"]:
+                    children[child["jobId"]] = child["arrayProperties"]["index"]
+                token = page.get("nextToken")
+                if not token:
+                    break
+        ids = list(children)
+        lines = []
+        for start in range(0, len(ids), 100):
+            for child in self.clients["batch"].describe_jobs(jobs=ids[start : start + 100])["jobs"]:
+                job_id = child["jobId"]
+                self._descriptions[job_id] = child
+                output, cursor = self.logs(
+                    JobHandle("aws", job_id, profile=handle.profile), self._array_tokens.get(job_id)
+                )
+                self._array_tokens[job_id] = cursor
+                lines.extend(LogLine(line.message, children[job_id]) for line in output)
+        return lines, LogCursor(source=handle.name)
+
+    def cancel(self, handle: JobHandle) -> None:
+        self.clients["batch"].terminate_job(jobId=handle.name, reason="Cancelled by dvx")
+
+    def push(self, image: str, **kwargs: Any) -> None:
+        push_image(image, **kwargs)
+
+    def bootstrap(self, profile: dict, *, check_only: bool = False) -> list[Finding]:
+        from .base import Finding
+
+        if check_only:
+            raise ValueError(
+                "AWS bootstrap does not support --check; use IaC for read-only infrastructure audits"
+            )
+        bootstrap(**profile)
+        return [Finding("AWS Batch resources", True)]
+
+
+def _secret_definition(
+    clients: dict,
+    definition: str,
+    secrets: dict[str, str],
+    environment: dict[str, str],
+    image: str | None = None,
+) -> str:
+    """Secrets are job-definition fields, never legal ContainerOverrides."""
+    from copy import deepcopy
+    from hashlib import sha256
+
+    _reject_env_secret_overlap(environment, secrets)
+    latest = _resolve_definition(clients, definition)
+    spec = {
+        key: deepcopy(latest[key])
+        for key in (
+            "type",
+            "containerProperties",
+            "parameters",
+            "retryStrategy",
+            "timeout",
+            "platformCapabilities",
+            "propagateTags",
+            "tags",
+            "schedulingPriority",
+        )
+        if key in latest
+    }
+    props = spec["containerProperties"]
+    if image is not None:
+        props["image"] = image
+    _reject_env_secret_overlap(
+        {e["name"]: e["value"] for e in props.get("environment", [])}, secrets
+    )
+    combined = {e["name"]: e["valueFrom"] for e in props.get("secrets", [])}
+    combined.update(secrets)
+    if combined:
+        props["secrets"] = _secrets_container_list(combined)
+    digest = sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:16]
+    spec["jobDefinitionName"] = f"{latest['jobDefinitionName'][:100]}-dvx-{digest}"
+    return clients["batch"].register_job_definition(**spec)["jobDefinitionArn"]
+
+
+def _resolve_definition(clients: dict, definition: str) -> dict:
+    selector = (
+        {"jobDefinitions": [definition]}
+        if ":" in definition
+        else {"jobDefinitionName": definition, "status": "ACTIVE"}
+    )
+    definitions = []
+    while True:
+        page = clients["batch"].describe_job_definitions(**selector)
+        definitions.extend(page["jobDefinitions"])
+        if not page.get("nextToken"):
+            break
+        selector["nextToken"] = page["nextToken"]
+    if not definitions:
+        raise ValueError(f"No active job definition: {definition}")
+    return max(definitions, key=lambda d: d["revision"])

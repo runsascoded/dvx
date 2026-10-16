@@ -2,6 +2,8 @@
 
 Requested by ctbk (2026-09-26, `ctbk/specs/batch-pipeline.md`). ctbk moved its trips-DAG Batch stack to a Pulumi-managed HCCS account and had to route around three `dvx.batch` gaps. Each is small; together they'd let projects use `dvx batch bootstrap/submit` directly instead of re-implementing the job definition in IaC.
 
+Status (2026-10-16): implemented on `batch-backends`; offline tests cover separate task/execution roles, explicit networking without discovery, JSON argv submission, and existing public AWS imports after the package refactor. Completion awaits the final branch-wide regression run. Explicit networking requires both lists, and IAM role ARN versus managed policy are mutually exclusive.
+
 ## 1. Task role (`jobRoleArn`)
 
 `job_definition_spec` sets only `executionRoleArn` (image pull, logs, secrets). A job whose *own code* calls AWS (ctbk's `norm` reads Citi Bike's `s3://tripdata`) needs a task role. Today the options are baking static keys (which the secrets work was meant to end) or skipping dvx for the job def.

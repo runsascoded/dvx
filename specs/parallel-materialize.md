@@ -2,6 +2,8 @@
 
 From jc-taxes (2026-09-28): a Batch (Fargate) job whose stage depends on a ~70k-file tracked dir (`data/cache`, ~600 MB of small `.json.gz`) spent 3+ h pulling it without finishing; locally the same pull runs at ~67 objects/s.
 
+Status (2026-10-16): implemented on `batch-backends`; directory probes/fetches use bounded concurrency with per-hash deduplication and progress. Batch command builders pass `--cached`, `--force-upstream`, and ordered read fallbacks through. Force scope is preserved rather than redefined. Completion awaits the final branch-wide regression run.
+
 ## 1. `materialize_targets` fetches serially
 
 `cache.py` `materialize_targets` (≈1476–1537) walks the `.dir` manifest and calls `_fetch_blob` (one `odb.fs.get`) + `_checkout_file` per entry, one at a time. For many-small-object dirs, per-request latency dominates (R2 from us-east-1 Fargate is much slower per GET than from a laptop).

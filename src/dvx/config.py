@@ -31,6 +31,7 @@ class StageConfig:
 
     commit: str | None = None  # "auto", "always", "never", or None (inherit)
     push: str | None = None  # "never", "each", "end", or None (inherit)
+    executor: str | None = None
 
 
 @dataclass
@@ -125,6 +126,7 @@ def _parse_config(config_path: Path) -> RunConfig:
                 stages[stage_path] = StageConfig(
                     commit=stage_data.get("commit"),
                     push=stage_data.get("push"),
+                    executor=stage_data.get("executor"),
                 )
 
     return RunConfig(

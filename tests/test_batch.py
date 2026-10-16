@@ -402,7 +402,7 @@ def test_batch_group_registered():
             break
         name, _, _ = s.partition(" ")
         entries.append(name)
-    assert sorted(entries) == ["bootstrap", "push", "submit"]
+    assert sorted(entries) == ["bootstrap", "cancel", "push", "submit", "task-run", "watch"]
 
 
 def test_batch_push_help():
@@ -412,7 +412,7 @@ def test_batch_push_help():
     assert result.exit_code == 0
     # Parse "  --name" entries from the Options section.
     opts = _parse_options(result.output)
-    assert opts == {"--no-build", "--context", "--dockerfile", "--platform", "--help"}
+    assert opts == {"--backend", "--no-build", "--context", "--dockerfile", "--platform", "--help"}
 
 
 def test_batch_bootstrap_help():
@@ -423,6 +423,8 @@ def test_batch_bootstrap_help():
     assert opts == {
         "--arch", "--env", "--ephemeral", "--image",
         "--max-vcpus", "--memory", "--on-demand", "--prefix", "--secret", "--vcpus",
+        "--job-role-arn", "--job-role-policy", "--subnet", "--sg",
+        "--backend", "--profile", "--check", "--no-create",
         "--help",
     }
 
@@ -435,6 +437,8 @@ def test_batch_submit_help():
     assert opts == {
         "--commit", "--env", "--force", "--jobs", "--memory", "--job-name",
         "--on-demand", "--prefix", "--push", "--remote", "--secret", "--vcpus", "--watch",
+        "--cached", "--force-upstream", "--fallback-remote", "--command",
+        "--backend", "--profile", "--dry-run", "--each", "--parallelism", "--max-run",
         "--help",
     }
 
@@ -491,7 +495,7 @@ def _capture_err(monkeypatch) -> list[str]:
     import dvx.batch as batch_mod
 
     lines: list[str] = []
-    monkeypatch.setattr(batch_mod, "err", lines.append)
+    monkeypatch.setattr(__import__("dvx.batch.aws", fromlist=["err"]), "err", lines.append)
     return lines
 
 
@@ -652,14 +656,10 @@ def test_job_definition_spec_env_secret_overlap_raises():
 
 
 def test_submit_overrides_secrets():
-    """`secrets` becomes a per-job `secrets` override array, name-sorted."""
-    assert submit_overrides(
-        ["run", "-v"],
-        secrets={"GH_TOKEN": SM_ARN},
-    ) == {
-        "command": ["run", "-v"],
-        "secrets": [{"name": "GH_TOKEN", "valueFrom": SM_ARN}],
-    }
+    """AWS's real ContainerOverrides schema has no secrets field."""
+    with pytest.raises(ValueError) as exc:
+        submit_overrides(["run", "-v"], secrets={"GH_TOKEN": SM_ARN})
+    assert str(exc.value) == "AWS secrets cannot be containerOverrides; use submit(secrets=...) instead"
 
 
 def test_submit_overrides_env_secret_overlap_raises():
@@ -756,7 +756,7 @@ def _bootstrap_clients(monkeypatch):
     secrets policy."""
     from unittest.mock import MagicMock
 
-    import dvx.batch as b
+    import dvx.batch.aws as b
 
     iam = MagicMock()
     iam.get_role.return_value = {
@@ -885,7 +885,7 @@ def test_submit_targets_prefixed_job_def_and_queue(monkeypatch):
     queue to the prefix's spot queue."""
     from unittest.mock import MagicMock
 
-    import dvx.batch as b
+    import dvx.batch.aws as b
 
     batch = MagicMock()
     batch.submit_job.return_value = {"jobId": "j-1"}
@@ -903,7 +903,7 @@ def test_submit_on_demand_queue_override(monkeypatch):
     default spot queue while the job def stays the bare prefix."""
     from unittest.mock import MagicMock
 
-    import dvx.batch as b
+    import dvx.batch.aws as b
 
     batch = MagicMock()
     batch.submit_job.return_value = {"jobId": "j-1"}
