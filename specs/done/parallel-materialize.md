@@ -2,7 +2,7 @@
 
 From jc-taxes (2026-09-28): a Batch (Fargate) job whose stage depends on a ~70k-file tracked dir (`data/cache`, ~600 MB of small `.json.gz`) spent 3+ h pulling it without finishing; locally the same pull runs at ~67 objects/s.
 
-Status (2026-10-16): implemented on `batch-backends`; directory probes/fetches use bounded concurrency with per-hash deduplication and progress. Batch command builders pass `--cached`, `--force-upstream`, and ordered read fallbacks through. Force scope is preserved rather than redefined. Completion awaits the final branch-wide regression run.
+Status (2026-10-16): implemented and verified on `batch-backends`; directory probes/fetches use bounded concurrency with per-hash deduplication and progress. A barrier-based test proves concurrent fetches and unique-hash work; existing directory/adaptive regressions still pass. Batch command builders pass `--cached`, `--force-upstream`, and ordered read fallbacks through, with real CLI parsing in tests. Force scope is preserved rather than redefined. The full suite passed 505 tests, with 4 opt-in S3 tests skipped. The `-j` help now documents Python's actual default worker limit.
 
 ## 1. `materialize_targets` fetches serially
 

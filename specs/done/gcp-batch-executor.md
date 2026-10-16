@@ -2,7 +2,7 @@
 
 Requested from the disk-tree session (2026-10-16). Its deployments run their pipelines on GCP Batch: one project, one region, a service account per deployment, images in Artifact Registry, secrets from Secret Manager injected as env, cost labels on every job, `gcsfuse` mounts and local-SSD staging. Those pipelines are hand-rolled shell (a JSON job spec in a heredoc, `gcloud batch jobs submit`, Cloud Logging filters pasted from memory). A dvx-native GCP executor would let such a pipeline be a DVX DAG whose heavy stages run on Batch, with DVX's content addressing as the resume and coordination substrate, just as [`batch-executor.md`] does for AWS.
 
-Status (2026-10-16): implementation and offline verification in progress on `batch-backends`, based on the adaptive-materialization review branch. AWS/GCP builders, the backend interface, arrays, ready-set scheduling, sidecar/result exchange, and reattachment are implemented. The full regression run found three scheduler/reporting regressions; their 73-test focused regression run passes after fixes. Live cloud provisioning/preemption and container startup are not yet verified.
+Status (2026-10-16): implementation and offline verification complete on `batch-backends`, based on the adaptive-materialization review branch. Live cloud provisioning/preemption and container startup remain rollout checks; no cloud resources or jobs were created during implementation.
 
 Read first: [`batch-executor.md`] (phase 1: single fat job; phase 2 deferred: per-stage jobs), [`batch-per-project-prefix.md`], [`batch-secrets-manager.md`], [`batch-run-command-cli-mismatch.md`], the pending [`batch-job-role-and-networking.md`] and [`parallel-materialize.md`], and [`resource-aware-scheduling.md`].
 
@@ -114,9 +114,9 @@ Job ID: `<profile>-<slug>-<yyyymmdd-hhmmss>-<4 hex>`, sanitized and ≤ 63 chars
 - **Status**: `get_job` gives `status.state` (QUEUED/SCHEDULED/RUNNING map to `QUEUED|RUNNING`; SUCCEEDED; FAILED; DELETION_IN_PROGRESS maps to FAILED("cancelled")), plus `task_groups[*].counts` for array progress. Per-task exit codes come from `list_tasks`: the latest `status_events[*].task_execution.exit_code`. `JobState.exit_code` is task 0's code for a one-task job, and for an array job the first nonzero code (by task index).
 - **Retry only infrastructure loss** (GCP's analog of `RECLAIM_ONLY_RETRY`). Set `max_retry_count = profile.max_retries`, plus `lifecycle_policies`:
   - `RETRY_TASK` on the Batch-reserved exit codes for preemption and VM loss: 50001 (preempted), 50002 (VM reporting timeout), 50003 (rebooted), 50006 (VM recreated).
-  - `FAIL_TASK` on application exit codes 1–255.
+  - Application failures and other non-allowlisted codes fail without retry under the allowlist's documented semantics.
 
-Implementation correction: use only the `RETRY_TASK` allowlist. Google's current documentation states that unspecified exit codes take the opposite action, and the allowlist therefore fails application errors without a second policy. Offline protobuf tests assert the exact policy. Live preemption remains a rollout check.
+Implementation correction: use only the `RETRY_TASK` allowlist. [GCP retry semantics] specify that unspecified exit codes take the opposite action, and the allowlist therefore fails application errors without a second policy. Offline protobuf tests assert the exact policy. Live preemption remains a rollout check.
 
   The constant is `PREEMPTION_ONLY_RETRY`. Without the FAIL_TASK rule, `max_retry_count` retries every failure: the nj-crashes "burned a 122-stage level twice" failure. A deterministic stage error must cost one run.
 - **Resume after preemption is DVX's**, as on AWS: `--push each` makes each completed stage durable in the remote, so a retried task re-pulls (or skips) everything it already finished.
@@ -279,12 +279,31 @@ These follow `tests/test_batch.py`'s style: pure builders, exact-equality assert
 7. **Overlay scope** (§4.3 step 4): is a `.dvc`-only overlay enough, or do stages whose `git_deps` changed since the image build need the image rebuilt (the proposal: yes, refuse)?
 8. **AWS tags**: `JobRequest.labels` maps naturally to GCP labels. AWS Batch `tags` on `submit_job` don't propagate to Fargate billing without `propagateTags`. Wire that up in phase 1, or leave AWS labels as a no-op with a warning?
 
-[`batch-executor.md`]: done/batch-executor.md
-[`batch-per-project-prefix.md`]: done/batch-per-project-prefix.md
-[`batch-secrets-manager.md`]: done/batch-secrets-manager.md
-[`batch-run-command-cli-mismatch.md`]: done/batch-run-command-cli-mismatch.md
+[`batch-executor.md`]: batch-executor.md
+[`batch-per-project-prefix.md`]: batch-per-project-prefix.md
+[`batch-secrets-manager.md`]: batch-secrets-manager.md
+[`batch-run-command-cli-mismatch.md`]: batch-run-command-cli-mismatch.md
 [`batch-job-role-and-networking.md`]: batch-job-role-and-networking.md
 [`parallel-materialize.md`]: parallel-materialize.md
-[`resource-aware-scheduling.md`]: done/resource-aware-scheduling.md
-[`co-output-wait-deadlock-on-skip.md`]: done/co-output-wait-deadlock-on-skip.md
-[`co-output-concurrency-locked.md`]: done/co-output-concurrency-locked.md
+[`resource-aware-scheduling.md`]: resource-aware-scheduling.md
+[`co-output-wait-deadlock-on-skip.md`]: co-output-wait-deadlock-on-skip.md
+[`co-output-concurrency-locked.md`]: co-output-concurrency-locked.md
+
+## Implementation report
+
+- Preserved the legacy public AWS API in the new `dvx.batch` package. Added backend-neutral requests, handles, states, log cursors, named profiles, and a generic watcher. GCP SDKs remain optional and lazy; CI installs both SDK extras for offline contract tests across the Python matrix.
+- GCP supports whole-DAG submission, arrays, job watching/cancellation, secrets, Spot/default or standard provisioning, CPU/memory sizing, boot/scratch disks, optional GCS mounts, billing labels on jobs and VMs, Artifact Registry push, and conservative IAM/network/bootstrap checks. IAM is never modified by GCP bootstrap; registry creation is disabled by `--check`/`--no-create`.
+- Arrays work on both providers. Small target lists are inline; large ones use a stored coordination manifest. Task-index parsing is shared. Metadata-only planning warns about shared stale upstream work. AWS array exit/log reporting is task-indexed. Unsupported backend-specific options raise rather than being silently ignored. Existing `-n/--job-name` remains; dry-run uses `--dry-run`.
+- Replaced the local level barrier with dependency-ready command-group admission, preserving command deduplication, co-output completion, directory-member producer ordering, local memory budgets, failure summaries, and stopping admission after a failure. `--remote-jobs` bounds a separate remote pool. Dry-run still prints the level-shaped plan and placement without fetching or launching.
+- `--executor`, first-match `--executor-for`, and per-stage config route computations. Tasks receive a sidecar overlay, explicitly compute locally to prevent recursive submission from baked placement config, verify/push output closure, and publish a result keyed to their inputs. The driver validates sidecar membership, commands and output paths before applying metadata and forwarding summaries/commit messages. Local consumers restore remote outputs on demand; remote consumers only need updated sidecars.
+- Per-stage records support reattachment for the same input key, resubmission for changed inputs, and explicit `--retry-failed` for failed jobs. Watch cancellation preserves handles. Separate drivers can still submit duplicate work; no global lock or exactly-once guarantee was added.
+- Image verification now pins a registry digest after checking the local image's revision against clean tracked code. AWS creates a private digest-pinned definition variant when required and submits its exact ARN, avoiding mutable-tag/latest-definition races. `--allow-image-mismatch` is an explicit override.
+- Corrected AWS secret handling uncovered by real botocore schema validation and the [AWS container overrides] reference: secret references belong in a pinned definition variant, not `containerOverrides`. Also implemented the adjacent AWS task-role/networking and parallel materialization specs.
+- Corrected scratch semantics: moving only the cache leaves payloads on the image disk. `DVX_SCRATCH` now prepares a scratch worktree, retains access to the image environment, applies overlays there, and locates both DVC and DVX cache operations on scratch. An actual local CLI test checks workspace/output/cache placement and image-worktree preservation.
+- GCP log queries are shared across active jobs in bounded UID batches with inclusive-cursor deduplication and backoff. Terminal jobs drain logs for two quiet polls, bounded to three minutes. AWS retains its legacy watcher and also implements the common backend interface.
+- Decisions on the original open questions: GCP defaults to amd64; IAM remains check-only; ready-set scheduling is the default locally too; ready-stage array coalescing remains deferred; profiles can set a separate `results_url` or use the DVC remote; overlays contain only sidecars and code mismatches require a rebuilt image or explicit override; AWS labels propagate as tags.
+- Verification: full suite passed 505 tests with 4 opt-in S3 tests skipped on Python 3.13 (`ulimit -n 4096` for the existing SQLite stress fixture). A subsequent focused 87-test API/control-plane run covers the final task-local placement guard. The scratch addition is covered by the remote/backend/CLI suite. Tests construct real GCP protobufs, validate AWS requests with botocore, exercise delayed logs and shared reads, and execute tasks in fresh local clones against a file remote. The package wheel builds. New backend code/tests pass Ruff and `git diff --check`.
+- Live limits: Docker's daemon was unavailable, so the image was not built or started. No provider provisioning, IAM mutation, real job submission, Spot preemption, or billing-label smoke test was attempted. Whole-DAG retries inherit image metadata and may rerun changed/forced stages; distributed stages have the stronger result-reconciliation boundary. These runtime checks should happen in each owning project's environment before production rollout.
+
+[GCP retry semantics]: https://docs.cloud.google.com/batch/docs/automate-task-retries
+[AWS container overrides]: https://docs.aws.amazon.com/batch/latest/APIReference/API_ContainerOverrides.html

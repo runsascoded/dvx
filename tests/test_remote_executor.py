@@ -117,7 +117,9 @@ class LocalTaskBackend:
         for path in self.driver.glob("*.dvc"):
             if path.is_file():
                 shutil.copy2(path, task / path.name)
-        (task / "dvx.yml").write_text("run:\n  stages:\n    out.txt:\n      executor: gcp:not-configured\n")
+        (task / "dvx.yml").write_text(
+            "run:\n  stages:\n    out.txt:\n      executor: gcp:not-configured\n"
+        )
         env = {**os.environ, **request.env}
         completed = subprocess.run(
             [os.sys.executable, "-c", "from dvx.cli import main; main()", *request.command],
@@ -261,3 +263,33 @@ def test_image_validation_returns_registry_digest(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     assert validate_image({"image": "repo/app:latest"}) == "repo/app@sha256:digest"
+
+
+def test_scratch_workspace_keeps_payloads_off_image_disk(remote_pipeline, monkeypatch):
+    from click.testing import CliRunner
+
+    from dvx.cli import cli
+
+    driver, scratch = remote_pipeline
+    scratch = scratch / "scratch-disk"
+    (driver / ".venv").mkdir()
+    (driver / ".venv" / "image-environment").write_text("installed\n")
+    monkeypatch.setenv("DVX_SCRATCH", str(scratch))
+    monkeypatch.setenv("DVX_WORKSPACE_READY", "")
+    monkeypatch.setenv("DVC_CACHE_DIR", str(scratch / "dvc-cache"))
+    preview = CliRunner().invoke(cli, ["run", "--dry-run", "out.txt.dvc"])
+    assert preview.exit_code == 0, preview.output
+    assert (Path.cwd(), scratch.exists()) == (driver, False)
+    result = CliRunner().invoke(cli, ["run", "--no-commit", "out.txt.dvc"])
+    assert result.exit_code == 0, result.output
+    assert Path.cwd().parent == scratch
+    assert Path("out.txt").read_text() == "new input\n"
+    assert (driver / "out.txt").exists() is False
+    assert Path(".venv").resolve() == driver / ".venv"
+    assert Path(".venv/image-environment").read_text() == "installed\n"
+    from dvx.cache import _local_cache_path
+
+    assert (
+        _local_cache_path(compute_md5(Path("out.txt"))).parent.parent
+        == scratch / "dvc-cache/files/md5"
+    )

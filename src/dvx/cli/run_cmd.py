@@ -52,6 +52,8 @@ def run_cmd(targets, force, force_upstream, cached, jobs, mem, mem_default, comm
     from dvx.run.artifact import Artifact
     from dvx.run.executor import ExecutionConfig, run
     if not dry_run:
+        from dvx.batch.workspace import prepare_workspace
+        targets = prepare_workspace(targets)
         if os.environ.get("DVX_OVERLAY_URL"):
             from dvx.batch.remote import apply_overlay
             apply_overlay(os.environ["DVX_OVERLAY_URL"])

@@ -86,7 +86,7 @@ GCP bootstrap checks API enablement, the service account, caller `actAs`, projec
 
 `Dockerfile.gcp` installs this source checkout with GCP and GCS extras. Build its application derivative with the application's checkout and dependencies, including Git objects for `git_deps`. `batch push` stamps the image with `org.opencontainers.image.revision`. GCP defaults to amd64; AWS retains arm64. `--no-build` assumes the existing image already has the correct revision label.
 
-Scratch disks mount at `/scratch`, and DVX honors `DVC_CACHE_DIR=/scratch/dvc-cache` for both normal DVC operations and its own lock-free cache paths. Optional GCS fuse mounts are application side inputs; they do not establish tracked dependency freshness. Cache traffic continues through DVC and MD5 verification.
+Scratch disks mount at `/scratch`. With `DVX_SCRATCH` set, `dvx run` prepares a worktree on that volume before applying sidecar overlays, retaining access to the image's installed `.venv`; checked-out inputs and generated outputs therefore live there too. DVX honors `DVC_CACHE_DIR=/scratch/dvc-cache` for both normal DVC operations and its own lock-free cache paths. Optional GCS fuse mounts are application side inputs; they do not establish tracked dependency freshness. Cache traffic continues through DVC and MD5 verification.
 
 ## Distributed stages and recovery
 
@@ -112,3 +112,5 @@ GCP log reads are shared across active jobs in bounded UID batches, with boundar
 ## Operational limits
 
 Offline SDK-schema tests and local task clones verify the control plane without credentials. Live Spot preemption, cloud provisioning, IAM propagation, image startup, and billing labels still need a small smoke run in each target account. Driver state and the cache are not a global submission lock: separate drivers can submit duplicate work. Stages should declare their inputs, avoid hidden local-file assumptions, and be idempotent when external systems can observe retries. Cross-cloud storage works through the installed DVC backend and credentials, with the provider's ordinary egress costs.
+
+Whole-DAG retries start from the sidecars baked into the image. Changed and forced stages can therefore rerun despite earlier attempts having uploaded blobs; cache durability alone does not preserve regenerated provenance. Driver-managed stages persist reconciled sidecars and result manifests as they finish, which gives a stronger recovery boundary. Neither mode promises exactly-once effects in external systems.
