@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dvx.run.artifact import Artifact, Computation, delayed, materialize
+from dvx.sdk.graph import toposort, transitive_closure
 
 __all__ = [
     "Artifact",
@@ -237,26 +238,7 @@ class Dag:
 
     def _toposort(self) -> list[str]:
         """Return stage paths in dependency order; raise ``ValueError`` on cycle."""
-        edges = self._internal_edges()
-        WHITE, GREY, BLACK = 0, 1, 2
-        color = dict.fromkeys(edges, WHITE)
-        order: list[str] = []
-
-        def visit(node: str, stack: list[str]) -> None:
-            color[node] = GREY
-            for dep in edges[node]:
-                if color[dep] == GREY:
-                    cycle = stack[stack.index(dep):] + [dep]
-                    raise ValueError("cycle in Dag: " + " -> ".join(cycle))
-                if color[dep] == WHITE:
-                    visit(dep, [*stack, dep])
-            color[node] = BLACK
-            order.append(node)
-
-        for node in edges:
-            if color[node] == WHITE:
-                visit(node, [node])
-        return order
+        return toposort(self._internal_edges(), cycle_prefix="cycle in Dag: ")
 
     def ancestors(self, target: str | Artifact) -> set[str]:
         """Return the stage paths ``target`` transitively depends on (in-DAG).
@@ -267,14 +249,7 @@ class Dag:
         key = _dep_key(target)
         if key not in edges:
             raise KeyError(f"not a stage in this Dag: {key!r}")
-        seen: set[str] = set()
-        stack = list(edges[key])
-        while stack:
-            node = stack.pop()
-            if node not in seen:
-                seen.add(node)
-                stack.extend(edges[node])
-        return seen
+        return transitive_closure(edges, key)
 
     def subset(self, targets: str | Artifact | list[str | Artifact]) -> Dag:
         """Return a new :class:`Dag` of ``targets`` plus their ancestors.

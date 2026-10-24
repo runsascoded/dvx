@@ -12,6 +12,7 @@ from pathlib import Path
 import click
 
 from dvx.run.dvc_files import read_dir_manifest, read_dvc_file
+from dvx.sdk.graph import toposort, transitive_closure
 
 
 @dataclass
@@ -45,25 +46,11 @@ class DependencyGraph:
 
     def get_ancestors(self, path: str) -> set[str]:
         """Get all ancestors (dependencies) of a node."""
-        ancestors = set()
-        to_visit = list(self.reverse_edges.get(path, []))
-        while to_visit:
-            dep = to_visit.pop()
-            if dep not in ancestors:
-                ancestors.add(dep)
-                to_visit.extend(self.reverse_edges.get(dep, []))
-        return ancestors
+        return transitive_closure(self.reverse_edges, path)
 
     def get_descendants(self, path: str) -> set[str]:
         """Get all descendants (dependents) of a node."""
-        descendants = set()
-        to_visit = list(self.edges.get(path, []))
-        while to_visit:
-            dep = to_visit.pop()
-            if dep not in descendants:
-                descendants.add(dep)
-                to_visit.extend(self.edges.get(dep, []))
-        return descendants
+        return transitive_closure(self.edges, path)
 
     def get_roots(self) -> set[str]:
         """Get nodes with no dependencies (roots/sources)."""
@@ -78,25 +65,7 @@ class DependencyGraph:
 
     def topological_sort(self) -> list[str]:
         """Return nodes in topological order (deps before dependents)."""
-        in_degree = defaultdict(int)
-        for path in self.nodes:
-            in_degree[path] = len(self.reverse_edges.get(path, set()) & set(self.nodes.keys()))
-
-        # Start with roots (in_degree == 0)
-        queue = [p for p, d in in_degree.items() if d == 0]
-        result = []
-
-        while queue:
-            queue.sort()  # Deterministic ordering
-            node = queue.pop(0)
-            result.append(node)
-            for dependent in self.edges.get(node, []):
-                if dependent in self.nodes:
-                    in_degree[dependent] -= 1
-                    if in_degree[dependent] == 0:
-                        queue.append(dependent)
-
-        return result
+        return toposort(self.reverse_edges, self.nodes.keys(), cycle_prefix="cycle in DAG: ")
 
 
 def find_dvc_files(root: Path, pattern: str = "**/*.dvc") -> list[Path]:
