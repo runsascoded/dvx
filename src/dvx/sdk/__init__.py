@@ -153,15 +153,20 @@ class Dag:
         """Load an existing ``.dvc`` graph into a manipulable :class:`Dag`.
 
         Only *computed* stages (those with a ``meta.computation.cmd``) become
-        Dag stages; raw-input deps stay as bare-path strings. Intra-graph
-        dependencies are linked to their producing :class:`Artifact` so edges
-        are recognized by :meth:`validate` / :meth:`to_dvc`.
+        Dag stages. Every dependency (regular / git / git-log) is loaded as an
+        :class:`Artifact` carrying its **committed hash**, so an edit-and-
+        re-emit (e.g. bumping ``resources``) rewrites only what changed and is
+        otherwise byte-idempotent — even when the dep's file isn't materialized
+        in the worktree (the usual case: deps live in the cache/remote). An
+        intra-graph dependency's path matches a loaded stage, so edges are
+        recognized by :meth:`validate` / :meth:`_internal_edges` / :meth:`subset`.
 
-        Provenance (cmd, deps, resources, git deps) is loaded; output hashes
-        are intentionally **not** carried — so re-emitting via :meth:`to_dvc`
-        after edits preserves each stage's committed ``outs`` from the existing
-        file (see ``specs/done/write-dvc-preserve-committed-outs.md``) while
-        picking up the edits.
+        The stage's own **output** md5 is intentionally *not* carried: that lets
+        :meth:`to_dvc` preserve each stage's committed ``outs`` (incl. directory
+        ``.dir`` / ``nfiles`` markers) from the existing file via
+        ``Artifact.write_dvc`` (see
+        ``specs/done/write-dvc-preserve-committed-outs.md``) while picking up the
+        edits. Dep hashes are carried; only outs are deferred.
 
         Args:
             targets: ``.dvc`` paths / dirs to load (default: the whole repo).
@@ -182,19 +187,24 @@ class Dag:
                 path=path,
                 computation=Computation(
                     cmd=info.cmd,
-                    git_deps=list((info.git_deps or {}).keys()),
-                    git_log_deps=list((info.git_log_deps or {}).keys()),
+                    git_deps=[Artifact(path=p, md5=sha) for p, sha in (info.git_deps or {}).items()],
+                    git_log_deps=[
+                        Artifact(path=p, md5=sha) for p, sha in (info.git_log_deps or {}).items()
+                    ],
                     resources=dict(info.resources or {}),
                 ),
             )
             for path, info in infos.items()
         }
-        # Wire deps, linking an edge to its in-graph producer Artifact when the
-        # dep names another computed stage; bare inputs stay path strings.
+        # Wire deps as Artifacts carrying the committed hash — so re-emit is
+        # hash-idempotent even for unmaterialized deps. An intra-graph dep's
+        # path matches a loaded stage (recognized as an internal edge by
+        # _dep_key membership); a leaf-input dep's does not, and is allowed
+        # unregistered by validate() because it carries no computation.
         for path, info in infos.items():
             artifacts[path].computation.deps = [
-                artifacts[key] if (key := str(Path(dep_path))) in artifacts else dep_path
-                for dep_path in (info.deps or {})
+                Artifact(path=dep_path, md5=dep_md5 or None)
+                for dep_path, dep_md5 in (info.deps or {}).items()
             ]
 
         dag = cls()
@@ -222,14 +232,20 @@ class Dag:
         """Check the DAG is well-formed: resolvable deps, acyclic.
 
         Raises ``ValueError`` with the offending stage(s). Uniqueness of output
-        paths is enforced at :meth:`add` time. An ``Artifact`` dependency must
-        be registered in this DAG (a bare-path dep may be a raw input and is
-        not required to be).
+        paths is enforced at :meth:`add` time. A *stage* dependency (an
+        ``Artifact`` carrying a :class:`Computation`) must be registered in this
+        DAG; a leaf-input dep — a bare path, or an ``Artifact`` with no
+        computation (e.g. a raw input loaded by :meth:`from_dvc` carrying only
+        its committed hash) — is not required to be.
         """
         for artifact in self.artifacts:
             deps = artifact.computation.deps if artifact.computation else []
             for dep in deps:
-                if isinstance(dep, Artifact) and _dep_key(dep) not in self._by_path:
+                if (
+                    isinstance(dep, Artifact)
+                    and dep.computation is not None
+                    and _dep_key(dep) not in self._by_path
+                ):
                     raise ValueError(
                         f"stage {_dep_key(artifact)!r} depends on unregistered "
                         f"artifact {_dep_key(dep)!r}; add it to the Dag"

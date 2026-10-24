@@ -190,8 +190,29 @@ class TestFromDvc:
 
         loaded = Dag.from_dvc()
         assert [art.path for art in loaded.artifacts] == ["out"]
-        # The dep on the leaf stays a bare path (leaf isn't a loaded stage).
-        assert loaded.artifacts[0].computation.deps == ["leaf"]
+        # The dep on the leaf (not a loaded stage) is carried as an Artifact
+        # holding its committed hash, so an edit-and-re-emit preserves it.
+        (dep,) = loaded.artifacts[0].computation.deps
+        assert isinstance(dep, Artifact)
+        assert (dep.path, dep.md5) == ("leaf", "d" * 32)
+
+    def test_carries_git_dep_hashes(self, monkeypatch, tmp_path):
+        """git_deps / git_log_deps load as Artifacts carrying their committed shas.
+
+        Pre-fix they loaded as bare path strings, so re-emit re-resolved them
+        from the current git state (dropping any no-longer-tracked path, or
+        silently changing a sha when HEAD moved) instead of preserving the
+        committed values.
+        """
+        monkeypatch.chdir(tmp_path)
+        write_dvc_file(
+            Path("s"), md5="a" * 32, size=5, cmd="build",
+            git_deps={"src/x.py": "e" * 40},
+            git_log_deps={"src/": "f" * 40},
+        )
+        (stage,) = Dag.from_dvc().artifacts
+        assert [(d.path, d.md5) for d in stage.computation.git_deps] == [("src/x.py", "e" * 40)]
+        assert [(d.path, d.md5) for d in stage.computation.git_log_deps] == [("src/", "f" * 40)]
 
     def test_edit_and_reemit_preserves_committed_outs(self, monkeypatch, tmp_path):
         """Load, bump resources, re-emit: resources change, outs are preserved."""
@@ -210,6 +231,10 @@ class TestFromDvc:
         assert info.resources == {"mem_gb": 16, "cpus": 4}  # edit applied
         assert info.md5 == "a" * 32                           # out preserved
         assert info.cmd == "build"
+        # Dep hash preserved even though "raw" isn't materialized on disk —
+        # pre-fix, re-emit re-hashed from disk and dropped the unmaterialized
+        # dep, silently severing provenance.
+        assert info.deps == {"raw": "b" * 32}
 
 
 # ────────────────────────────────────────────────────────────────────────────
