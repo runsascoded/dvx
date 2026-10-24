@@ -291,6 +291,14 @@ class Dag:
                 sub.add(artifact)
         return sub
 
+    def ordered(self) -> list[Artifact]:
+        """Return the stages in dependency order (upstreams first).
+
+        Raises ``ValueError`` on a cycle. A read-only view of the topological
+        order — what :meth:`to_dvc` writes in, usable without side effects.
+        """
+        return [self._by_path[key] for key in self._toposort()]
+
     def to_dvc(self) -> list[Path]:
         """Validate, then write every stage's ``.dvc`` file (prep phase).
 
@@ -299,5 +307,4 @@ class Dag:
         ``dvx run``.
         """
         self.validate()
-        order = self._toposort()
-        return [self._by_path[key].write_dvc() for key in order]
+        return [artifact.write_dvc() for artifact in self.ordered()]
