@@ -210,3 +210,38 @@ class TestFromDvc:
         assert info.resources == {"mem_gb": 16, "cpus": 4}  # edit applied
         assert info.md5 == "a" * 32                           # out preserved
         assert info.cmd == "build"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Dag.ancestors / Dag.subset — manipulate a slice
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class TestSubset:
+    def _chain(self) -> Dag:
+        # a -> b -> c, plus a sibling d -> b (c and d both consume b).
+        dag = Dag()
+        a = dag.stage(path="a", cmd="make a")
+        b = dag.stage(path="b", cmd="make b", deps=[a, "raw"])
+        dag.stage(path="c", cmd="make c", deps=[b])
+        dag.stage(path="d", cmd="make d", deps=[b])
+        return dag
+
+    def test_ancestors_transitive_excluding_raw(self):
+        dag = self._chain()
+        assert dag.ancestors("c") == {"a", "b"}   # not "raw" (non-stage dep)
+        assert dag.ancestors("a") == set()
+
+    def test_ancestors_unknown_stage_raises(self):
+        with pytest.raises(KeyError, match="not a stage in this Dag: 'nope'"):
+            self._chain().ancestors("nope")
+
+    def test_subset_is_target_plus_ancestors_in_order(self):
+        dag = self._chain()
+        sub = dag.subset("c")
+        assert [art.path for art in sub.artifacts] == ["a", "b", "c"]  # "d" dropped
+        sub.validate()  # closure is complete → valid
+
+    def test_subset_multiple_targets_unions(self):
+        sub = self._chain().subset(["c", "d"])
+        assert [art.path for art in sub.artifacts] == ["a", "b", "c", "d"]

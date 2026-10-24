@@ -258,6 +258,48 @@ class Dag:
                 visit(node, [node])
         return order
 
+    def ancestors(self, target: str | Artifact) -> set[str]:
+        """Return the stage paths ``target`` transitively depends on (in-DAG).
+
+        Excludes ``target`` itself and any raw-input (non-stage) deps.
+        """
+        edges = self._internal_edges()
+        key = _dep_key(target)
+        if key not in edges:
+            raise KeyError(f"not a stage in this Dag: {key!r}")
+        seen: set[str] = set()
+        stack = list(edges[key])
+        while stack:
+            node = stack.pop()
+            if node not in seen:
+                seen.add(node)
+                stack.extend(edges[node])
+        return seen
+
+    def subset(self, targets: str | Artifact | list[str | Artifact]) -> Dag:
+        """Return a new :class:`Dag` of ``targets`` plus their ancestors.
+
+        The slice you'd ``to_dvc()`` or submit to rebuild just ``targets`` and
+        what they depend on. Shares the stage ``Artifact`` objects (a view, not
+        a deep copy); every included stage's in-DAG deps are themselves
+        included (ancestor closure), so the result validates.
+        """
+        if isinstance(targets, (str, Artifact)):
+            targets = [targets]
+        keep: set[str] = set()
+        for target in targets:
+            key = _dep_key(target)
+            if key not in self._by_path:
+                raise KeyError(f"not a stage in this Dag: {key!r}")
+            keep.add(key)
+            keep |= self.ancestors(key)
+        sub = Dag()
+        # Preserve this DAG's insertion order among the kept stages.
+        for artifact in self.artifacts:
+            if _dep_key(artifact) in keep:
+                sub.add(artifact)
+        return sub
+
     def to_dvc(self) -> list[Path]:
         """Validate, then write every stage's ``.dvc`` file (prep phase).
 
