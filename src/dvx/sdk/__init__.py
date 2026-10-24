@@ -142,6 +142,65 @@ class Dag:
         )
         return self.add(artifact)
 
+    @classmethod
+    def from_dvc(
+        cls,
+        targets: list[str] | None = None,
+        *,
+        glob: bool = False,
+    ) -> Dag:
+        """Load an existing ``.dvc`` graph into a manipulable :class:`Dag`.
+
+        Only *computed* stages (those with a ``meta.computation.cmd``) become
+        Dag stages; raw-input deps stay as bare-path strings. Intra-graph
+        dependencies are linked to their producing :class:`Artifact` so edges
+        are recognized by :meth:`validate` / :meth:`to_dvc`.
+
+        Provenance (cmd, deps, resources, git deps) is loaded; output hashes
+        are intentionally **not** carried — so re-emitting via :meth:`to_dvc`
+        after edits preserves each stage's committed ``outs`` from the existing
+        file (see ``specs/done/write-dvc-preserve-committed-outs.md``) while
+        picking up the edits.
+
+        Args:
+            targets: ``.dvc`` paths / dirs to load (default: the whole repo).
+            glob: treat ``targets`` as glob patterns.
+        """
+        from dvx.cache import find_dvc_files
+        from dvx.run.dvc_files import read_dvc_file
+
+        infos: dict[str, object] = {}
+        for dvc_file in find_dvc_files(targets, glob_pattern=glob):
+            info = read_dvc_file(Path(dvc_file))
+            if info is None or not info.cmd:
+                continue  # skip raw/leaf inputs — only computed stages
+            infos[str(Path(info.path))] = info
+
+        artifacts: dict[str, Artifact] = {
+            path: Artifact(
+                path=path,
+                computation=Computation(
+                    cmd=info.cmd,
+                    git_deps=list((info.git_deps or {}).keys()),
+                    git_log_deps=list((info.git_log_deps or {}).keys()),
+                    resources=dict(info.resources or {}),
+                ),
+            )
+            for path, info in infos.items()
+        }
+        # Wire deps, linking an edge to its in-graph producer Artifact when the
+        # dep names another computed stage; bare inputs stay path strings.
+        for path, info in infos.items():
+            artifacts[path].computation.deps = [
+                artifacts[key] if (key := str(Path(dep_path))) in artifacts else dep_path
+                for dep_path in (info.deps or {})
+            ]
+
+        dag = cls()
+        for path in infos:
+            dag.add(artifacts[path])
+        return dag
+
     def _internal_edges(self) -> dict[str, list[str]]:
         """Map each in-DAG stage path → the in-DAG stage paths it depends on.
 

@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from dvx.run.artifact import Artifact, Computation
-from dvx.run.dvc_files import read_dvc_file
+from dvx.run.dvc_files import read_dvc_file, write_dvc_file
 from dvx.sdk import Dag, Resources
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -158,3 +158,55 @@ class TestToDvc:
 
         written = [Path(p).stem for p in dag.to_dvc()]
         assert written == ["up", "down"]
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Dag.from_dvc — load an existing graph for manipulation
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class TestFromDvc:
+    def test_round_trips_authored_graph(self, monkeypatch, tmp_path):
+        """author → to_dvc → from_dvc recovers cmds, resources, and edges."""
+        monkeypatch.chdir(tmp_path)
+        dag = Dag()
+        a = dag.stage(path="a", cmd="make a", resources=Resources(cpus=8, mem_gb=32))
+        dag.stage(path="b", cmd="make b", deps=[a])
+        dag.to_dvc()
+
+        loaded = Dag.from_dvc()
+        by_path = {art.path: art for art in loaded.artifacts}
+        assert sorted(by_path) == ["a", "b"]
+        assert by_path["a"].computation.cmd == "make a"
+        assert by_path["a"].computation.resources == {"mem_gb": 32, "cpus": 8}
+        # The b→a edge is linked to the loaded `a` Artifact, not a bare string.
+        assert by_path["b"].computation.deps == [by_path["a"]]
+
+    def test_skips_leaf_inputs_without_cmd(self, monkeypatch, tmp_path):
+        """A .dvc with outs but no computation (a raw input) is not a stage."""
+        monkeypatch.chdir(tmp_path)
+        write_dvc_file(Path("leaf"), md5="d" * 32, size=5)  # no cmd
+        write_dvc_file(Path("out"), cmd="build", deps={"leaf": "d" * 32})
+
+        loaded = Dag.from_dvc()
+        assert [art.path for art in loaded.artifacts] == ["out"]
+        # The dep on the leaf stays a bare path (leaf isn't a loaded stage).
+        assert loaded.artifacts[0].computation.deps == ["leaf"]
+
+    def test_edit_and_reemit_preserves_committed_outs(self, monkeypatch, tmp_path):
+        """Load, bump resources, re-emit: resources change, outs are preserved."""
+        monkeypatch.chdir(tmp_path)
+        write_dvc_file(
+            Path("s"), md5="a" * 32, size=5,
+            cmd="build", deps={"raw": "b" * 32}, resources={"cpus": 2},
+        )
+
+        loaded = Dag.from_dvc()
+        (stage,) = loaded.artifacts
+        stage.computation.resources = Resources(cpus=4, mem_gb=16).to_dict()
+        loaded.to_dvc()
+
+        info = read_dvc_file(Path("s"))
+        assert info.resources == {"mem_gb": 16, "cpus": 4}  # edit applied
+        assert info.md5 == "a" * 32                           # out preserved
+        assert info.cmd == "build"
