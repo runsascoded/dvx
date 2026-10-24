@@ -49,11 +49,8 @@ from typing import TYPE_CHECKING, TypeVar
 
 from dvx.run.dvc_files import (
     get_file_hash_from_dir,
-    get_git_blob_sha,
-    get_git_head_sha,
     get_git_dep_sha,
     get_git_log_dep_sha,
-    get_git_object_sha,
     read_dvc_file,
     write_dvc_file,
 )
@@ -132,6 +129,16 @@ class Computation:
                 hashes[str(path)] = compute_md5(path)
             elif is_artifact and dep.md5:
                 hashes[str(path)] = dep.md5
+            elif is_artifact and not recompute:
+                # Authoring/prep: a declared edge to an upstream stage output
+                # that hasn't been produced yet (no md5, no .dvc, not on disk)
+                # — as when an SDK-built DAG is written before anything runs.
+                # Preserve the edge with an empty placeholder hash so the
+                # dependency survives into the .dvc (the first run fills it);
+                # dropping it would silently sever the DAG's ordering. Confined
+                # to the prep path (recompute=False) so the post-run rewrite's
+                # drop-the-unresolvable semantics are unchanged.
+                hashes[str(path)] = ""
         return hashes
 
     def get_git_dep_hashes(self, recompute: bool = False) -> dict[str, str]:
